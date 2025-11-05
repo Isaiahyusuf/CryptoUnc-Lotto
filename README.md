@@ -1,104 +1,166 @@
-# CryptoUnc-Lotto
+CryptoUnc Lotto Telegram Bot 🎲
 
-CryptoUnc Lotto TG Bot is a decentralized-style Telegram lottery system where anyone can play directly inside Telegram.
-Players connect a wallet privately, get 5 random numbers from 1–40, and join transparent public draws — all managed by the bot.
-
-The system ensures that:
-	•	Wallet addresses and numbers remain private.
-	•	Draw results and winners are posted publicly.
-	•	Stakes go to the admin’s wallet (you’ll configure this in your .env file).
+CryptoUnc Lotto is a decentralized-style lottery bot for Telegram, designed to allow users to play lottery games directly inside Telegram. Players can connect wallets, deposit funds, and receive lottery numbers, all while keeping wallet addresses private and maintaining transparency for draws and winners.
 
 
-Key Features
+Table of Contents
+	1.	Features￼
+	2.	Tech Stack￼
+	3.	Installation￼
+	4.	Configuration￼
+	5.	Usage￼
+	6.	Commands & Buttons￼
+	7.	Lottery Flow￼
+	8.	Phase 2 Roadmap￼
+	9.	Security & Privacy￼
+	10.	License￼
+
+
+Features
 
 Feature
 Description
-🎲 Play Directly in Telegram
-Users interact via buttons, no external site needed.
+🎲 Play in Telegram
+Users can play directly in the bot — no external website required.
 🔒 Private Lotto Session
-Each player connects their wallet and receives numbers privately in DM.
-🧮 Random 5-Number Generator (1–40)
-The bot generates 5 unique numbers per play.
-💳 Wallet Connection (Simulated)
-Secure wallet connection placeholder, ready for Web3 integration.
+Players connect wallets privately via DM and receive their numbers safely.
+🧮 Random 5-Number Generator
+Bot generates 5 unique numbers from 1–40 for each entry.
+💳 Wallet Integration
+WalletConnect-ready for Phantom, Solflare, and other wallets. Users can also create an internal bot wallet.
+💰 Stake Management
+Choose from multiple stake packages (0.05 SOL – 5 SOL). Stakes are split 80/20 between prize pool and team.
 🏆 Public Draw Results
-Admin posts public winning numbers and winners.
+Admin posts winning numbers and winners publicly.
 💬 Support System
-Dedicated /support command and button (to be linked later).
-🪙 Admin Prize Wallet
-All stakes go directly to your provided wallet address.
+/support command and dedicated button for user assistance.
+🗂 Database Tracking
+Tracks users, wallets, entries, draws, and payments.
+
+Tech Stack 🛠
 
 
-Tech Stack
 Component
 Description
-🧠 Language
+Language
 Python 3.10+
-🤖 Framework
+Framework
 Aiogram 3.x
-🔐 Environment
-.env for token & wallet configuration
-🗂 Database (optional)
-SQLite/PostgreSQL (for Phase 2)
-💵 Wallet Integration
-WalletConnect (planned for Phase 2)
+Database
+SQLite (Phase 2 can upgrade to PostgreSQL)
+Blockchain
+Solana (Mainnet)
+Wallet
+WalletConnect-ready (Phantom, Solflare, Sollet)
+Hosting
+Replit (Workflows recommended)
+
+Installation
+
+pip install -r requirements.txt
+
+Setup environment variables
+Create a .env file or use Replit Secrets with the following:
 
 
-Folder Structure
+BOT_TOKEN=YOUR_TELEGRAM_BOT_TOKEN
+OWNER_WALLET=YOUR_MAIN_WALLET_PUBLIC_KEY
+TEAM_WALLET=YOUR_TEAM_WALLET_PUBLIC_KEY
+ADMIN_ID=YOUR_TELEGRAM_USER_ID
+ROUND_CHANNEL_ID=@yourchannelusername
+SOLANA_RPC=https://api.devnet.solana.com  # or mainnet endpoint
+STAKE_AMOUNT_SOL=0.1
 
 
-cryptounc-lotto-tg/
-│
-├── main.py               # Core bot logic
-├── .env                  # Environment variables (token, wallet)
-├── requirements.txt      # Dependencies
-└── README.md             # Documentation
+Initialize database
+python main.py
 
-Commands & Functions
+This will automatically create the SQLite database and tables.
+
+
+Usage
+1.	Start the bot via Telegram with /start.
+	2.	Navigate the buttons to:
+	•	Play a lottery
+	•	Connect your wallet
+	•	View past results
+	•	Access rules and support
+	3.	Private session steps:
+	•	Connect your wallet or create a bot wallet
+	•	Choose a stake package
+	•	Confirm payment (bot verifies on-chain or via deposit address)
+	•	Receive 5 random lottery numbers
+	4.	Admin commands:
+	•	/admin_draw — draw winners
+	•	/admin_list — view all entries
+	•	/admin_reset — reset current round
+
+Commands & Buttons
 
 Command / Button
 Action
 /start
 Opens main menu with Play / Results / Rules / Support
 🎲 Play Now
-Opens a private DM session to play
+Opens private DM session for lottery play
 💳 Connect Wallet
-Simulates wallet connection
+Link wallet via WalletConnect or paste public key
+💵 Choose Stake
+Choose stake amount for current round
 📊 View Results
-Displays last draw
+Shows last draw results
 📘 Game Rules
-Shows how to play
+Displays how to play
 🛠 Support
-Links to help channel (customizable)
-/support
-Opens the support section
+Links to support or admin
+/my_numbers
+Shows your last entered numbers
 
-🧩 How It Works
-	1.	Player joins the bot and taps Play Now.
-	2.	Bot opens a private session (DM).
-	3.	Player connects their wallet (simulated).
-	4.	Bot generates 5 random numbers from 1–40.
-	5.	Player receives the numbers privately.
-	6.	Admin later posts the winning combination publicly.
+Lottery Flow 🧩
+	1.	User taps Play Now
+	2.	Bot opens a private DM session
+	3.	User connects wallet or creates internal bot wallet
+	4.	Bot generates 5 unique numbers (1–40)
+	5.	User chooses stake and pays the 80/20 split
+	6.	Bot verifies payment (automatically via Solana RPC or manually)
+	7.	Admin draws winning numbers
+	8.	Winners are announced publicly
+
+Phase 2 Roadmap 🚀
+
+Feature
+Status
+Real WalletConnect integration
+Planned
+On-chain payment verification
+Planned
+Bot-created internal wallets
+Implemented
+Chainlink VRF RNG for true randomness
+Planned
+Multi-chain support
+Planned
+Modern Telegram dashboard
+Planned
+
+Security & Privacy 🔒
+	•	Users’ wallet private keys never leave their devices.
+	•	Bot stores only public keys or bot-generated keys for internal wallets.
+	•	Draw results are publicly verifiable.
+	•	All database operations are local to bot and optional for Phase 2 migration to PostgreSQL.
 
 ⸻
 
-🧠 Example Flow
+License 📄
 
+This project is free to use for personal or team projects.
+Redistribution or commercial use requires permission from the author.
 
-Phase 2 
+⸻
 
-Feature
-Description
-🪙 Real WalletConnect Integration
-Players connect actual wallets securely.
-💰 On-Chain Payment Validation
-Automatic stake deposits to admin wallet.
-🧮 Database for Players
-Store and track plays.
-🎯 Chainlink VRF RNG
-True random number generation on-chain.
-🌐 WebApp UI
-Modern dashboard inside Telegram.
+🎉 Notes / Tips
+	•	Use Replit Workflows to run the bot 24/7.
+	•	Ensure all secrets (BOT_TOKEN, wallet keys, etc.) are safely stored in Replit Secrets or .env.
+	•	For fun, you can customize messages, emoji reactions, or add gamification features like streaks or jackpots.
 
 
