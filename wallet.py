@@ -247,9 +247,46 @@ def save_external_wallet(user_id: int, wallet_address: str, wallet_type: str = "
         return False
 
 
+def _is_hex_string(s: str) -> bool:
+    """Check if a string is a valid hex string"""
+    try:
+        int(s, 16)
+        return len(s) == 128  # Solana private keys are 64 bytes = 128 hex chars
+    except (ValueError, TypeError):
+        return False
+
+
+def _migrate_plaintext_key(user_id: int, wallet_address: str, plaintext_key: str) -> bool:
+    """
+    Migrate a plaintext private key to encrypted format
+    Returns True if migration successful
+    """
+    try:
+        # Encrypt the plaintext key
+        encrypted_key = encrypt_private_key(plaintext_key)
+        
+        # Update database with encrypted key
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("""
+            UPDATE wallets 
+            SET private_key = ? 
+            WHERE user_id = ? AND wallet_address = ? AND wallet_type = 'bot'
+        """, (encrypted_key, user_id, wallet_address))
+        conn.commit()
+        conn.close()
+        
+        print(f"✅ Migrated plaintext key to encrypted for wallet {wallet_address[:8]}...")
+        return True
+    except Exception as e:
+        print(f"❌ Failed to migrate key for wallet {wallet_address[:8]}: {e}")
+        return False
+
+
 def get_wallet_private_key(user_id: int, wallet_address: str) -> Optional[str]:
     """
     Get DECRYPTED private key for a bot-managed wallet
+    Automatically migrates plaintext keys AND legacy-encrypted keys to new encryption
     Returns the decrypted hex private key, or None if not found/not bot wallet
     """
     conn = get_db_conn()
@@ -264,11 +301,42 @@ def get_wallet_private_key(user_id: int, wallet_address: str) -> Optional[str]:
     if not row or not row[0]:
         return None
     
-    encrypted_key = row[0]
+    stored_key = row[0]
     
+    # Check if this is a plaintext hex key (legacy format)
+    if _is_hex_string(stored_key):
+        print(f"⚠️ Detected plaintext key for {wallet_address[:8]}..., migrating to encrypted format")
+        # Migrate to encrypted format
+        if _migrate_plaintext_key(user_id, wallet_address, stored_key):
+            # Return the plaintext key (it's now encrypted in DB)
+            return stored_key
+        else:
+            # Migration failed, but return the key anyway for this transaction
+            return stored_key
+    
+    # It's an encrypted key, decrypt it
     try:
-        # DECRYPT the private key before returning
-        decrypted_key = decrypt_private_key(encrypted_key)
+        # Decrypt (will try new salt, then legacy salt)
+        decrypted_key = decrypt_private_key(stored_key)
+        
+        # Check if it was decrypted with legacy salt (encryption module logs this)
+        # If so, re-encrypt with new salt
+        try:
+            # Try decrypting with new salt to check if migration needed
+            from encryption import _get_encryption_key
+            from cryptography.fernet import Fernet
+            import base64
+            
+            key = _get_encryption_key()
+            fernet = Fernet(key)
+            encrypted_bytes = base64.b64decode(stored_key.encode('utf-8'))
+            fernet.decrypt(encrypted_bytes)  # If this works, already using new salt
+        except Exception:
+            # Decryption with new salt failed, so it's using legacy salt
+            # Re-encrypt with new salt
+            print(f"🔄 Re-encrypting legacy key for {wallet_address[:8]}... with new stable salt")
+            _migrate_plaintext_key(user_id, wallet_address, decrypted_key)
+        
         return decrypted_key
     except Exception as e:
         print(f"Error decrypting private key: {e}")
