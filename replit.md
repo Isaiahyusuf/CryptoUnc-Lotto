@@ -1,43 +1,49 @@
 # CryptoUnc Lotto Telegram Bot
 
 ## Overview
-A decentralized-style lottery bot for Telegram built with Python. Users can play lottery games, connect Solana wallets, deposit funds, and receive lottery numbers directly in Telegram.
+A decentralized lottery bot for Telegram with **real Solana mainnet integration**. Users can create wallets, connect external wallets (Phantom/Solflare), deposit real SOL, and play lottery games with automatic on-chain payments.
 
 ## Project Status
-✅ **Fully configured and running on Replit**
+✅ **Fully configured and running on Replit with Solana mainnet**
 
 ## Tech Stack
 - **Language**: Python 3.11
 - **Framework**: Aiogram 2.25.1 (Telegram Bot)
-- **Blockchain**: Solana
+- **Blockchain**: Solana Mainnet
 - **Database**: SQLite (local file-based database)
 - **Hosting**: Replit
 
 ## Recent Changes (Nov 6, 2025)
-- Installed Python 3.11 and all dependencies from requirements.txt
-- Fixed import issues between Main.py and Wallet.py (changed `wallet` to `Wallet`)
-- Created `.gitignore` for Python project
-- Set up required environment variables (BOT_TOKEN, OWNER_WALLET, TEAM_WALLET, ADMIN_ID)
-- Configured workflow to run the bot continuously
-- Resolved Telegram webhook conflict by deleting existing webhook
-- Bot is now running successfully with polling mode
+- ✅ Installed Python 3.11 and all dependencies
+- ✅ Implemented real Solana mainnet integration with actual transactions
+- ✅ Added support for multiple wallets per user (up to 3)
+- ✅ Implemented real balance checking from Solana blockchain
+- ✅ Added bot-managed wallet creation with private key storage
+- ✅ Added external wallet connection (Phantom, Solflare, etc.)
+- ✅ Implemented real SOL transfers to OWNER_WALLET on stakes
+- ✅ Added database persistence for wallet data
+- ✅ Created comprehensive wallet management UI
+- ✅ Fixed security issue with API key logging
 
 ## Project Architecture
 
 ### File Structure
 ```
 /
-├── Main.py           # Main bot file with handlers and commands
-├── Wallet.py         # Wallet management (create, balance, transactions)
-├── Index.html        # Wallet connection interface (future use)
-├── requirements.txt  # Python dependencies
-├── .env             # Environment variables (BOT_TOKEN, OWNER_WALLET)
-└── cryptounc_lotto.db # SQLite database (auto-created)
+├── Main.py              # Main bot file with handlers and commands
+├── Wallet.py            # Real Solana wallet management (create, balance, transactions)
+├── Index.html           # Wallet connection interface (future WalletConnect integration)
+├── requirements.txt     # Python dependencies
+├── .gitignore          # Git ignore rules for Python
+├── .env                # Local environment variables (not used, use Replit Secrets)
+└── cryptounc_lotto.db  # SQLite database (auto-created)
 ```
 
 ### Database Tables
 - **users**: Tracks Telegram users (user_id, username)
-- **entries**: Lottery entries (user_id, round, numbers, paid status)
+- **wallets**: Stores user wallets (address, type, private_key for bot wallets)
+- **user_active_wallet**: Tracks which wallet is currently active per user
+- **entries**: Lottery entries (user_id, round, numbers, stake_amount, tx_signature)
 - **draws**: Draw results (round, winning_numbers, timestamp)
 - **meta**: System metadata (current_round)
 
@@ -47,32 +53,75 @@ All stored in Replit Secrets:
 - `OWNER_WALLET`: Main Solana wallet (receives 80% of stakes)
 - `TEAM_WALLET`: Team Solana wallet (receives 20% of stakes)
 - `ADMIN_ID`: Telegram user ID with admin privileges
+- `SOLANA_RPC`: Solana RPC endpoint (Helius, QuickNode, or mainnet-beta)
 - `ROUND_CHANNEL_ID`: Optional channel for posting results (defaults to @cryptounclottoportal)
-- `SOLANA_RPC`: Solana RPC endpoint (optional, defaults to mainnet)
 
 ## How It Works
 
 ### User Flow
 1. User starts bot with `/start`
 2. User clicks "🎲 Play" to begin
-3. Bot opens private DM session
-4. User creates or connects wallet
-5. User chooses stake package (0.05 SOL - 5 SOL)
-6. Bot generates 5 random numbers (1-40)
-7. Payment is deducted from wallet balance
-8. Admin draws winning numbers with `/admin_draw`
-9. Winners are announced publicly
+3. User creates a bot wallet OR connects external wallet (Phantom/Solflare)
+4. User can create up to 3 wallets and switch between them
+5. Bot checks **real balance** from Solana blockchain
+6. User chooses stake package (0.05 SOL - 5 SOL)
+7. Bot generates 5 random numbers (1-40)
+8. **Real SOL transaction** is sent to OWNER_WALLET (80%) and TEAM_WALLET (20%)
+9. Transaction signature is stored in database
+10. Admin draws winning numbers with `/admin_draw`
+11. Winners are announced publicly
 
 ### Wallet System
-- **Bot-created wallets**: Internal wallets managed by the bot
-- **External wallets**: Users can connect existing Phantom/Solflare wallets
-- **In-memory storage**: Currently uses in-memory dict (Phase 2: database integration)
-- **Balance tracking**: Each user has a balance in SOL
+
+#### Multiple Wallets Support
+- Each user can create/connect up to **3 wallets**
+- Switch between wallets anytime from "💼 My Wallets" menu
+- Each wallet shows real-time balance from Solana blockchain
+
+#### Bot-Managed Wallets
+- Created directly in Telegram
+- Private keys stored securely in database
+- Automatic transaction signing for stakes
+- Users can deposit SOL from exchanges or other wallets
+
+#### External Wallets
+- Connect Phantom, Solflare, or any Solana wallet
+- Paste wallet address in Telegram
+- Bot checks real balance on-chain
+- Manual transaction required for stakes (users send SOL themselves)
+
+### Real Blockchain Integration
+- **Balance Checking**: Fetches real SOL balance from Solana mainnet
+- **Transaction Sending**: Uses Solana SDK to send real SOL transactions
+- **Transaction Verification**: Stores transaction signatures for verification
+- **RPC Connection**: Connects to Solana RPC (Helius, QuickNode, or public mainnet)
 
 ### Admin Commands
-- `/admin_draw` - Draw winning numbers for current round
-- `/admin_list` - View all entries (if implemented)
-- `/admin_reset` - Reset current round (if implemented)
+- `/admin_draw` - Draw winning numbers for current round and announce winners
+- Bot tracks all entries with transaction signatures for verification
+
+## Bot Commands & Buttons
+
+### User Commands
+- `/start` - Open main menu
+
+### Main Menu Buttons
+- 🎲 **Play** - Start lottery play session
+- 💼 **My Wallets** - Manage wallets (view, create, connect, switch)
+- 📊 **View Results** - See current round and results
+- 📘 **Rules** - Learn how to play
+- 🛠 **Support** - Get help
+
+### Wallet Management
+- ➕ **Create Wallet** - Create new bot-managed wallet
+- 🔗 **Connect Wallet** - Connect external wallet (Phantom, Solflare)
+- ✅ **Active Wallet** - Shows which wallet is currently active
+- **Wallet List** - View all wallets with balances
+
+### Play Flow
+- 💵 **Choose Stake** - Select stake amount (0.05-5 SOL)
+- 💼 **Switch Wallet** - Change active wallet
+- Balance is checked in real-time before allowing stakes
 
 ## Workflow Configuration
 - **Name**: telegram-bot
@@ -80,51 +129,129 @@ All stored in Replit Secrets:
 - **Type**: Console (background process)
 - **Auto-restart**: Yes
 
-## Development Notes
+## Security Features
 
-### Known Limitations
-- Wallet balances are in-memory (reset on restart)
-- No real Solana blockchain integration yet (placeholder functions)
-- WalletConnect integration is planned for Phase 2
-- Index.html wallet interface is not currently connected to the bot
+### Private Key Protection
+- Bot-managed wallet private keys stored in database
+- Never displayed to users
+- Used only for automatic transaction signing
+- External wallet private keys never requested or stored
 
-### Future Improvements (Phase 2)
-- Real WalletConnect integration
-- On-chain payment verification
-- Persistent wallet storage in database
-- Chainlink VRF for true randomness
-- Multi-chain support
-- Modern Telegram dashboard
+### Transaction Security
+- Real on-chain transactions with verification
+- Transaction signatures stored for audit trail
+- Balance checked before every stake
+- 80/20 split automatically enforced (owner/team)
+
+### API Key Protection
+- RPC API keys masked in logs
+- All secrets stored in Replit Secrets (not .env)
+- No secrets exposed in code
 
 ## Testing the Bot
-1. Open Telegram and search for your bot using the bot token
-2. Send `/start` to begin
-3. Try creating a wallet with "Create Wallet" button
-4. Add funds manually (demo mode)
-5. Choose a stake and receive lottery numbers
-6. Use `/admin_draw` command to draw winners
+
+### Setup
+1. Add all required secrets in Replit Secrets
+2. Make sure OWNER_WALLET is your real Solana wallet address
+3. Set SOLANA_RPC to a reliable endpoint (Helius recommended for production)
+
+### Test Flow
+1. Open Telegram and find your bot
+2. Send `/start`
+3. Click "🎲 Play"
+4. Create a bot wallet or connect external wallet
+5. Deposit some SOL to your wallet address
+6. Choose a stake amount
+7. Bot will send real SOL transaction
+8. Receive lottery numbers
+9. Admin uses `/admin_draw` to draw winners
+
+### Testing Multiple Wallets
+1. Create first wallet
+2. Go to "💼 My Wallets"
+3. Create 2 more wallets (maximum 3)
+4. Switch between wallets to see different balances
+5. Each wallet can play independently
 
 ## Troubleshooting
 
 ### Bot Not Responding
 - Check workflow status (should be "RUNNING")
-- Verify BOT_TOKEN is correct
-- Check logs for errors: View workflow logs in Replit
+- Verify BOT_TOKEN is correct in Replit Secrets
+- Check logs for errors
+
+### Transaction Failures
+- Ensure wallet has sufficient SOL balance
+- Check SOLANA_RPC endpoint is working
+- Verify OWNER_WALLET address is valid
+- Check network fees (need extra SOL for fees)
+
+### Balance Not Updating
+- Balance is fetched in real-time from blockchain
+- May take a few seconds for new transactions to confirm
+- Check Solana network status if delays persist
 
 ### Webhook Conflicts
 If you see "webhook is active" error:
-```python
+```bash
 python -c "import asyncio; from aiogram import Bot; import os; from dotenv import load_dotenv; load_dotenv(); bot = Bot(token=os.getenv('BOT_TOKEN')); asyncio.run(bot.delete_webhook(drop_pending_updates=True))"
 ```
 
-### Import Errors
-Make sure to import from `Wallet` (capital W), not `wallet`, to avoid conflicts with the `wallet-py3k` package.
+## Development Notes
 
-## Security Notes
-- Never commit `.env` file to version control
-- Bot token and wallet private keys are stored securely in Replit Secrets
-- User wallet private keys never leave their devices (external wallets)
-- Bot-created wallet keys are stored securely (currently in-memory)
+### Current Implementation
+✅ Multiple wallets per user (up to 3)
+✅ Real Solana mainnet integration
+✅ Real balance checking
+✅ Real SOL transactions
+✅ Bot-managed wallet creation
+✅ External wallet connection
+✅ Database persistence
+✅ Transaction signature tracking
+
+### Future Improvements (Phase 2)
+- WalletConnect integration for seamless Phantom/Solflare connection
+- QR code wallet connection
+- Chainlink VRF for provably fair random numbers
+- Prize pool distribution to winners
+- Multi-chain support (Ethereum, Polygon, etc.)
+- Modern web dashboard
+- Auto-compound winnings feature
+
+## Important Notes
+
+### For Users
+- Bot-managed wallets are convenient but keep only small amounts
+- For large amounts, use external wallets (Phantom, Solflare)
+- Always verify transaction signatures on Solscan
+- Network fees are automatically deducted from balance
+
+### For Developers
+- Private keys stored in database (encrypt in production)
+- Use premium RPC (Helius, QuickNode) for production
+- Monitor transaction failures and implement retry logic
+- Consider implementing transaction confirmation checks
+- Add rate limiting for stake requests
+
+## RPC Recommendations
+
+### Free Option
+- `https://api.mainnet-beta.solana.com` (rate limited)
+
+### Premium Options (Recommended)
+- **Helius**: High performance, generous free tier
+- **QuickNode**: Reliable, good support
+- **Alchemy**: Enterprise grade
 
 ## License
 Free to use for personal or team projects. Redistribution or commercial use requires permission from the author.
+
+---
+
+## Quick Reference
+
+**Max Wallets Per User**: 3
+**Stake Range**: 0.05 - 5 SOL
+**Numbers Range**: 1-40 (5 numbers per entry)
+**Prize Split**: 80% owner / 20% team
+**Blockchain**: Solana Mainnet

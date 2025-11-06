@@ -595,7 +595,13 @@ async def cmd_admin_draw(message: types.Message):
 async def main():
     init_db()
     print("🤖 CryptoUnc Lotto Bot with Real Solana Integration starting...")
-    print(f"📍 Connected to: {os.getenv('SOLANA_RPC', 'mainnet-beta')}")
+    rpc_endpoint = os.getenv('SOLANA_RPC', 'mainnet-beta')
+    # Mask API key in logs for security
+    if '?' in rpc_endpoint:
+        rpc_display = rpc_endpoint.split('?')[0] + "?api-key=***"
+    else:
+        rpc_display = rpc_endpoint
+    print(f"📍 Connected to: {rpc_display}")
     await dp.start_polling(bot)
 
 
