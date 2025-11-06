@@ -1,120 +1,95 @@
 # wallet.py
 import os
 import secrets
-from solana.publickey import PublicKey
-from solana.keypair import Keypair
-from solana.rpc.async_api import AsyncClient
+from decimal import Decimal
 
-# Constants
-SOLANA_RPC = os.getenv("SOLANA_RPC", "https://api.mainnet-beta.solana.com")
-ADMIN_WALLET = os.getenv("ADMIN_WALLET")  # admin wallet to receive stakes
+try:
+    from solders.keypair import Keypair
+except ImportError:
+    from solana.keypair import Keypair
 
-# In-memory wallet storage for demo (replace with DB for production)
-user_wallets = {}  # {telegram_id: {"wallets": [{"address":..., "type":"phantom"/"bot"}], "active_wallet":...}}
+# In-memory wallet storage (for demo - replace with DB for production)
+user_wallets = {}  # {user_id: {"address": str, "balance": Decimal, "type": str}}
+wallet_balances = {}  # {wallet_address: Decimal} - for OWNER_WALLET and TEAM_WALLET
 
-# ------------------------
-# Bot Wallet Creation
-# ------------------------
-def create_bot_wallet():
+def get_user_wallet(user_id):
     """
-    Creates an internal wallet for the bot (for the user)
+    Get user's wallet address
+    Returns: wallet address (str) or None
+    """
+    if user_id in user_wallets:
+        return user_wallets[user_id]["address"]
+    return None
+
+
+def create_wallet(user_id):
+    """
+    Creates an internal wallet for the user
+    Returns: public key (str)
     """
     keypair = Keypair()
-    return {
-        "address": str(keypair.public_key),
-        "secret": keypair.secret_key.hex(),  # store securely if persistent
-        "balance": 0,
+    pubkey = str(keypair.pubkey())
+    
+    user_wallets[user_id] = {
+        "address": pubkey,
+        "balance": Decimal("0"),
         "type": "bot"
     }
+    
+    return pubkey
 
-# ------------------------
-# Connect External Wallet
-# ------------------------
-def connect_external_wallet(telegram_id, wallet_address, wallet_type="phantom"):
+
+def save_user_wallet(user_id, wallet_address):
     """
-    Connect an external wallet (Phantom, Solflare, etc.)
+    Save an external wallet address for a user
     """
-    wallet = {
+    user_wallets[user_id] = {
         "address": wallet_address,
-        "type": wallet_type,
-        "balance": 0  # will fetch from chain
+        "balance": Decimal("0"),
+        "type": "external"
     }
-    if telegram_id not in user_wallets:
-        user_wallets[telegram_id] = {"wallets": [], "active_wallet": wallet_address}
-    user_wallets[telegram_id]["wallets"].append(wallet)
-    user_wallets[telegram_id]["active_wallet"] = wallet_address
-    return wallet
 
-# ------------------------
-# Fetch Balance
-# ------------------------
-async def get_wallet_balance(wallet_address):
-    """
-    Fetch the balance of a Solana wallet
-    """
-    async with AsyncClient(SOLANA_RPC) as client:
-        resp = await client.get_balance(PublicKey(wallet_address))
-        lamports = resp['result']['value']
-        sol_balance = lamports / 1_000_000_000
-        return sol_balance
 
-# ------------------------
-# Get User Wallets
-# ------------------------
-def get_user_wallets(telegram_id):
+def get_wallet_balance(user_id):
     """
-    Return a list of user wallets
+    Get user's wallet balance
+    Returns: Decimal balance
     """
-    if telegram_id in user_wallets:
-        return user_wallets[telegram_id]["wallets"]
-    return []
+    if user_id in user_wallets:
+        return user_wallets[user_id]["balance"]
+    return Decimal("0")
 
-# ------------------------
-# Get Active Wallet
-# ------------------------
-def get_active_wallet(telegram_id):
-    """
-    Return user's active wallet
-    """
-    if telegram_id in user_wallets:
-        return user_wallets[telegram_id]["active_wallet"]
-    return None
 
-# ------------------------
-# Select Wallet
-# ------------------------
-def set_active_wallet(telegram_id, wallet_address):
+def deduct_wallet_balance(user_id, amount):
     """
-    Set which wallet the user wants to use for a play
+    Deduct amount from user's wallet balance
     """
-    if telegram_id in user_wallets:
-        for w in user_wallets[telegram_id]["wallets"]:
-            if w["address"] == wallet_address:
-                user_wallets[telegram_id]["active_wallet"] = wallet_address
-                return True
-    return False
+    if user_id in user_wallets:
+        user_wallets[user_id]["balance"] -= Decimal(str(amount))
 
-# ------------------------
-# Generate WalletConnect Link (Placeholder)
-# ------------------------
-def get_walletconnect_link(wallet_type="phantom"):
-    """
-    Return a WalletConnect link or QR code URL for the bot.
-    Placeholder: implement actual WalletConnect session for Phantom/Solflare.
-    """
-    session_id = secrets.token_hex(8)
-    return f"https://walletconnect.com/connect?session={session_id}&type={wallet_type}"
 
-# ------------------------
-# Deposit / Update Balance
-# ------------------------
-def add_funds(telegram_id, wallet_address, amount):
+def add_funds_to_wallet(wallet_address, amount):
     """
-    Add funds to a user's wallet (internal or external)
+    Add funds to a wallet (used for OWNER_WALLET, TEAM_WALLET, or user wallets)
     """
-    if telegram_id in user_wallets:
-        for w in user_wallets[telegram_id]["wallets"]:
-            if w["address"] == wallet_address:
-                w["balance"] += amount
-                return w["balance"]
-    return None
+    # Check if it's a user wallet
+    for user_id, wallet_data in user_wallets.items():
+        if wallet_data["address"] == wallet_address:
+            wallet_data["balance"] += Decimal(str(amount))
+            return
+    
+    # Otherwise track in wallet_balances (for owner/team wallets)
+    if wallet_address not in wallet_balances:
+        wallet_balances[wallet_address] = Decimal("0")
+    wallet_balances[wallet_address] += Decimal(str(amount))
+
+
+def add_user_funds(user_id, amount):
+    """
+    Add funds to a user's wallet balance (for testing/demo purposes)
+    """
+    if user_id not in user_wallets:
+        return False
+    
+    user_wallets[user_id]["balance"] += Decimal(str(amount))
+    return True
