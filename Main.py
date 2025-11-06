@@ -1,4 +1,4 @@
-# main.py — CryptoUnc Lotto with Wallet Integration
+# Main.py — CryptoUnc Lotto with Real Solana Wallet Integration
 
 import os
 import asyncio
@@ -11,11 +11,17 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from dotenv import load_dotenv
 
 from Wallet import (
-    get_user_wallet,
+    get_user_wallets,
+    get_active_wallet,
+    set_active_wallet,
     create_wallet,
-    get_wallet_balance,
-    deduct_wallet_balance,
-    add_funds_to_wallet,
+    save_external_wallet,
+    get_real_balance,
+    send_sol,
+    get_wallet_private_key,
+    get_user_wallet_count,
+    delete_wallet,
+    MAX_WALLETS_PER_USER
 )
 
 import sqlite3
@@ -70,6 +76,8 @@ def init_db():
             user_id INTEGER,
             round INTEGER,
             numbers TEXT,
+            stake_amount REAL,
+            tx_signature TEXT,
             paid INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
@@ -133,12 +141,12 @@ def save_user(user_id: int, username: str):
     conn.close()
 
 
-def add_entry(user_id: int, round_num: int, numbers, paid=0):
+def add_entry(user_id: int, round_num: int, numbers, stake_amount: float, tx_signature: str = "", paid=0):
     conn = get_db_conn()
     c = conn.cursor()
     c.execute(
-        "INSERT INTO entries(user_id, round, numbers, paid) VALUES (?, ?, ?, ?)",
-        (user_id, round_num, numbers_to_str(numbers), paid)
+        "INSERT INTO entries(user_id, round, numbers, stake_amount, tx_signature, paid) VALUES (?, ?, ?, ?, ?, ?)",
+        (user_id, round_num, numbers_to_str(numbers), stake_amount, tx_signature, paid)
     )
     conn.commit()
     conn.close()
@@ -184,45 +192,96 @@ async def cmd_start(message: types.Message):
     save_user(message.from_user.id, message.from_user.username or "")
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎲 Play", callback_data="play_now")],
+        [InlineKeyboardButton(text="💼 My Wallets", callback_data="my_wallets")],
         [InlineKeyboardButton(text="📊 View Results", callback_data="view_results")],
         [InlineKeyboardButton(text="📘 Rules", callback_data="rules")],
         [InlineKeyboardButton(text="🛠 Support", callback_data="support")]
     ])
     await message.answer(
-        "🎟️ <b>Welcome to CryptoUnc Lotto!</b>\n\nPick 5 numbers (1–40). Choose stake from available packages.\n",
+        "🎟️ <b>Welcome to CryptoUnc Lotto!</b>\n\n"
+        "Play the lottery with real SOL on Solana mainnet!\n"
+        "Pick 5 numbers (1–40) and choose your stake.\n",
         reply_markup=keyboard,
         parse_mode="HTML"
     )
 
 
-async def start_private_play(user_id: int):
-    # Check wallet first
-    wallet = get_user_wallet(user_id)
-    keyboard = InlineKeyboardMarkup()
-    if wallet:
-        # User has wallet
-        keyboard.inline_keyboard = [
-            [InlineKeyboardButton(text="💵 Choose Stake", callback_data="choose_stake")],
-            [InlineKeyboardButton(text="Add Funds", callback_data="add_funds")],
-            [InlineKeyboardButton(text="ℹ️ How to Play", callback_data="rules")]
-        ]
-        await bot.send_message(user_id,
-            f"🎮 <b>Private Lotto Session</b>\n\nWallet detected: <code>{wallet}</code>\nChoose your next action.",
-            reply_markup=keyboard,
-            parse_mode="HTML"
-        )
+async def show_wallet_menu(user_id: int):
+    """Show wallet management menu"""
+    wallets = get_user_wallets(user_id)
+    active_wallet = get_active_wallet(user_id)
+    wallet_count = get_user_wallet_count(user_id)
+    
+    keyboard_buttons = []
+    
+    if wallets:
+        text = "💼 <b>Your Wallets</b>\n\n"
+        for i, wallet in enumerate(wallets, 1):
+            balance = await get_real_balance(wallet["address"])
+            is_active = "✅" if wallet["address"] == active_wallet else ""
+            text += f"{is_active} <b>{wallet['name']}</b>\n"
+            text += f"   Type: {wallet['type'].capitalize()}\n"
+            text += f"   Address: <code>{wallet['address'][:8]}...{wallet['address'][-8:]}</code>\n"
+            text += f"   Balance: {balance} SOL\n\n"
+            
+            # Add button for each wallet
+            keyboard_buttons.append([
+                InlineKeyboardButton(text=f"{'✅ ' if is_active else ''}{wallet['name']}", 
+                                   callback_data=f"select_wallet_{i-1}")
+            ])
     else:
-        # Offer create/connect wallet
-        keyboard.inline_keyboard = [
+        text = "💼 <b>Your Wallets</b>\n\nYou don't have any wallets yet.\n"
+    
+    # Add create/connect buttons if under limit
+    if wallet_count < MAX_WALLETS_PER_USER:
+        keyboard_buttons.append([
+            InlineKeyboardButton(text="➕ Create Wallet", callback_data="create_wallet"),
+            InlineKeyboardButton(text="🔗 Connect Wallet", callback_data="connect_wallet")
+        ])
+    else:
+        text += f"\n⚠️ You've reached the maximum of {MAX_WALLETS_PER_USER} wallets."
+    
+    keyboard_buttons.append([InlineKeyboardButton(text="🔙 Back", callback_data="back_to_main")])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+    
+    await bot.send_message(user_id, text, reply_markup=keyboard, parse_mode="HTML")
+
+
+async def start_private_play(user_id: int):
+    """Start lottery play session"""
+    wallet = get_active_wallet(user_id)
+    
+    if not wallet:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="💳 Create Wallet", callback_data="create_wallet")],
             [InlineKeyboardButton(text="🔗 Connect Wallet", callback_data="connect_wallet")],
             [InlineKeyboardButton(text="ℹ️ How to Play", callback_data="rules")]
-        ]
+        ])
         await bot.send_message(user_id,
-            "🎮 <b>Private Lotto Session</b>\n\nYou need a wallet to play. Choose an option below.",
+            "🎮 <b>Private Lotto Session</b>\n\n"
+            "You need a wallet to play. Create a new wallet or connect your existing one.",
             reply_markup=keyboard,
             parse_mode="HTML"
         )
+        return
+    
+    # Get balance
+    balance = await get_real_balance(wallet)
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💵 Choose Stake", callback_data="choose_stake")],
+        [InlineKeyboardButton(text="💼 Switch Wallet", callback_data="my_wallets")],
+        [InlineKeyboardButton(text="ℹ️ How to Play", callback_data="rules")]
+    ])
+    
+    await bot.send_message(user_id,
+        f"🎮 <b>Private Lotto Session</b>\n\n"
+        f"Active Wallet: <code>{wallet[:8]}...{wallet[-8:]}</code>\n"
+        f"Balance: <b>{balance} SOL</b>\n\n"
+        f"Choose your next action:",
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
 
 
 @dp.callback_query()
@@ -234,88 +293,249 @@ async def inline_handler(query: types.CallbackQuery):
         await query.answer()
         await start_private_play(uid)
 
+    elif data == "my_wallets":
+        await query.answer()
+        await show_wallet_menu(uid)
+
+    elif data.startswith("select_wallet_"):
+        await query.answer()
+        wallet_index = int(data.split("_")[2])
+        wallets = get_user_wallets(uid)
+        
+        if 0 <= wallet_index < len(wallets):
+            selected_wallet = wallets[wallet_index]
+            set_active_wallet(uid, selected_wallet["address"])
+            await bot.send_message(uid,
+                f"✅ Switched to <b>{selected_wallet['name']}</b>\n"
+                f"Address: <code>{selected_wallet['address']}</code>",
+                parse_mode="HTML"
+            )
+            await show_wallet_menu(uid)
+
     elif data == "create_wallet":
         await query.answer()
-        pubkey = create_wallet(uid)
-        await bot.send_message(uid,
-            f"✅ Wallet created successfully!\nYour wallet: <code>{pubkey}</code>\nYou can now add funds and play.",
-            parse_mode="HTML"
-        )
-        await start_private_play(uid)
+        wallet_count = get_user_wallet_count(uid)
+        
+        if wallet_count >= MAX_WALLETS_PER_USER:
+            await bot.send_message(uid,
+                f"⚠️ You've reached the maximum of {MAX_WALLETS_PER_USER} wallets."
+            )
+            return
+        
+        wallet = create_wallet(uid)
+        if wallet:
+            await bot.send_message(uid,
+                f"✅ <b>Wallet created successfully!</b>\n\n"
+                f"Name: {wallet['name']}\n"
+                f"Address: <code>{wallet['address']}</code>\n\n"
+                f"⚠️ <b>Important:</b> This is a bot-managed wallet. "
+                f"Save your address to deposit funds from exchanges or other wallets.\n\n"
+                f"You can now deposit SOL and play!",
+                parse_mode="HTML"
+            )
+            set_active_wallet(uid, wallet['address'])
+            await start_private_play(uid)
+        else:
+            await bot.send_message(uid, "❌ Failed to create wallet. Please try again.")
 
     elif data == "connect_wallet":
         await query.answer()
-        await bot.send_message(uid, "🔗 Please send your existing wallet public key now:")
+        wallet_count = get_user_wallet_count(uid)
+        
+        if wallet_count >= MAX_WALLETS_PER_USER:
+            await bot.send_message(uid,
+                f"⚠️ You've reached the maximum of {MAX_WALLETS_PER_USER} wallets."
+            )
+            return
+        
+        await bot.send_message(uid,
+            "🔗 <b>Connect External Wallet</b>\n\n"
+            "Please send your Solana wallet public address now.\n"
+            "This can be from Phantom, Solflare, or any Solana wallet.\n\n"
+            "⚠️ <b>Never share your private key or seed phrase!</b>",
+            parse_mode="HTML"
+        )
 
     elif data == "choose_stake":
         await query.answer()
-        # show stake packages
+        # Check balance first
+        wallet = get_active_wallet(uid)
+        if not wallet:
+            await bot.send_message(uid, "❌ Please create or connect a wallet first.")
+            return
+        
+        balance = await get_real_balance(wallet)
+        
+        # Show stake packages
         rows = []
         temp = []
         for i, pkg in enumerate(STAKE_PACKAGES, 1):
-            temp.append(InlineKeyboardButton(text=f"{pkg} SOL", callback_data=f"stake_{pkg}"))
+            # Disable if balance insufficient
+            if balance >= pkg:
+                temp.append(InlineKeyboardButton(text=f"{pkg} SOL", callback_data=f"stake_{pkg}"))
+            else:
+                temp.append(InlineKeyboardButton(text=f"🔒 {pkg} SOL", callback_data="insufficient_funds"))
+            
             if i % 3 == 0:
                 rows.append(temp)
                 temp = []
         if temp:
             rows.append(temp)
+        
         keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
-        await bot.send_message(uid, "💵 Choose a stake package:", reply_markup=keyboard)
+        await bot.send_message(uid,
+            f"💵 <b>Choose Stake Package</b>\n\n"
+            f"Your balance: <b>{balance} SOL</b>\n"
+            f"Available packages:",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+
+    elif data == "insufficient_funds":
+        await query.answer("❌ Insufficient balance for this stake amount", show_alert=True)
 
     elif data.startswith("stake_"):
-        await query.answer()
+        await query.answer("Processing stake...")
         amount = Decimal(data.split("_", 1)[1])
-        wallet_balance = get_wallet_balance(uid)
-        if wallet_balance < amount:
+        
+        wallet = get_active_wallet(uid)
+        if not wallet:
+            await bot.send_message(uid, "❌ Please create or connect a wallet first.")
+            return
+        
+        # Check real balance
+        balance = await get_real_balance(wallet)
+        if balance < amount:
             await bot.send_message(uid,
-                f"⚠️ Insufficient funds in wallet. Your balance: {wallet_balance} SOL.\nAdd funds to play.",
+                f"⚠️ <b>Insufficient funds!</b>\n\n"
+                f"Your balance: {balance} SOL\n"
+                f"Required: {amount} SOL\n\n"
+                f"Please deposit more SOL to your wallet:\n"
+                f"<code>{wallet}</code>",
                 parse_mode="HTML"
             )
             return
-        # Deduct funds (split 80/20)
-        owner_amt = round(amount * Decimal("0.8"), 9)
-        team_amt = amount - owner_amt
-        deduct_wallet_balance(uid, amount)  # subtract total
-        add_funds_to_wallet(OWNER_WALLET, owner_amt)
-        add_funds_to_wallet(TEAM_WALLET, team_amt)
-
-        # Generate numbers
+        
+        # Get private key for bot-managed wallets
+        private_key = get_wallet_private_key(uid, wallet)
+        
+        if not private_key:
+            await bot.send_message(uid,
+                "⚠️ This is an external wallet. Please send the transaction manually:\n\n"
+                f"Send <b>{amount} SOL</b> to:\n"
+                f"<code>{OWNER_WALLET}</code>\n\n"
+                "Then reply with your transaction signature.",
+                parse_mode="HTML"
+            )
+            return
+        
+        # Send real SOL transaction (80% to owner, 20% to team)
+        owner_amt = amount * Decimal("0.8")
+        team_amt = amount * Decimal("0.2")
+        
+        await bot.send_message(uid, "⏳ Processing payment...")
+        
+        # Send to owner wallet
+        result = await send_sol(wallet, OWNER_WALLET, owner_amt, private_key)
+        
+        if not result["success"]:
+            await bot.send_message(uid,
+                f"❌ <b>Transaction failed!</b>\n\n"
+                f"Error: {result.get('error', 'Unknown error')}\n\n"
+                f"Please try again or contact support.",
+                parse_mode="HTML"
+            )
+            return
+        
+        tx_signature = result["signature"]
+        
+        # Send to team wallet (if different from owner)
+        if TEAM_WALLET and TEAM_WALLET != OWNER_WALLET:
+            await send_sol(wallet, TEAM_WALLET, team_amt, private_key)
+        
+        # Generate lottery numbers
         round_num = get_current_round()
         lottery_numbers = sorted(random.sample(range(1, 41), 5))
-        add_entry(uid, round_num, lottery_numbers, paid=1)
+        add_entry(uid, round_num, lottery_numbers, float(amount), tx_signature, paid=1)
+        
         await bot.send_message(uid,
-            f"✅ Stake paid!\n🎲 Your lottery numbers for Round {round_num}:\n<b>{numbers_to_str(lottery_numbers)}</b>\nGood luck!",
+            f"✅ <b>Payment successful!</b>\n\n"
+            f"Transaction: <code>{tx_signature[:16]}...</code>\n"
+            f"Amount: {amount} SOL\n\n"
+            f"🎲 <b>Your lottery numbers for Round {round_num}:</b>\n"
+            f"<b>{numbers_to_str(lottery_numbers)}</b>\n\n"
+            f"Good luck! 🍀",
             parse_mode="HTML"
         )
 
     elif data == "rules":
         await query.message.answer(
-            "📘 <b>Game Rules</b>\n1. Connect wallet\n2. Add funds if needed\n3. Choose stake\n4. Receive 5 random numbers\n5. Wait for admin draw",
+            "📘 <b>Game Rules</b>\n\n"
+            "1. Create or connect a Solana wallet\n"
+            "2. Deposit SOL to your wallet\n"
+            "3. Choose a stake amount (0.05 - 5 SOL)\n"
+            "4. Receive 5 random numbers (1-40)\n"
+            "5. Wait for admin to draw winning numbers\n"
+            "6. Winners are announced publicly!\n\n"
+            "💰 Stakes are split:\n"
+            "• 80% to prize pool\n"
+            "• 20% to team/operations",
             parse_mode="HTML"
         )
 
-    elif data == "add_funds":
-        await query.answer()
-        await bot.send_message(uid,
-            "💰 Add funds to your wallet using your Solana wallet. This feature can be connected to real payment flow later.",
+    elif data == "support":
+        await query.message.answer(
+            "🛠 <b>Support</b>\n\n"
+            "For help or questions, contact our support team.\n"
+            "We're here to assist you!",
             parse_mode="HTML"
         )
+
+    elif data == "view_results":
+        await query.answer()
+        cur_round = get_current_round()
+        await bot.send_message(uid,
+            f"📊 <b>Current Round:</b> {cur_round}\n\n"
+            "Results will be announced after the draw!",
+            parse_mode="HTML"
+        )
+
+    elif data == "back_to_main":
+        await query.answer()
+        await cmd_start(query.message)
 
 
 @dp.message()
 async def generic_message_handler(message: types.Message):
     uid = message.from_user.id
     text = message.text.strip()
-    # If user is connecting wallet
-    if len(text) > 30:  # crude check for a public key
-        pubkey = text
-        from Wallet import save_user_wallet
-        save_user_wallet(uid, pubkey)
-        await bot.send_message(uid,
-            f"✅ Wallet connected: <code>{pubkey}</code>\nNow you can play!",
-            parse_mode="HTML"
-        )
-        await start_private_play(uid)
+    
+    # Check if it's a Solana wallet address (32-44 chars, alphanumeric)
+    if 32 <= len(text) <= 44 and text.isalnum():
+        wallet_count = get_user_wallet_count(uid)
+        
+        if wallet_count >= MAX_WALLETS_PER_USER:
+            await bot.send_message(uid,
+                f"⚠️ You've reached the maximum of {MAX_WALLETS_PER_USER} wallets."
+            )
+            return
+        
+        # Try to save as external wallet
+        if save_external_wallet(uid, text, "external"):
+            set_active_wallet(uid, text)
+            balance = await get_real_balance(text)
+            await bot.send_message(uid,
+                f"✅ <b>Wallet connected successfully!</b>\n\n"
+                f"Address: <code>{text}</code>\n"
+                f"Balance: {balance} SOL\n\n"
+                f"You can now play!",
+                parse_mode="HTML"
+            )
+            await start_private_play(uid)
+        else:
+            await bot.send_message(uid,
+                "❌ Failed to connect wallet. It may already be connected."
+            )
 
 
 # ---------------------------
@@ -330,11 +550,12 @@ async def cmd_admin_draw(message: types.Message):
     if not is_admin(message.from_user.id):
         await message.reply("⛔ Not authorized.")
         return
+    
     cur_round = get_current_round()
     winning_numbers = sorted(random.sample(range(1, 41), 5))
     save_draw(cur_round, winning_numbers)
 
-    # announce winners
+    # Announce winners
     rows = get_entries_for_round(cur_round)
     winners = []
     for row in rows:
@@ -345,10 +566,14 @@ async def cmd_admin_draw(message: types.Message):
         if sorted(entry_nums) == winning_numbers:
             winners.append(uid)
 
-    announce_text = f"🏆 <b>CryptoUnc Lotto — Round {cur_round} Results</b>\nWinning Numbers: <code>{numbers_to_str(winning_numbers)}</code>\n\n"
+    announce_text = (
+        f"🏆 <b>CryptoUnc Lotto — Round {cur_round} Results</b>\n"
+        f"Winning Numbers: <code>{numbers_to_str(winning_numbers)}</code>\n\n"
+    )
+    
     if winners:
         mentions = [f"<a href='tg://user?id={w}'>Player</a>" for w in winners]
-        announce_text += "Winners:\n" + "\n".join(mentions)
+        announce_text += "🎉 Winners:\n" + "\n".join(mentions)
     else:
         announce_text += "No winners this round. Better luck next time!"
 
@@ -361,7 +586,7 @@ async def cmd_admin_draw(message: types.Message):
         await message.reply(announce_text, parse_mode="HTML")
 
     increment_round()
-    await message.reply(f"✅ Draw completed. Moved to next round.")
+    await message.reply(f"✅ Draw completed. Moved to Round {cur_round + 1}.")
 
 
 # ---------------------------
@@ -369,7 +594,8 @@ async def cmd_admin_draw(message: types.Message):
 # ---------------------------
 async def main():
     init_db()
-    print("🤖 CryptoUnc Lotto TG Bot with Wallet Integration starting...")
+    print("🤖 CryptoUnc Lotto Bot with Real Solana Integration starting...")
+    print(f"📍 Connected to: {os.getenv('SOLANA_RPC', 'mainnet-beta')}")
     await dp.start_polling(bot)
 
 
