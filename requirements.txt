@@ -4,3 +4,11 @@ base58
 construct==2.10.56
 requests
 aiohttp
+aiogram
+aiohttp
+base58
+construct
+python-dotenv
+requests
+solana
+wallet-py3k
