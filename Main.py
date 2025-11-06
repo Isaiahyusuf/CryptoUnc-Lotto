@@ -35,18 +35,11 @@ TEAM_WALLET = os.getenv("TEAM_WALLET")
 ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
 ROUND_CHANNEL = os.getenv("ROUND_CHANNEL_ID", "@cryptounclottoportal")
 
-# ==========================
-# 🔹 Wallet Button Handlers
-# ==========================
-dp.register_callback_query_handler(handle_send_sol, lambda c: c.data == "send_sol", state="*")
-dp.register_message_handler(handle_address, state=SendSolState.waiting_for_address)
-dp.register_message_handler(handle_amount, state=SendSolState.waiting_for_amount)
-
-dp.register_callback_query_handler(handle_remove_wallet, lambda c: c.data == "remove_wallet", state="*")
-
-dp.register_callback_query_handler(handle_view_key, lambda c: c.data == "view_key", state="*")
-dp.register_message_handler(handle_pin_entry, state=PinState.waiting_for_pin)
-
+# Validate required environment variables
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN environment variable is required")
+if not OWNER_WALLET:
+    raise ValueError("OWNER_WALLET environment variable is required")
 
 STAKE_PACKAGES = [
     Decimal("0.05"),
@@ -498,12 +491,20 @@ async def inline_handler(query: types.CallbackQuery):
         )
 
     elif data == "support":
-        await query.message.answer(
-            "🛠 <b>Support</b>\n\n"
-            "For help or questions, contact our support team.\n"
-            "We're here to assist you!",
-            parse_mode="HTML"
-        )
+        support_username = os.getenv("SUPPORT_USERNAME", "")
+        support_text = "🛠 <b>Support & Help</b>\n\n"
+        support_text += "Need help? Here's how to reach us:\n\n"
+        
+        if support_username:
+            support_text += f"📱 Contact: @{support_username}\n\n"
+        
+        support_text += "Common issues:\n"
+        support_text += "• Wallet connection: Make sure you're using a valid Solana address\n"
+        support_text += "• Balance not showing: Wait a few seconds for blockchain sync\n"
+        support_text += "• Transaction failed: Check your wallet balance\n\n"
+        support_text += "📧 For urgent matters, message our admin directly."
+        
+        await query.message.answer(support_text, parse_mode="HTML")
 
     elif data == "view_results":
         await query.answer()
@@ -575,31 +576,43 @@ async def cmd_admin_draw(message: types.Message):
     # Announce winners
     rows = get_entries_for_round(cur_round)
     winners = []
+    total_entries = 0
+    
     for row in rows:
         entry_id, uid, numbers_str, paid = row
         if not paid:
             continue
+        total_entries += 1
         entry_nums = str_to_numbers(numbers_str)
         if sorted(entry_nums) == winning_numbers:
             winners.append(uid)
 
     announce_text = (
-        f"🏆 <b>CryptoUnc Lotto — Round {cur_round} Results</b>\n"
-        f"Winning Numbers: <code>{numbers_to_str(winning_numbers)}</code>\n\n"
+        f"🏆 <b>CryptoUnc Lotto — Round {cur_round} Results</b>\n\n"
+        f"🎲 Winning Numbers: <code>{numbers_to_str(winning_numbers)}</code>\n"
+        f"📊 Total Entries: {total_entries}\n\n"
     )
 
     if winners:
-        mentions = [f"<a href='tg://user?id={w}'>Player</a>" for w in winners]
-        announce_text += "🎉 Winners:\n" + "\n".join(mentions)
+        winner_count = len(winners)
+        mentions = [f"<a href='tg://user?id={w}'>Winner #{i+1}</a>" for i, w in enumerate(winners)]
+        announce_text += f"🎉 <b>{winner_count} Winner(s)!</b>\n\n" + "\n".join(mentions)
+        announce_text += f"\n\n🎊 Congratulations to all winners!"
     else:
-        announce_text += "No winners this round. Better luck next time!"
+        announce_text += "😔 No winners this round. Better luck next time!\n\n"
+        announce_text += "🎰 Try again in the next round!"
 
+    # Post to channel
+    posted_to_channel = False
     if ROUND_CHANNEL:
         try:
             await bot.send_message(ROUND_CHANNEL, announce_text, parse_mode="HTML")
-        except Exception:
-            await message.reply(announce_text, parse_mode="HTML")
-    else:
+            posted_to_channel = True
+            await message.reply(f"✅ Results posted to {ROUND_CHANNEL}")
+        except Exception as e:
+            await message.reply(f"⚠️ Failed to post to channel: {str(e)}\n\nResults:\n{announce_text}", parse_mode="HTML")
+    
+    if not posted_to_channel:
         await message.reply(announce_text, parse_mode="HTML")
 
     increment_round()

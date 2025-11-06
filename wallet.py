@@ -5,6 +5,8 @@ from decimal import Decimal
 from typing import Optional, List, Dict
 import asyncio
 
+from encryption import encrypt_private_key, decrypt_private_key, is_encryption_configured
+
 try:
     from solders.keypair import Keypair
     from solders.pubkey import Pubkey
@@ -156,16 +158,23 @@ def set_active_wallet(user_id: int, wallet_address: str) -> bool:
 def create_wallet(user_id: int, wallet_name: Optional[str] = None) -> Optional[Dict]:
     """
     Create a new bot-managed wallet for the user
-    Returns wallet dict with address and private key
+    Returns wallet dict with address (private key is ENCRYPTED in database)
     """
     # Check wallet limit
     if get_user_wallet_count(user_id) >= MAX_WALLETS_PER_USER:
         return None
+    
+    # Verify encryption is configured
+    if not is_encryption_configured():
+        raise ValueError("Encryption not configured. Set ENCRYPTION_KEY environment variable.")
 
     # Generate new keypair
     keypair = Keypair()
     wallet_address = str(keypair.pubkey())
-    private_key = bytes(keypair).hex()  # Store securely
+    private_key_hex = bytes(keypair).hex()
+    
+    # ENCRYPT the private key before storing
+    encrypted_private_key = encrypt_private_key(private_key_hex)
 
     if not wallet_name:
         count = get_user_wallet_count(user_id) + 1
@@ -175,10 +184,11 @@ def create_wallet(user_id: int, wallet_name: Optional[str] = None) -> Optional[D
     c = conn.cursor()
 
     try:
+        # Store ENCRYPTED private key in database
         c.execute("""
             INSERT INTO wallets (user_id, wallet_address, wallet_type, wallet_name, private_key)
             VALUES (?, ?, ?, ?, ?)
-        """, (user_id, wallet_address, "bot", wallet_name, private_key))
+        """, (user_id, wallet_address, "bot", wallet_name, encrypted_private_key))
 
         # Set as active if it's the first wallet
         if get_user_wallet_count(user_id) == 0:
@@ -193,8 +203,8 @@ def create_wallet(user_id: int, wallet_name: Optional[str] = None) -> Optional[D
         return {
             "address": wallet_address,
             "type": "bot",
-            "name": wallet_name,
-            "private_key": private_key
+            "name": wallet_name
+            # Note: Do NOT return private key for security
         }
     except sqlite3.IntegrityError:
         conn.close()
@@ -238,7 +248,10 @@ def save_external_wallet(user_id: int, wallet_address: str, wallet_type: str = "
 
 
 def get_wallet_private_key(user_id: int, wallet_address: str) -> Optional[str]:
-    """Get private key for a bot-managed wallet"""
+    """
+    Get DECRYPTED private key for a bot-managed wallet
+    Returns the decrypted hex private key, or None if not found/not bot wallet
+    """
     conn = get_db_conn()
     c = conn.cursor()
     c.execute("""
@@ -247,7 +260,19 @@ def get_wallet_private_key(user_id: int, wallet_address: str) -> Optional[str]:
     """, (user_id, wallet_address))
     row = c.fetchone()
     conn.close()
-    return row[0] if row else None
+    
+    if not row or not row[0]:
+        return None
+    
+    encrypted_key = row[0]
+    
+    try:
+        # DECRYPT the private key before returning
+        decrypted_key = decrypt_private_key(encrypted_key)
+        return decrypted_key
+    except Exception as e:
+        print(f"Error decrypting private key: {e}")
+        return None
 
 
 async def send_sol(from_address: str, to_address: str, amount_sol: Decimal, private_key_hex: str) -> Dict:
