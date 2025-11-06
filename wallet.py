@@ -34,7 +34,7 @@ def init_wallet_db():
     """Initialize wallet tables in database"""
     conn = get_db_conn()
     c = conn.cursor()
-    
+
     # Wallets table - stores user wallets
     c.execute("""
         CREATE TABLE IF NOT EXISTS wallets (
@@ -49,7 +49,7 @@ def init_wallet_db():
             UNIQUE(user_id, wallet_address)
         )
     """)
-    
+
     # User active wallet tracker
     c.execute("""
         CREATE TABLE IF NOT EXISTS user_active_wallet (
@@ -58,7 +58,7 @@ def init_wallet_db():
             FOREIGN KEY (active_wallet_address) REFERENCES wallets(wallet_address)
         )
     """)
-    
+
     conn.commit()
     conn.close()
 
@@ -72,7 +72,7 @@ async def get_real_balance(wallet_address: str) -> Decimal:
         async with AsyncClient(SOLANA_RPC) as client:
             pubkey = Pubkey.from_string(wallet_address)
             response = await client.get_balance(pubkey, commitment=Confirmed)
-            
+
             if response.value is not None:
                 lamports = response.value
                 sol_balance = Decimal(lamports) / Decimal(1_000_000_000)
@@ -98,7 +98,7 @@ def get_user_wallets(user_id: int) -> List[Dict]:
     """, (user_id,))
     rows = c.fetchall()
     conn.close()
-    
+
     wallets = []
     for row in rows:
         wallets.append({
@@ -134,20 +134,20 @@ def set_active_wallet(user_id: int, wallet_address: str) -> bool:
     """Set which wallet is active for the user"""
     conn = get_db_conn()
     c = conn.cursor()
-    
+
     # Verify wallet belongs to user
     c.execute("SELECT 1 FROM wallets WHERE user_id = ? AND wallet_address = ?", (user_id, wallet_address))
     if not c.fetchone():
         conn.close()
         return False
-    
+
     # Update or insert active wallet
     c.execute("""
         INSERT INTO user_active_wallet (user_id, active_wallet_address) 
         VALUES (?, ?)
         ON CONFLICT(user_id) DO UPDATE SET active_wallet_address = ?
     """, (user_id, wallet_address, wallet_address))
-    
+
     conn.commit()
     conn.close()
     return True
@@ -161,35 +161,35 @@ def create_wallet(user_id: int, wallet_name: Optional[str] = None) -> Optional[D
     # Check wallet limit
     if get_user_wallet_count(user_id) >= MAX_WALLETS_PER_USER:
         return None
-    
+
     # Generate new keypair
     keypair = Keypair()
     wallet_address = str(keypair.pubkey())
     private_key = bytes(keypair).hex()  # Store securely
-    
+
     if not wallet_name:
         count = get_user_wallet_count(user_id) + 1
         wallet_name = f"Bot Wallet {count}"
-    
+
     conn = get_db_conn()
     c = conn.cursor()
-    
+
     try:
         c.execute("""
             INSERT INTO wallets (user_id, wallet_address, wallet_type, wallet_name, private_key)
             VALUES (?, ?, ?, ?, ?)
         """, (user_id, wallet_address, "bot", wallet_name, private_key))
-        
+
         # Set as active if it's the first wallet
         if get_user_wallet_count(user_id) == 0:
             c.execute("""
                 INSERT INTO user_active_wallet (user_id, active_wallet_address)
                 VALUES (?, ?)
             """, (user_id, wallet_address))
-        
+
         conn.commit()
         conn.close()
-        
+
         return {
             "address": wallet_address,
             "type": "bot",
@@ -208,27 +208,27 @@ def save_external_wallet(user_id: int, wallet_address: str, wallet_type: str = "
     # Check wallet limit
     if get_user_wallet_count(user_id) >= MAX_WALLETS_PER_USER:
         return False
-    
+
     if not wallet_name:
         count = get_user_wallet_count(user_id) + 1
         wallet_name = f"{wallet_type.capitalize()} Wallet {count}"
-    
+
     conn = get_db_conn()
     c = conn.cursor()
-    
+
     try:
         c.execute("""
             INSERT INTO wallets (user_id, wallet_address, wallet_type, wallet_name)
             VALUES (?, ?, ?, ?)
         """, (user_id, wallet_address, wallet_type, wallet_name))
-        
+
         # Set as active if it's the first wallet
         if get_user_wallet_count(user_id) == 0:
             c.execute("""
                 INSERT INTO user_active_wallet (user_id, active_wallet_address)
                 VALUES (?, ?)
             """, (user_id, wallet_address))
-        
+
         conn.commit()
         conn.close()
         return True
@@ -258,19 +258,19 @@ async def send_sol(from_address: str, to_address: str, amount_sol: Decimal, priv
     try:
         # Convert amount to lamports
         lamports = int(amount_sol * Decimal(1_000_000_000))
-        
+
         # Recreate keypair from private key
         private_key_bytes = bytes.fromhex(private_key_hex)
         keypair = Keypair.from_bytes(private_key_bytes)
-        
+
         async with AsyncClient(SOLANA_RPC) as client:
             # Get recent blockhash
             recent_blockhash = await client.get_latest_blockhash()
-            
+
             # Create transfer instruction
             from_pubkey = Pubkey.from_string(from_address)
             to_pubkey = Pubkey.from_string(to_address)
-            
+
             transfer_ix = transfer(
                 TransferParams(
                     from_pubkey=from_pubkey,
@@ -278,7 +278,7 @@ async def send_sol(from_address: str, to_address: str, amount_sol: Decimal, priv
                     lamports=lamports
                 )
             )
-            
+
             # Create and sign transaction
             message = Message.new_with_blockhash(
                 [transfer_ix],
@@ -286,10 +286,10 @@ async def send_sol(from_address: str, to_address: str, amount_sol: Decimal, priv
                 recent_blockhash.value.blockhash
             )
             transaction = Transaction([keypair], message, recent_blockhash.value.blockhash)
-            
+
             # Send transaction
             result = await client.send_transaction(transaction)
-            
+
             return {
                 "success": True,
                 "signature": str(result.value),
@@ -307,19 +307,19 @@ def delete_wallet(user_id: int, wallet_address: str) -> bool:
     """Soft delete a wallet (mark as inactive)"""
     conn = get_db_conn()
     c = conn.cursor()
-    
+
     c.execute("""
         UPDATE wallets 
         SET is_active = 0 
         WHERE user_id = ? AND wallet_address = ?
     """, (user_id, wallet_address))
-    
+
     # If this was the active wallet, clear it
     c.execute("""
         DELETE FROM user_active_wallet 
         WHERE user_id = ? AND active_wallet_address = ?
     """, (user_id, wallet_address))
-    
+
     conn.commit()
     affected = c.rowcount > 0
     conn.close()

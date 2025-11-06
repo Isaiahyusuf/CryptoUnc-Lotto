@@ -10,21 +10,22 @@ from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from dotenv import load_dotenv
 
-from Wallet import (
-    get_user_wallets,
-    get_active_wallet,
-    set_active_wallet,
-    create_wallet,
-    save_external_wallet,
-    get_real_balance,
-    send_sol,
-    get_wallet_private_key,
-    get_user_wallet_count,
-    delete_wallet,
-    MAX_WALLETS_PER_USER
+from wallet import (
+get_user_wallets,
+get_active_wallet,
+save_external_wallet,
+get_real_balance,
+send_sol,
+create_wallet,
+set_active_wallet,
+get_wallet_private_key,
+get_user_wallet_count,
+MAX_WALLETS_PER_USER
 )
 
 import sqlite3
+
+from wallet_buttons import router as wallet_router
 
 load_dotenv()
 
@@ -33,6 +34,19 @@ OWNER_WALLET = os.getenv("OWNER_WALLET")
 TEAM_WALLET = os.getenv("TEAM_WALLET")
 ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
 ROUND_CHANNEL = os.getenv("ROUND_CHANNEL_ID", "@cryptounclottoportal")
+
+# ==========================
+# 🔹 Wallet Button Handlers
+# ==========================
+dp.register_callback_query_handler(handle_send_sol, lambda c: c.data == "send_sol", state="*")
+dp.register_message_handler(handle_address, state=SendSolState.waiting_for_address)
+dp.register_message_handler(handle_amount, state=SendSolState.waiting_for_amount)
+
+dp.register_callback_query_handler(handle_remove_wallet, lambda c: c.data == "remove_wallet", state="*")
+
+dp.register_callback_query_handler(handle_view_key, lambda c: c.data == "view_key", state="*")
+dp.register_message_handler(handle_pin_entry, state=PinState.waiting_for_pin)
+
 
 STAKE_PACKAGES = [
     Decimal("0.05"),
@@ -55,7 +69,7 @@ DB_PATH = "cryptounc_lotto.db"
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-
+dp.include_router(wallet_router)
 # ---------------------------
 # Database helpers
 # ---------------------------
@@ -211,9 +225,9 @@ async def show_wallet_menu(user_id: int):
     wallets = get_user_wallets(user_id)
     active_wallet = get_active_wallet(user_id)
     wallet_count = get_user_wallet_count(user_id)
-    
+
     keyboard_buttons = []
-    
+
     if wallets:
         text = "💼 <b>Your Wallets</b>\n\n"
         for i, wallet in enumerate(wallets, 1):
@@ -223,7 +237,7 @@ async def show_wallet_menu(user_id: int):
             text += f"   Type: {wallet['type'].capitalize()}\n"
             text += f"   Address: <code>{wallet['address'][:8]}...{wallet['address'][-8:]}</code>\n"
             text += f"   Balance: {balance} SOL\n\n"
-            
+
             # Add button for each wallet
             keyboard_buttons.append([
                 InlineKeyboardButton(text=f"{'✅ ' if is_active else ''}{wallet['name']}", 
@@ -231,7 +245,7 @@ async def show_wallet_menu(user_id: int):
             ])
     else:
         text = "💼 <b>Your Wallets</b>\n\nYou don't have any wallets yet.\n"
-    
+
     # Add create/connect buttons if under limit
     if wallet_count < MAX_WALLETS_PER_USER:
         keyboard_buttons.append([
@@ -240,17 +254,17 @@ async def show_wallet_menu(user_id: int):
         ])
     else:
         text += f"\n⚠️ You've reached the maximum of {MAX_WALLETS_PER_USER} wallets."
-    
+
     keyboard_buttons.append([InlineKeyboardButton(text="🔙 Back", callback_data="back_to_main")])
     keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
-    
+
     await bot.send_message(user_id, text, reply_markup=keyboard, parse_mode="HTML")
 
 
 async def start_private_play(user_id: int):
     """Start lottery play session"""
     wallet = get_active_wallet(user_id)
-    
+
     if not wallet:
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="💳 Create Wallet", callback_data="create_wallet")],
@@ -264,16 +278,16 @@ async def start_private_play(user_id: int):
             parse_mode="HTML"
         )
         return
-    
+
     # Get balance
     balance = await get_real_balance(wallet)
-    
+
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💵 Choose Stake", callback_data="choose_stake")],
         [InlineKeyboardButton(text="💼 Switch Wallet", callback_data="my_wallets")],
         [InlineKeyboardButton(text="ℹ️ How to Play", callback_data="rules")]
     ])
-    
+
     await bot.send_message(user_id,
         f"🎮 <b>Private Lotto Session</b>\n\n"
         f"Active Wallet: <code>{wallet[:8]}...{wallet[-8:]}</code>\n"
@@ -301,7 +315,7 @@ async def inline_handler(query: types.CallbackQuery):
         await query.answer()
         wallet_index = int(data.split("_")[2])
         wallets = get_user_wallets(uid)
-        
+
         if 0 <= wallet_index < len(wallets):
             selected_wallet = wallets[wallet_index]
             set_active_wallet(uid, selected_wallet["address"])
@@ -315,13 +329,13 @@ async def inline_handler(query: types.CallbackQuery):
     elif data == "create_wallet":
         await query.answer()
         wallet_count = get_user_wallet_count(uid)
-        
+
         if wallet_count >= MAX_WALLETS_PER_USER:
             await bot.send_message(uid,
                 f"⚠️ You've reached the maximum of {MAX_WALLETS_PER_USER} wallets."
             )
             return
-        
+
         wallet = create_wallet(uid)
         if wallet:
             await bot.send_message(uid,
@@ -341,13 +355,13 @@ async def inline_handler(query: types.CallbackQuery):
     elif data == "connect_wallet":
         await query.answer()
         wallet_count = get_user_wallet_count(uid)
-        
+
         if wallet_count >= MAX_WALLETS_PER_USER:
             await bot.send_message(uid,
                 f"⚠️ You've reached the maximum of {MAX_WALLETS_PER_USER} wallets."
             )
             return
-        
+
         await bot.send_message(uid,
             "🔗 <b>Connect External Wallet</b>\n\n"
             "Please send your Solana wallet public address now.\n"
@@ -363,9 +377,9 @@ async def inline_handler(query: types.CallbackQuery):
         if not wallet:
             await bot.send_message(uid, "❌ Please create or connect a wallet first.")
             return
-        
+
         balance = await get_real_balance(wallet)
-        
+
         # Show stake packages
         rows = []
         temp = []
@@ -375,13 +389,13 @@ async def inline_handler(query: types.CallbackQuery):
                 temp.append(InlineKeyboardButton(text=f"{pkg} SOL", callback_data=f"stake_{pkg}"))
             else:
                 temp.append(InlineKeyboardButton(text=f"🔒 {pkg} SOL", callback_data="insufficient_funds"))
-            
+
             if i % 3 == 0:
                 rows.append(temp)
                 temp = []
         if temp:
             rows.append(temp)
-        
+
         keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
         await bot.send_message(uid,
             f"💵 <b>Choose Stake Package</b>\n\n"
@@ -397,12 +411,12 @@ async def inline_handler(query: types.CallbackQuery):
     elif data.startswith("stake_"):
         await query.answer("Processing stake...")
         amount = Decimal(data.split("_", 1)[1])
-        
+
         wallet = get_active_wallet(uid)
         if not wallet:
             await bot.send_message(uid, "❌ Please create or connect a wallet first.")
             return
-        
+
         # Check real balance
         balance = await get_real_balance(wallet)
         if balance < amount:
@@ -415,10 +429,10 @@ async def inline_handler(query: types.CallbackQuery):
                 parse_mode="HTML"
             )
             return
-        
+
         # Get private key for bot-managed wallets
         private_key = get_wallet_private_key(uid, wallet)
-        
+
         if not private_key:
             await bot.send_message(uid,
                 "⚠️ This is an external wallet. Please send the transaction manually:\n\n"
@@ -428,16 +442,16 @@ async def inline_handler(query: types.CallbackQuery):
                 parse_mode="HTML"
             )
             return
-        
+
         # Send real SOL transaction (80% to owner, 20% to team)
         owner_amt = amount * Decimal("0.8")
         team_amt = amount * Decimal("0.2")
-        
+
         await bot.send_message(uid, "⏳ Processing payment...")
-        
+
         # Send to owner wallet
         result = await send_sol(wallet, OWNER_WALLET, owner_amt, private_key)
-        
+
         if not result["success"]:
             await bot.send_message(uid,
                 f"❌ <b>Transaction failed!</b>\n\n"
@@ -446,18 +460,18 @@ async def inline_handler(query: types.CallbackQuery):
                 parse_mode="HTML"
             )
             return
-        
+
         tx_signature = result["signature"]
-        
+
         # Send to team wallet (if different from owner)
         if TEAM_WALLET and TEAM_WALLET != OWNER_WALLET:
             await send_sol(wallet, TEAM_WALLET, team_amt, private_key)
-        
+
         # Generate lottery numbers
         round_num = get_current_round()
         lottery_numbers = sorted(random.sample(range(1, 41), 5))
         add_entry(uid, round_num, lottery_numbers, float(amount), tx_signature, paid=1)
-        
+
         await bot.send_message(uid,
             f"✅ <b>Payment successful!</b>\n\n"
             f"Transaction: <code>{tx_signature[:16]}...</code>\n"
@@ -509,17 +523,17 @@ async def inline_handler(query: types.CallbackQuery):
 async def generic_message_handler(message: types.Message):
     uid = message.from_user.id
     text = message.text.strip()
-    
+
     # Check if it's a Solana wallet address (32-44 chars, alphanumeric)
     if 32 <= len(text) <= 44 and text.isalnum():
         wallet_count = get_user_wallet_count(uid)
-        
+
         if wallet_count >= MAX_WALLETS_PER_USER:
             await bot.send_message(uid,
                 f"⚠️ You've reached the maximum of {MAX_WALLETS_PER_USER} wallets."
             )
             return
-        
+
         # Try to save as external wallet
         if save_external_wallet(uid, text, "external"):
             set_active_wallet(uid, text)
@@ -536,6 +550,9 @@ async def generic_message_handler(message: types.Message):
             await bot.send_message(uid,
                 "❌ Failed to connect wallet. It may already be connected."
             )
+# ==========================
+# 🔹 Wallet Buttons Handlers
+# ==========================
 
 
 # ---------------------------
@@ -550,7 +567,7 @@ async def cmd_admin_draw(message: types.Message):
     if not is_admin(message.from_user.id):
         await message.reply("⛔ Not authorized.")
         return
-    
+
     cur_round = get_current_round()
     winning_numbers = sorted(random.sample(range(1, 41), 5))
     save_draw(cur_round, winning_numbers)
@@ -570,7 +587,7 @@ async def cmd_admin_draw(message: types.Message):
         f"🏆 <b>CryptoUnc Lotto — Round {cur_round} Results</b>\n"
         f"Winning Numbers: <code>{numbers_to_str(winning_numbers)}</code>\n\n"
     )
-    
+
     if winners:
         mentions = [f"<a href='tg://user?id={w}'>Player</a>" for w in winners]
         announce_text += "🎉 Winners:\n" + "\n".join(mentions)
