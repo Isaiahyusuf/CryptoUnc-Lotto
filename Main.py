@@ -10,7 +10,7 @@ from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from dotenv import load_dotenv
 
-from wallet import (
+from Wallet import (
     get_user_wallet,
     create_wallet,
     get_wallet_balance,
@@ -309,7 +309,7 @@ async def generic_message_handler(message: types.Message):
     # If user is connecting wallet
     if len(text) > 30:  # crude check for a public key
         pubkey = text
-        from wallet import save_user_wallet
+        from Wallet import save_user_wallet
         save_user_wallet(uid, pubkey)
         await bot.send_message(uid,
             f"✅ Wallet connected: <code>{pubkey}</code>\nNow you can play!",
