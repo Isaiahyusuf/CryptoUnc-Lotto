@@ -39,7 +39,9 @@ A decentralized lottery bot for Telegram with **real Solana mainnet integration*
 ```
 /
 ├── Main.py              # Main bot file with handlers and commands
-├── Wallet.py            # Real Solana wallet management (create, balance, transactions)
+├── wallet.py            # Real Solana wallet management (create, balance, transactions)
+├── wallet_buttons.py    # Wallet management button handlers
+├── encryption.py        # AES encryption for private keys
 ├── Index.html           # Wallet connection interface (future WalletConnect integration)
 ├── requirements.txt     # Python dependencies
 ├── .gitignore          # Git ignore rules for Python
@@ -64,6 +66,7 @@ All stored in Replit Secrets:
 - `ADMIN_ID`: Telegram user ID with admin privileges
 - `SOLANA_RPC`: Solana RPC endpoint (Helius, QuickNode, or mainnet-beta)
 - `ROUND_CHANNEL_ID`: Optional channel for posting results (defaults to @cryptounclottoportal)
+- `SUPPORT_USERNAME`: Support contact (Telegram username without @)
 
 ## How It Works
 
@@ -89,9 +92,20 @@ All stored in Replit Secrets:
 
 #### Bot-Managed Wallets
 - Created directly in Telegram
-- Private keys stored securely in database
+- Private keys encrypted with AES and stored in database
 - Automatic transaction signing for stakes
 - Users can deposit SOL from exchanges or other wallets
+- Protected by 4-digit PIN for sensitive operations
+
+#### PIN Security System
+- Users set a 4-digit PIN on first wallet creation
+- PIN is SHA256 hashed before database storage (never stored in plain text)
+- Required for:
+  - Viewing private keys
+  - Sending SOL from bot wallets
+  - Deleting wallets
+- PIN verification with 3-attempt limit to prevent brute force
+- Failed attempts are logged with user context
 
 #### External Wallets
 - Connect Phantom, Solflare, or any Solana wallet
