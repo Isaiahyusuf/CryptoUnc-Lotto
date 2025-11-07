@@ -61,6 +61,15 @@ def init_wallet_db():
         )
     """)
 
+    # User PINs table - stores encrypted 4-digit PINs for wallet security
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS user_pins (
+            user_id INTEGER PRIMARY KEY,
+            pin_hash TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -446,6 +455,68 @@ def deduct_wallet_balance(user_id: int, amount: Decimal):
 def add_funds_to_wallet(wallet_address: str, amount: Decimal):
     """This is a no-op since we're using real balances now"""
     pass
+
+
+def set_user_pin(user_id: int, pin: str) -> bool:
+    """
+    Set or update user's 4-digit PIN
+    PIN is hashed before storage
+    """
+    import hashlib
+    
+    # Validate PIN is 4 digits
+    if not pin.isdigit() or len(pin) != 4:
+        return False
+    
+    # Hash the PIN
+    pin_hash = hashlib.sha256(pin.encode()).hexdigest()
+    
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO user_pins (user_id, pin_hash)
+        VALUES (?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET pin_hash = ?
+    """, (user_id, pin_hash, pin_hash))
+    conn.commit()
+    conn.close()
+    return True
+
+
+def verify_user_pin(user_id: int, pin: str) -> bool:
+    """
+    Verify user's PIN
+    Returns True if PIN matches
+    """
+    import hashlib
+    
+    # Validate PIN format
+    if not pin.isdigit() or len(pin) != 4:
+        return False
+    
+    # Hash the provided PIN
+    pin_hash = hashlib.sha256(pin.encode()).hexdigest()
+    
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("SELECT pin_hash FROM user_pins WHERE user_id = ?", (user_id,))
+    row = c.fetchone()
+    conn.close()
+    
+    if not row:
+        return False
+    
+    return row[0] == pin_hash
+
+
+def has_user_pin(user_id: int) -> bool:
+    """Check if user has set a PIN"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("SELECT 1 FROM user_pins WHERE user_id = ?", (user_id,))
+    result = c.fetchone() is not None
+    conn.close()
+    return result
 
 
 # Initialize database on import
