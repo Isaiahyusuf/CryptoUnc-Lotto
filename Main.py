@@ -605,15 +605,26 @@ async def inline_handler(query: types.CallbackQuery):
         # Generate lottery numbers
         round_num = get_current_round()
         lottery_numbers = sorted(random.sample(range(1, 41), 5))
-        add_entry(uid, round_num, lottery_numbers, float(amount), tx_signature, paid=1)
+        
+        # Add entry and get ticket ID
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO entries(user_id, round, numbers, stake_amount, tx_signature, paid) VALUES (?, ?, ?, ?, ?, ?)",
+            (uid, round_num, numbers_to_str(lottery_numbers), float(amount), tx_signature, 1)
+        )
+        ticket_id = c.lastrowid
+        conn.commit()
+        conn.close()
 
         await bot.send_message(uid,
-            f"✅ <b>Payment successful!</b>\n\n"
-            f"Transaction: <code>{tx_signature[:16]}...</code>\n"
-            f"Amount: {amount} SOL\n\n"
-            f"🎲 <b>Your lottery numbers for Round {round_num}:</b>\n"
-            f"<b>{numbers_to_str(lottery_numbers)}</b>\n\n"
-            f"Good luck! 🍀",
+            f"✅ <b>Payment Successful!</b>\n\n"
+            f"🎫 <b>Ticket ID:</b> #{ticket_id}\n"
+            f"🎲 <b>Your Numbers:</b> {numbers_to_str(lottery_numbers)}\n"
+            f"🎰 <b>Round:</b> {round_num}\n"
+            f"💰 <b>Stake:</b> {amount} SOL\n\n"
+            f"📝 Transaction:\n<code>{tx_signature[:20]}...</code>\n\n"
+            f"🍀 <b>Good luck!</b> Winner will be announced in the channel.",
             parse_mode="HTML"
         )
 
@@ -885,7 +896,17 @@ async def cmd_admin_draw(message: types.Message):
     # Announce winners
     rows = get_entries_for_round(cur_round)
     winners = []
+    winner_details = []
     total_entries = 0
+    total_prize_pool = Decimal("0")
+    
+    # Calculate prize pool
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("SELECT SUM(stake_amount) FROM entries WHERE round = ? AND paid = 1", (cur_round,))
+    total_pool = c.fetchone()[0]
+    if total_pool:
+        total_prize_pool = Decimal(str(total_pool)) * Decimal("0.8")  # 80% goes to prize pool
     
     for row in rows:
         entry_id, uid, numbers_str, paid = row
@@ -894,22 +915,67 @@ async def cmd_admin_draw(message: types.Message):
         total_entries += 1
         entry_nums = str_to_numbers(numbers_str)
         if sorted(entry_nums) == winning_numbers:
+            # Get winner's wallet for display
+            c.execute("SELECT username FROM users WHERE user_id = ?", (uid,))
+            user_row = c.fetchone()
+            username = user_row[0] if user_row and user_row[0] else f"User{uid}"
+            
             winners.append(uid)
+            winner_details.append({
+                "uid": uid,
+                "username": username,
+                "ticket_id": entry_id,
+                "numbers": numbers_to_str(entry_nums)
+            })
+    
+    conn.close()
 
+    # Create announcement text with better formatting
     announce_text = (
-        f"🏆 <b>CryptoUnc Lotto — Round {cur_round} Results</b>\n\n"
-        f"🎲 Winning Numbers: <code>{numbers_to_str(winning_numbers)}</code>\n"
-        f"📊 Total Entries: {total_entries}\n\n"
+        f"═══════════════════════\n"
+        f"🏆 <b>CRYPTOUNC LOTTO</b> 🏆\n"
+        f"═══════════════════════\n\n"
+        f"📅 <b>Round {cur_round} - RESULTS</b>\n\n"
+        f"🎲 <b>Winning Numbers:</b>\n"
+        f"     <code>[ {numbers_to_str(winning_numbers)} ]</code>\n\n"
+        f"═══════════════════════\n"
+        f"📊 <b>Statistics:</b>\n"
+        f"• Total Tickets: <b>{total_entries}</b>\n"
+        f"• Prize Pool: <b>{total_prize_pool:.4f} SOL</b>\n"
+        f"═══════════════════════\n\n"
     )
 
     if winners:
         winner_count = len(winners)
-        mentions = [f"<a href='tg://user?id={w}'>Winner #{i+1}</a>" for i, w in enumerate(winners)]
-        announce_text += f"🎉 <b>{winner_count} Winner(s)!</b>\n\n" + "\n".join(mentions)
-        announce_text += f"\n\n🎊 Congratulations to all winners!"
+        prize_per_winner = total_prize_pool / winner_count if winner_count > 0 else Decimal("0")
+        
+        announce_text += f"🎉 <b>WE HAVE {winner_count} WINNER(S)!</b> 🎉\n\n"
+        
+        for i, details in enumerate(winner_details, 1):
+            announce_text += (
+                f"🥇 <b>Winner #{i}</b>\n"
+                f"   👤 <a href='tg://user?id={details['uid']}'>{details['username']}</a>\n"
+                f"   🎫 Ticket ID: #{details['ticket_id']}\n"
+                f"   🎲 Numbers: {details['numbers']}\n"
+                f"   💰 Prize: <b>{prize_per_winner:.4f} SOL</b>\n\n"
+            )
+        
+        announce_text += (
+            f"═══════════════════════\n"
+            f"🎊 <b>CONGRATULATIONS!</b> 🎊\n"
+            f"Winners, please contact admin to claim your prize.\n"
+            f"═══════════════════════\n"
+        )
     else:
-        announce_text += "😔 No winners this round. Better luck next time!\n\n"
-        announce_text += "🎰 Try again in the next round!"
+        announce_text += (
+            f"😔 <b>No Winners This Round</b>\n\n"
+            f"No one matched all 5 numbers.\n"
+            f"Prize pool rolls over to next round!\n\n"
+            f"═══════════════════════\n"
+            f"🎰 <b>Try Again!</b>\n"
+            f"Round {cur_round + 1} is now open!\n"
+            f"═══════════════════════\n"
+        )
 
     # Post to channel
     posted_to_channel = False
