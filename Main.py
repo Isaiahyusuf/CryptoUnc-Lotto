@@ -25,6 +25,7 @@ delete_wallet,
 set_user_pin,
 verify_user_pin,
 has_user_pin,
+init_wallet_db,
 MAX_WALLETS_PER_USER
 )
 
@@ -999,6 +1000,7 @@ async def cmd_admin_draw(message: types.Message):
 # ---------------------------
 async def main():
     init_db()
+    init_wallet_db()  # Initialize wallet tables
     print("🤖 CryptoUnc Lotto Bot with Real Solana Integration starting...")
     rpc_endpoint = os.getenv('SOLANA_RPC', 'mainnet-beta')
     # Mask API key in logs for security

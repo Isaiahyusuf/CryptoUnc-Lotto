@@ -517,7 +517,3 @@ def has_user_pin(user_id: int) -> bool:
     result = c.fetchone() is not None
     conn.close()
     return result
-
-
-# Initialize database on import
-init_wallet_db()

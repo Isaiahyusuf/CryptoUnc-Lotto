@@ -13,7 +13,7 @@ A decentralized lottery bot for Telegram with **real Solana mainnet integration*
 - **Database**: SQLite (local file-based database)
 - **Hosting**: Replit
 
-## Recent Changes (Nov 6, 2025)
+## Recent Changes (Nov 7, 2025)
 - ✅ Installed Python 3.11 and all dependencies
 - ✅ Implemented real Solana mainnet integration with actual transactions
 - ✅ Added support for multiple wallets per user (up to 3)
@@ -24,6 +24,14 @@ A decentralized lottery bot for Telegram with **real Solana mainnet integration*
 - ✅ Added database persistence for wallet data
 - ✅ Created comprehensive wallet management UI
 - ✅ Fixed security issue with API key logging
+- ✅ Fixed Telegram webhook conflict error
+- ✅ Implemented 4-digit PIN system for wallet security
+- ✅ Added private key viewing feature (PIN-protected)
+- ✅ Added wallet deletion functionality
+- ✅ Implemented send SOL feature from bot wallets (PIN-protected)
+- ✅ Enhanced lottery ticket display with Ticket ID
+- ✅ Improved winner announcement with prize pool and better formatting
+- ✅ Added all required environment variables (SUPPORT_USERNAME, etc.)
 
 ## Project Architecture
 
@@ -41,9 +49,10 @@ A decentralized lottery bot for Telegram with **real Solana mainnet integration*
 
 ### Database Tables
 - **users**: Tracks Telegram users (user_id, username)
-- **wallets**: Stores user wallets (address, type, private_key for bot wallets)
+- **wallets**: Stores user wallets (address, type, encrypted private_key for bot wallets)
 - **user_active_wallet**: Tracks which wallet is currently active per user
-- **entries**: Lottery entries (user_id, round, numbers, stake_amount, tx_signature)
+- **user_pins**: Stores hashed 4-digit PINs for wallet security
+- **entries**: Lottery entries (id/ticket_id, user_id, round, numbers, stake_amount, tx_signature)
 - **draws**: Draw results (round, winning_numbers, timestamp)
 - **meta**: System metadata (current_round)
 
