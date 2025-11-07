@@ -163,4 +163,46 @@ Redistribution or commercial use requires permission from the author.
 	•	Ensure all secrets (BOT_TOKEN, wallet keys, etc.) are safely stored in Replit Secrets or .env.
 	•	For fun, you can customize messages, emoji reactions, or add gamification features like streaks or jackpots.
 
+start work here agent line 166
+Project Type: Telegram Solana Lottery Bot
+Goal: Add missing functional modules and system checks
+
+⸻
+
+🧠 Agent Tasks
+	1.	Enable SOL Sending (Mainnet)
+	•	Connect to Solana mainnet using the RPC URL from environment variables.
+	•	Add logic that allows the bot to send SOL to winners or other wallets.
+	•	Confirm transactions before replying success to users.
+	2.	Add Wallet Deletion
+	•	Create a /delete_wallet command.
+	•	This command must remove the user’s wallet record from the database permanently.
+	•	After deletion, send a confirmation message to the user.
+	3.	Check Lottery Number Generation
+	•	Verify that the bot generates a unique lottery number and ticket ID for every participant.
+	•	Ensure no duplicates exist across active rounds.
+	•	If not implemented, create or fix the logic for generating and storing both values.
+	4.	Announce Winners Publicly
+	•	After each completed lottery round, automatically post the winner’s name, wallet address (shortened), and prize amount to the public Telegram group.
+	•	Use the group ID from environment variables.
+	•	Format the post attractively with emojis and spacing.
+	5.	Add Help / Support Button
+	•	Include an inline button labeled “🆘 Help / Complaint” in the main menu or /help command.
+	•	The button should open a Telegram link to the admin username specified in environment variables.
+	6.	Database Consistency
+	•	Verify that wallet creation, deletion, and ticket generation all sync correctly in the database.
+	•	Ensure each record stores user ID, wallet address, ticket ID, and lotto number.
+	•	Fix or create missing tables if needed.
+	7.	Final Test
+	•	Run the bot.
+	•	Test the following manually:
+	•	Send SOL transaction success
+	•	Wallet deletion confirmation
+	•	Ticket number and ID generation
+	•	Public winner announcement
+	•	Help/Complaint button opens admin chat
+
+Agent please add
+
+Please add the ability for bot to show wallet private key to users and users after creating a wallet to create a 4 digit pin to use to see private key and bot remember this pin users can use this pin too for sending out solana on the bot wallet
 
