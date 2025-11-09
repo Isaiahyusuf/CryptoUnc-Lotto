@@ -115,6 +115,7 @@ def select_winner_deterministically(seed: str, participant_count: int) -> int:
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OWNER_WALLET = os.getenv("OWNER_WALLET")
+OWNER_WALLET_PRIVATE_KEY = os.getenv("OWNER_WALLET_PRIVATE_KEY")
 TEAM_WALLET = os.getenv("TEAM_WALLET")
 ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
 ROUND_CHANNEL = os.getenv("ROUND_CHANNEL_ID", "@cryptounclottoportal")
@@ -124,6 +125,8 @@ if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN environment variable is required")
 if not OWNER_WALLET:
     raise ValueError("OWNER_WALLET environment variable is required")
+if not OWNER_WALLET_PRIVATE_KEY:
+    raise ValueError("OWNER_WALLET_PRIVATE_KEY environment variable is required for automatic prize payments and refunds")
 
 STAKE_PACKAGES = [
     Decimal("0.025"),
@@ -622,9 +625,14 @@ def process_round_stake_draw(round_stake_id: int):
 
 
 async def process_refunds_for_stake(round_stake_id: int):
+    """
+    Automatically refund all participants in a stake category that didn't meet minimum players.
+    Sends SOL from OWNER_WALLET to each participant's wallet using OWNER_WALLET_PRIVATE_KEY.
+    """
     conn = get_db_conn()
     c = conn.cursor()
     
+    # Get all participants who haven't been refunded yet
     c.execute("""
         SELECT rp.id, rp.user_id, rs.stake_amount
         FROM round_participants rp
@@ -633,54 +641,180 @@ async def process_refunds_for_stake(round_stake_id: int):
     """, (round_stake_id,))
     participants = c.fetchall()
     
-    refund_amount = Decimal("0")
+    if not participants:
+        print(f"⚠️ No participants to refund for stake {round_stake_id}")
+        conn.close()
+        return []
+    
+    # Calculate refund amount (stake minus network fee)
     c.execute("SELECT stake_amount FROM round_stakes WHERE id = ?", (round_stake_id,))
     stake_row = c.fetchone()
-    if stake_row:
-        stake_amount = Decimal(str(stake_row[0]))
-        refund_amount = stake_amount * (Decimal("1") - NETWORK_FEE_PERCENTAGE)
+    if not stake_row:
+        print(f"❌ Stake {round_stake_id} not found")
+        conn.close()
+        return []
     
+    stake_amount = Decimal(str(stake_row[0]))
+    refund_amount = stake_amount * (Decimal("1") - NETWORK_FEE_PERCENTAGE)
+    
+    # Update stake status to pending_refund
     c.execute("""
         UPDATE round_stakes
         SET status = 'pending_refund'
         WHERE id = ?
     """, (round_stake_id,))
-    
     conn.commit()
     
-    refund_list = []
+    # Check OWNER_WALLET balance before starting refunds
+    try:
+        owner_balance = await get_real_balance(OWNER_WALLET)
+        total_refund_needed = refund_amount * len(participants)
+        if owner_balance < total_refund_needed:
+            print(f"⚠️ WARNING: OWNER_WALLET balance ({owner_balance} SOL) insufficient for all refunds ({total_refund_needed} SOL)")
+            print(f"   Proceeding with refunds but some may fail...")
+    except Exception as e:
+        print(f"⚠️ Could not check OWNER_WALLET balance: {e}")
+    
+    # Process refunds one by one
+    successful_refunds = 0
+    failed_refunds = 0
+    refund_results = []
+    
+    print(f"💸 Starting automatic refunds for stake {round_stake_id}: {len(participants)} participants")
+    print(f"   Refund amount: {refund_amount} SOL per participant (stake: {stake_amount} SOL - {float(NETWORK_FEE_PERCENTAGE * 100)}% fee)")
+    
     for participant_id, user_id, _ in participants:
         participant_wallet = get_active_wallet(user_id)
         
-        if participant_wallet:
-            refund_list.append({
-                'participant_id': participant_id,
-                'user_id': user_id,
-                'wallet': participant_wallet,
-                'amount': float(refund_amount)
-            })
+        if not participant_wallet:
+            print(f"❌ User {user_id} (participant {participant_id}) has no active wallet - skipping refund")
+            failed_refunds += 1
+            continue
+        
+        # Attempt to send refund with retry logic
+        max_retries = 2
+        refund_sent = False
+        tx_signature = None
+        
+        for attempt in range(max_retries + 1):
+            try:
+                print(f"   → Refunding user {user_id}: {refund_amount} SOL to {participant_wallet[:8]}...{participant_wallet[-8:]} (attempt {attempt + 1}/{max_retries + 1})")
+                
+                refund_result = await send_sol(
+                    OWNER_WALLET, 
+                    participant_wallet, 
+                    refund_amount, 
+                    OWNER_WALLET_PRIVATE_KEY
+                )
+                
+                if refund_result and refund_result.get("success"):
+                    tx_signature = refund_result.get("signature")
+                    refund_sent = True
+                    print(f"   ✅ Refund sent! TX: {tx_signature[:16]}...")
+                    break
+                else:
+                    error_msg = refund_result.get("error", "Unknown error") if refund_result else "No result returned"
+                    print(f"   ⚠️ Refund attempt {attempt + 1} failed: {error_msg}")
+                    if attempt < max_retries:
+                        await asyncio.sleep(2)  # Wait 2 seconds before retry
+                        
+            except Exception as e:
+                print(f"   ⚠️ Refund attempt {attempt + 1} exception: {e}")
+                if attempt < max_retries:
+                    await asyncio.sleep(2)
+        
+        # Update database and notify user based on result
+        if refund_sent and tx_signature:
+            # Mark as refunded in database
+            c.execute("""
+                UPDATE round_participants
+                SET refunded = 1, refund_tx = ?
+                WHERE id = ?
+            """, (tx_signature, participant_id))
+            conn.commit()
             
+            successful_refunds += 1
+            
+            # Send success message to user
             try:
                 await bot.send_message(
                     user_id,
-                    f"⏳ <b>Refund Pending</b>\n\n"
-                    f"Your round did not meet the minimum {MIN_PLAYERS_PER_STAKE} players.\n"
-                    f"Refund amount: {refund_amount} SOL\n"
-                    f"(Original stake minus {float(NETWORK_FEE_PERCENTAGE * 100)}% network fee)\n\n"
-                    f"Your refund will be processed by admin shortly.\n"
-                    f"Target wallet: <code>{participant_wallet}</code>",
+                    f"✅ <b>Refund Completed!</b>\n\n"
+                    f"Your round did not meet the minimum {MIN_PLAYERS_PER_STAKE} players.\n\n"
+                    f"💰 Refunded: <b>{refund_amount} SOL</b>\n"
+                    f"(Original stake: {stake_amount} SOL minus {float(NETWORK_FEE_PERCENTAGE * 100)}% network fee)\n\n"
+                    f"📝 Transaction: <code>{tx_signature[:20]}...</code>\n"
+                    f"Wallet: <code>{participant_wallet}</code>\n\n"
+                    f"View on Solscan:\n"
+                    f"https://solscan.io/tx/{tx_signature}",
+                    parse_mode="HTML"
+                )
+            except Exception as e:
+                print(f"   ⚠️ Could not send success message to user {user_id}: {e}")
+            
+            refund_results.append({
+                'participant_id': participant_id,
+                'user_id': user_id,
+                'wallet': participant_wallet,
+                'amount': float(refund_amount),
+                'tx_signature': tx_signature,
+                'status': 'success'
+            })
+        else:
+            # Refund failed after all retries
+            failed_refunds += 1
+            print(f"   ❌ Refund FAILED for user {user_id} after {max_retries + 1} attempts")
+            
+            # Send failure notification to user
+            try:
+                await bot.send_message(
+                    user_id,
+                    f"⚠️ <b>Refund Processing Issue</b>\n\n"
+                    f"Your round did not meet minimum players and a refund was initiated.\n\n"
+                    f"Amount: {refund_amount} SOL\n"
+                    f"Wallet: <code>{participant_wallet}</code>\n\n"
+                    f"However, the automatic refund encountered an issue.\n"
+                    f"Our team has been notified and will process your refund manually within 24 hours.\n\n"
+                    f"We apologize for the inconvenience!",
                     parse_mode="HTML"
                 )
             except:
                 pass
+            
+            refund_results.append({
+                'participant_id': participant_id,
+                'user_id': user_id,
+                'wallet': participant_wallet,
+                'amount': float(refund_amount),
+                'tx_signature': None,
+                'status': 'failed'
+            })
+    
+    # Update stake status based on results
+    if successful_refunds == len(participants):
+        # All refunds successful
+        c.execute("""
+            UPDATE round_stakes
+            SET status = 'refunded'
+            WHERE id = ?
+        """, (round_stake_id,))
+        conn.commit()
+        print(f"✅ All refunds completed successfully for stake {round_stake_id}")
+    elif successful_refunds > 0:
+        # Partial success
+        print(f"⚠️ Partial refunds for stake {round_stake_id}: {successful_refunds} succeeded, {failed_refunds} failed")
+    else:
+        # All failed
+        print(f"❌ All refunds failed for stake {round_stake_id}")
     
     conn.close()
     
-    print(f"💸 Refunds pending for stake {round_stake_id}: {len(refund_list)} participants")
-    for refund in refund_list:
-        print(f"   → User {refund['user_id']}: {refund['amount']} SOL to {refund['wallet']}")
+    # Summary
+    print(f"💸 Refund summary for stake {round_stake_id}:")
+    print(f"   ✅ Successful: {successful_refunds}/{len(participants)}")
+    print(f"   ❌ Failed: {failed_refunds}/{len(participants)}")
     
-    return refund_list
+    return refund_results
 
 
 async def mark_refund_completed(participant_id: int, tx_signature: str):
@@ -2159,15 +2293,19 @@ async def distribute_prize(stake_id: int, result: dict):
         
         team_amount = Decimal(str(prize_amount)) * Decimal("0.2") / Decimal("0.8")
         
-        if TEAM_WALLET:
+        if TEAM_WALLET and TEAM_WALLET != OWNER_WALLET:
             try:
-                team_result = await send_sol(OWNER_WALLET, TEAM_WALLET, team_amount, None)
-                print(f"💼 Team payment: {team_amount} SOL")
-            except:
-                pass
+                team_result = await send_sol(OWNER_WALLET, TEAM_WALLET, team_amount, OWNER_WALLET_PRIVATE_KEY)
+                if team_result and team_result.get("success"):
+                    print(f"💼 Team payment sent: {team_amount} SOL - TX: {team_result.get('signature', '')[:16]}...")
+                else:
+                    print(f"⚠️ Team payment failed: {team_result.get('error', 'Unknown error')}")
+            except Exception as e:
+                print(f"⚠️ Team payment exception: {e}")
         
         try:
-            prize_result = await send_sol(OWNER_WALLET, winner_wallet, Decimal(str(prize_amount)), None)
+            print(f"💰 Sending prize to winner {winner_id}: {prize_amount} SOL to {winner_wallet[:8]}...{winner_wallet[-8:]}")
+            prize_result = await send_sol(OWNER_WALLET, winner_wallet, Decimal(str(prize_amount)), OWNER_WALLET_PRIVATE_KEY)
             
             if prize_result and prize_result.get("success"):
                 conn = get_db_conn()
@@ -2201,15 +2339,16 @@ def audit_configuration():
     required_secrets = {
         'BOT_TOKEN': 'Telegram Bot Token',
         'OWNER_WALLET': 'Treasury Wallet Address',
+        'OWNER_WALLET_PRIVATE_KEY': 'Owner Wallet Private Key (for automatic payouts)',
         'ROUND_CHANNEL_ID': 'Announcement Channel ID',
         'SOLANA_RPC': 'Solana RPC Endpoint',
-        'ADMIN_ID': 'Admin User ID'
+        'ADMIN_ID': 'Admin User ID',
+        'ENCRYPTION_KEY': 'Wallet Encryption Key'
     }
     
     optional_secrets = {
         'TEAM_WALLET': 'Team Wallet Address (defaults to OWNER_WALLET)',
-        'SUPPORT_USERNAME': 'Support Contact Username',
-        'ENCRYPTION_KEY': 'Wallet Encryption Key'
+        'SUPPORT_USERNAME': 'Support Contact Username'
     }
     
     missing_required = []
