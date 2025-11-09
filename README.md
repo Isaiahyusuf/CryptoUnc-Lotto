@@ -485,7 +485,53 @@ Step 6: Testing
 Confirm no offset-naive errors appear.
 	•	Verify bot responds to Telegram messages.
 	•	Check that all environment variables are loaded correctly (print(BOT_TOKEN) for debug).
-        
+
+
+README: Fix Scheduler and Round Manager Timing Errors
+
+Objective:
+The bot’s scheduler and round manager are not functioning correctly. Each time a new round is supposed to start, it triggers the error “name ‘datetime’ is not defined” or fails to handle the round timing properly. The goal is to fix all timing, scheduling, and round management issues and make the system stable.
+
+Tasks for Replit Agent:
+	1.	Fix Import and Datetime Errors
+Check all files that handle round creation or scheduling, such as main.py, scheduler.py, and round_manager.py.
+Make sure the datetime module is correctly imported at the top of each file:
+from datetime import datetime, timedelta
+import pytz
+Ensure that all datetime operations use timezone-aware values like datetime.now(pytz.utc) instead of datetime.now().
+	2.	Debug the Round Timing Logic
+Verify that rounds are created, scheduled, and executed at the right time.
+Fix any logic preventing automatic round starts.
+Make sure the round manager checks correctly whether a round’s time has arrived, if it has ended, and when to start the next round.
+Test this by simulating time changes or forcing manual round starts to confirm the logic works.
+	3.	Add Logging for Testing
+Add print or logging lines in key parts of the scheduler and round manager to see real-time updates.
+Examples:
+print(”[Scheduler] Checking round timing:”, datetime.now(pytz.utc))
+print(”[Round Manager] Current round status:”, status)
+This will help track exactly what happens when the bot reaches a new round time.
+	4.	Test the Scheduler
+Run the bot continuously to ensure it completes at least two or three full round cycles automatically without manual triggers.
+Confirm that new rounds start, end, and transition properly without any datetime errors or crashes.
+Make sure the timing intervals are correct and consistent.
+	5.	Environment Variables
+Ask the developer to provide all necessary environment variables inside Replit Secrets.
+Do not use hardcoded values anywhere.
+Confirm the following are properly set and working:
+BOT_TOKEN
+RPC_URL (Solana mainnet endpoint)
+DB_PATH or database connection details
+Any other variables for wallet operations, admin settings, or payment verification.
+The bot must be fully functional only through these secret variables.
+	6.	Final Verification
+After all fixes, confirm that:
+The scheduler starts rounds automatically based on the timing interval.
+Rounds end and restart correctly.
+No datetime or timezone errors appear.
+The bot keeps running continuously without interruption.
+
+Expected Result:
+The scheduler and round manager should operate automatically and reliably, handle all time-based round transitions without errors, and maintain full functionality over multiple cycles.		
 
 
 
