@@ -1,0 +1,158 @@
+Nextto do 
+CURRENT CRITICAL ISSUES
+	1.	No payment verification – users can join rounds without paying SOL.
+	2.	No prize distribution – winners are not automatically paid.
+	3.	No refund system – users lose money if round fails.
+	4.	Randomness not verifiable – results can be manipulated.
+
+⸻
+
+MUST-HAVE FIXES
+
+1. On-chain Payment Verification
+Goal: Only allow verified SOL payments to count as valid ticket purchases.
+Implementation:
+	•	Use Solana RPC or QuickNode API to check the payment transaction signature.
+	•	Verify correct amount (e.g., 0.025 SOL, 0.05 SOL, etc.).
+	•	Store transaction hash, wallet, and round_id in database.
+
+Testing steps:
+	•	Try buying a ticket without sending SOL → bot should reject it.
+	•	Send correct amount → bot should confirm and assign ticket.
+	•	Send wrong amount → bot should show “Invalid payment amount.”
+	•	Restart bot → verified transactions remain saved.
+	•	Confirm transaction log saved to DB and console.
+
+⸻
+
+2. Automatic Prize Distribution
+Goal: Automatically send SOL to winner’s wallet when round ends.
+Implementation:
+	•	Use solana-py or solders to send transaction from admin wallet.
+	•	Announce transaction signature to all players.
+	•	Log all payouts in database.
+
+Testing steps:
+	•	Run test round with 3 users.
+	•	Let it end → bot should send prize automatically.
+	•	Verify transaction on Solana Explorer.
+	•	Winner should receive “✅ Prize Sent” message.
+	•	Check database for payout confirmation.
+
+⸻
+
+3. Smart Refund System
+Goal: Refund players if round fails or doesn’t meet minimum player requirement.
+Implementation:
+	•	Add timer or threshold for MIN_PLAYERS_PER_STAKE.
+	•	If not met, trigger refunds automatically.
+	•	Log all refund transactions.
+
+Testing steps:
+	•	Start a round with fewer players than required.
+	•	Wait for timeout → bot should initiate refunds.
+	•	Verify refunds on-chain and confirm message sent to users.
+	•	Check DB for refund status marked as completed.
+
+⸻
+
+4. True Verifiable Randomness
+Goal: Make results provably fair.
+Implementation:
+	•	Use Solana blockhash from final block before round draw as randomness seed.
+	•	Or integrate Chainlink VRF if available.
+	•	Publish blockhash or VRF result in round summary message.
+
+Testing steps:
+	•	Run a test draw.
+	•	Verify randomness source (blockhash or VRF).
+	•	Confirm same seed gives same winner if recalculated manually.
+	•	Make sure users can view blockhash publicly on Solana Explorer.
+
+⸻
+
+5. Minimum Player Enforcement
+Goal: Prevent draw until enough players join.
+Implementation:
+	•	Define MIN_PLAYERS_PER_STAKE constant (for example, 3).
+	•	If not met, trigger refund instead of picking winner.
+
+Testing steps:
+	•	Try ending round early → bot should block it.
+	•	Add enough players → bot should allow draw.
+	•	Confirm refund or draw logic behaves correctly.
+
+⸻
+
+SHOULD-HAVE IMPROVEMENTS
+
+6. Improved Error Handling
+Implementation:
+	•	Clear error messages for invalid wallet, duplicate entry, or RPC error.
+Testing:
+	•	Simulate each type of error → bot should respond cleanly without crashing.
+
+⸻
+
+7. Transaction Confirmation Tracking
+Implementation:
+	•	Show messages for payment pending, confirmed, or failed.
+Testing:
+	•	Simulate slow RPC response → bot should display progress like
+“💰 Payment received – awaiting confirmation…” then “✅ Transaction confirmed!”
+
+⸻
+
+8. Admin Dashboard
+Implementation:
+	•	Create admin-only interface (command or web) showing:
+active rounds, players, transactions, refunds, payouts.
+Testing:
+	•	Open dashboard → data must sync with database.
+	•	Ensure admin-only access by verifying admin ID or password.
+
+⸻
+
+9. Safety and Cooldown
+Implementation:
+	•	Prevent spam ticket purchases by adding cooldown timer per user.
+Testing:
+	•	Try spamming “Buy Ticket” quickly → bot should show “Please wait X seconds before buying again.”
+
+⸻
+
+DEVELOPMENT ORDER
+
+Step 1: Implement on-chain payment verification.
+Step 2: Add automatic prize distribution.
+Step 3: Add smart refund system.
+Step 4: Upgrade randomness to blockchain-based system.
+Step 5: Enforce minimum player requirement.
+Step 6: Improve error messages and handling.
+Step 7: Add transaction tracking updates.
+Step 8: Create admin dashboard.
+Step 9: Add safety limits and cooldown logic.
+
+⸻
+
+TECHNICAL REQUIREMENTS
+	•	Language: Python
+	•	Framework: Aiogram
+	•	Blockchain: Solana mainnet
+	•	Libraries: solana-py, solders, requests, asyncio, sqlite3 or psycopg2
+	•	Hosting: Replit, Render, or VPS
+	•	Security:
+	•	Store encrypted admin private key in Replit Secrets.
+	•	Never print or log private key.
+	•	Use environment variables for sensitive data.
+
+⸻
+
+FINAL VERIFICATION CHECKLIST
+	•	Payment verification works correctly (fake tx rejected, real tx accepted).
+	•	Prize distribution sends SOL automatically to winners.
+	•	Refund system triggers properly when round fails.
+	•	Randomness uses blockhash or Chainlink VRF and is provable.
+	•	Admin dashboard shows all live rounds and transactions.
+	•	Safety cooldown prevents spam.
+	•	Error handling cleanly displays messages for all user er...
