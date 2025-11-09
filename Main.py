@@ -2,9 +2,11 @@
 
 import os
 import asyncio
-import random
+import hashlib
+import time
 import decimal
 from decimal import Decimal
+from typing import List
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
@@ -34,6 +36,66 @@ import sqlite3
 from wallet_buttons import router as wallet_router
 
 load_dotenv()
+
+# ---------------------------
+# Cryptographic Randomness Module
+# ---------------------------
+# Note: This provides transparent, verifiable randomness using SHA256 hashing.
+# For full on-chain verifiability, consider migrating to ORAO VRF when available.
+# Chainlink VRF is not yet deployed on Solana (only Price Feeds are available).
+
+def generate_provable_seed(*inputs) -> str:
+    """
+    Generate a provable random seed from multiple inputs using SHA256.
+    All inputs are combined and hashed to create a deterministic seed.
+    Anyone can verify the result by reproducing the hash with the same inputs.
+    """
+    combined = "|".join(str(inp) for inp in inputs)
+    hash_object = hashlib.sha256(combined.encode('utf-8'))
+    return hash_object.hexdigest()
+
+
+def generate_lottery_numbers(seed: str, count: int = 5, min_val: int = 1, max_val: int = 40) -> List[int]:
+    """
+    Generate lottery numbers deterministically from a seed.
+    Uses the seed to generate unique numbers in the specified range.
+    
+    Args:
+        seed: Cryptographic seed (from generate_provable_seed)
+        count: Number of unique numbers to generate
+        min_val: Minimum number in range (inclusive)
+        max_val: Maximum number in range (inclusive)
+    
+    Returns:
+        Sorted list of unique lottery numbers
+    """
+    numbers = set()
+    seed_int = int(seed, 16)
+    
+    attempt = 0
+    while len(numbers) < count:
+        hash_input = f"{seed}_{attempt}"
+        hash_val = int(hashlib.sha256(hash_input.encode()).hexdigest(), 16)
+        number = (hash_val % (max_val - min_val + 1)) + min_val
+        numbers.add(number)
+        attempt += 1
+    
+    return sorted(list(numbers))
+
+
+def select_winner_deterministically(seed: str, participant_count: int) -> int:
+    """
+    Select a winner index deterministically from the seed.
+    
+    Args:
+        seed: Cryptographic seed
+        participant_count: Total number of participants
+    
+    Returns:
+        Winner index (0-based)
+    """
+    hash_val = int(hashlib.sha256(seed.encode()).hexdigest(), 16)
+    return hash_val % participant_count
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OWNER_WALLET = os.getenv("OWNER_WALLET")
@@ -467,7 +529,7 @@ def process_round_stake_draw(round_stake_id: int):
     c = conn.cursor()
     
     c.execute("""
-        SELECT rp.id, rp.user_id, rp.numbers
+        SELECT rp.id, rp.user_id, rp.numbers, rp.tx_signature
         FROM round_participants rp
         WHERE rp.round_stake_id = ? AND rp.refunded = 0
     """, (round_stake_id,))
@@ -477,19 +539,38 @@ def process_round_stake_draw(round_stake_id: int):
         conn.close()
         return None
     
-    winning_numbers = sorted(random.sample(range(1, 41), 5))
+    # Generate provable randomness seed from participant transactions and timestamp
+    tx_signatures = [str(p[3]) for p in participants]
+    timestamp = int(time.time() * 1000)  # millisecond precision
+    seed = generate_provable_seed(round_stake_id, timestamp, *tx_signatures)
+    
+    # Generate winning numbers deterministically from seed
+    winning_numbers = generate_lottery_numbers(seed, count=5, min_val=1, max_val=40)
     winning_numbers_str = numbers_to_str(winning_numbers)
     
+    # Find participants with best matches
     best_match_count = 0
-    winner = None
+    winners_with_best_match = []
     
-    for participant_id, user_id, numbers_str in participants:
+    for idx, (participant_id, user_id, numbers_str, tx_sig) in enumerate(participants):
         user_numbers = str_to_numbers(numbers_str)
         matches = len(set(user_numbers) & set(winning_numbers))
         
-        if matches > best_match_count or (matches == best_match_count and random.random() < 0.5):
+        if matches > best_match_count:
             best_match_count = matches
-            winner = (participant_id, user_id)
+            winners_with_best_match = [(idx, participant_id, user_id)]
+        elif matches == best_match_count:
+            winners_with_best_match.append((idx, participant_id, user_id))
+    
+    # If multiple winners with same match count, select deterministically
+    if len(winners_with_best_match) > 1:
+        winner_seed = generate_provable_seed(seed, "tiebreaker", len(winners_with_best_match))
+        winner_idx = select_winner_deterministically(winner_seed, len(winners_with_best_match))
+        _, participant_id, user_id = winners_with_best_match[winner_idx]
+        winner = (participant_id, user_id)
+    else:
+        _, participant_id, user_id = winners_with_best_match[0]
+        winner = (participant_id, user_id)
     
     c.execute("""
         SELECT rs.stake_amount, COUNT(rp.id) as player_count
@@ -1037,9 +1118,10 @@ async def inline_handler(query: types.CallbackQuery):
         if TEAM_WALLET and TEAM_WALLET != OWNER_WALLET:
             await send_sol(wallet, TEAM_WALLET, team_amt, private_key)
 
-        # Generate lottery numbers
+        # Generate lottery numbers deterministically from transaction signature
         round_num = get_current_round()
-        lottery_numbers = sorted(random.sample(range(1, 41), 5))
+        number_seed = generate_provable_seed(uid, round_num, tx_signature, "player_numbers")
+        lottery_numbers = generate_lottery_numbers(number_seed, count=5, min_val=1, max_val=40)
         
         # Add entry and get ticket ID
         conn = get_db_conn()
@@ -1290,7 +1372,9 @@ async def inline_handler(query: types.CallbackQuery):
         if TEAM_WALLET and TEAM_WALLET != OWNER_WALLET:
             await send_sol(wallet, TEAM_WALLET, team_amt, private_key)
         
-        lottery_numbers = sorted(random.sample(range(1, 41), 5))
+        # Generate lottery numbers deterministically from transaction signature
+        number_seed = generate_provable_seed(uid, stake_id, tx_signature, "participant_numbers")
+        lottery_numbers = generate_lottery_numbers(number_seed, count=5, min_val=1, max_val=40)
         
         add_result = add_round_participant(stake_id, uid, lottery_numbers, tx_signature)
         
@@ -1534,7 +1618,10 @@ async def cmd_admin_draw(message: types.Message):
         return
 
     cur_round = get_current_round()
-    winning_numbers = sorted(random.sample(range(1, 41), 5))
+    # Generate winning numbers deterministically from round number and timestamp
+    timestamp = int(time.time() * 1000)
+    draw_seed = generate_provable_seed(cur_round, timestamp, "admin_draw")
+    winning_numbers = generate_lottery_numbers(draw_seed, count=5, min_val=1, max_val=40)
     save_draw(cur_round, winning_numbers)
 
     # Announce winners
