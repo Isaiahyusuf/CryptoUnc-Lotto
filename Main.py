@@ -7,6 +7,8 @@ import time
 import decimal
 from decimal import Decimal
 from typing import List
+from datetime import datetime, timedelta
+import pytz
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
@@ -117,7 +119,20 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 OWNER_WALLET = os.getenv("OWNER_WALLET")
 OWNER_WALLET_PRIVATE_KEY = os.getenv("OWNER_WALLET_PRIVATE_KEY")
 TEAM_WALLET = os.getenv("TEAM_WALLET")
-ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
+
+# Parse ADMIN_ID with better error handling
+admin_id_str = os.getenv("ADMIN_ID", "0")
+try:
+    ADMIN_ID = int(admin_id_str)
+except ValueError:
+    print(f"❌ ERROR: ADMIN_ID must be a numeric Telegram user ID, got: '{admin_id_str}'")
+    print(f"💡 To get your numeric Telegram user ID:")
+    print(f"   1. Open Telegram and search for @userinfobot")
+    print(f"   2. Start a chat with it")
+    print(f"   3. It will reply with your numeric user ID (e.g., 123456789)")
+    print(f"   4. Update the ADMIN_ID secret in Replit with that number")
+    raise ValueError(f"ADMIN_ID must be a numeric value, not '{admin_id_str}'")
+
 ROUND_CHANNEL = os.getenv("ROUND_CHANNEL_ID", "@cryptounclottoportal")
 
 # Validate required environment variables
@@ -406,9 +421,6 @@ def save_draw(round_num: int, winning_numbers):
     conn.commit()
     conn.close()
 
-
-from datetime import datetime, timedelta
-import pytz
 
 def create_scheduled_round(round_number: int, scheduled_time: datetime):
     conn = get_db_conn()
@@ -2127,10 +2139,20 @@ async def cmd_announce(message: types.Message):
 # Startup
 # ---------------------------
 async def schedule_daily_rounds():
+    """
+    Scheduler loop that creates daily rounds at configured times
+    Enhanced with detailed logging for testing and debugging
+    """
+    print(f"[Scheduler] Starting daily round scheduler...")
+    print(f"[Scheduler] Round times (UTC): {ROUND_TIMES_UTC}")
+    print(f"[Scheduler] Rounds per day: {ROUNDS_PER_DAY}")
+    
     while True:
         try:
             now = datetime.now(pytz.UTC)
             today = now.date()
+            
+            print(f"[Scheduler] Checking round timing at {now}")
             
             for round_num, time_str in enumerate(ROUND_TIMES_UTC, 1):
                 hour, minute = map(int, time_str.split(':'))
@@ -2140,21 +2162,40 @@ async def schedule_daily_rounds():
                     conn = get_db_conn()
                     c = conn.cursor()
                     c.execute("SELECT round_id FROM scheduled_rounds WHERE scheduled_time = ?", (scheduled_dt,))
-                    if not c.fetchone():
+                    existing = c.fetchone()
+                    
+                    if not existing:
                         round_id = create_scheduled_round(round_num, scheduled_dt)
-                        print(f"📅 Scheduled round {round_num} for {scheduled_dt}")
+                        print(f"[Scheduler] ✅ Created new round {round_id} for {scheduled_dt}")
+                    else:
+                        print(f"[Scheduler] ℹ️ Round already scheduled for {scheduled_dt}")
+                    
                     conn.close()
             
+            print(f"[Scheduler] Next check in 1 hour...")
             await asyncio.sleep(3600)
         except Exception as e:
-            print(f"❌ Scheduler error: {e}")
+            print(f"[Scheduler] ❌ Error: {e}")
+            import traceback
+            traceback.print_exc()
+            print(f"[Scheduler] Retrying in 60 seconds...")
             await asyncio.sleep(60)
 
 
 async def manage_rounds():
+    """
+    Round manager loop that opens rounds and closes them after duration
+    Enhanced with detailed logging for testing and debugging
+    """
+    print(f"[Round Manager] Starting round manager...")
+    print(f"[Round Manager] Round duration: {ROUND_DURATION_MINUTES} minutes")
+    print(f"[Round Manager] Min players per stake: {MIN_PLAYERS_PER_STAKE}")
+    
     while True:
         try:
             now = datetime.now(pytz.UTC)
+            
+            print(f"[Round Manager] Checking rounds at {now}")
             
             conn = get_db_conn()
             c = conn.cursor()
@@ -2164,9 +2205,12 @@ async def manage_rounds():
             """, (now,))
             pending_rounds = c.fetchall()
             
+            if pending_rounds:
+                print(f"[Round Manager] Found {len(pending_rounds)} pending rounds to open")
+            
             for round_id, scheduled_time in pending_rounds:
                 update_round_status(round_id, 'open')
-                print(f"🎰 Round {round_id} is now OPEN!")
+                print(f"[Round Manager] ✅ Round {round_id} is now OPEN! (scheduled for {scheduled_time})")
                 await announce_round_opened(round_id)
             
             c.execute("""
@@ -2175,17 +2219,27 @@ async def manage_rounds():
             """)
             open_rounds = c.fetchall()
             
+            if open_rounds:
+                print(f"[Round Manager] Monitoring {len(open_rounds)} open rounds")
+            
             for round_id, start_time in open_rounds:
                 start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
                 elapsed = (now - start_dt).total_seconds() / 60
                 
+                print(f"[Round Manager] Round {round_id}: {elapsed:.1f}/{ROUND_DURATION_MINUTES} minutes elapsed")
+                
                 if elapsed >= ROUND_DURATION_MINUTES:
+                    print(f"[Round Manager] ⏰ Round {round_id} duration reached, processing end...")
                     await process_round_end(round_id)
             
             conn.close()
+            print(f"[Round Manager] Next check in 30 seconds...")
             await asyncio.sleep(30)
         except Exception as e:
-            print(f"❌ Round manager error: {e}")
+            print(f"[Round Manager] ❌ Error: {e}")
+            import traceback
+            traceback.print_exc()
+            print(f"[Round Manager] Retrying in 30 seconds...")
             await asyncio.sleep(30)
 
 
