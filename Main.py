@@ -12,6 +12,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from dotenv import load_dotenv
+from aiohttp import web
 
 from wallet import (
 get_user_wallets,
@@ -2256,6 +2257,33 @@ def audit_configuration():
     return True
 
 
+# ---------------------------
+# Web Server for UptimeRobot Keep-Alive
+# ---------------------------
+
+async def health_check(request):
+    """Simple health check endpoint for UptimeRobot pings"""
+    return web.Response(text="✅ CryptoUnc Lotto Bot is alive!")
+
+async def index(request):
+    """Root endpoint with bot info"""
+    return web.Response(text="🎲 CryptoUnc Lotto Bot - Telegram Bot is running!")
+
+async def start_web_server():
+    """Start aiohttp web server for keep-alive pings"""
+    app = web.Application()
+    app.router.add_get('/', index)
+    app.router.add_get('/health', health_check)
+    app.router.add_get('/ping', health_check)
+    
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', 8080)
+    await site.start()
+    print("🌐 Web server started on http://0.0.0.0:8080 for UptimeRobot pings")
+    print("📌 Configure UptimeRobot to ping your Replit URL to keep bot alive")
+
+
 async def main():
     # Audit configuration before starting
     config_ok = audit_configuration()
@@ -2281,6 +2309,9 @@ async def main():
     asyncio.create_task(schedule_daily_rounds())
     asyncio.create_task(manage_rounds())
     print("📅 Background scheduler started!")
+    
+    # Start web server for keep-alive
+    asyncio.create_task(start_web_server())
     
     await dp.start_polling(bot)
 
