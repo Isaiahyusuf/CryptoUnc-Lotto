@@ -436,3 +436,56 @@ Optional but recommended:
         •       Announcements must go to channel only (no group).
         •       Add timestamps for every event in logs.
         •       Keep code modular and readable.
+
+Purpose
+
+This guide instructs the Replit agent to:
+	1.	Fix the TypeError: can't subtract offset-naive and offset-aware datetimes issue in the bot.
+	2.	Properly load environment variables from a .env file.
+	3.	Ensure the bot stays running on Replit.
+
+⸻
+
+Step 1: Identify the Problem
+
+The error occurs when your bot tries to subtract two datetime objects, but one has timezone info (offset-aware) and the other does not (offset-naive). Python cannot subtract these directly.
+
+
+Step 2: Fix the Datetime Subtraction
+
+You need to make both datetimes either naive or aware. The recommended approach for bots dealing with multiple time zones is to convert everything to UTC.
+        
+Action for Agent:
+	•	Search the code for any subtraction of datetime objects.
+	•	Ensure all datetime objects are timezone-aware (use datetime.now(timezone.utc) or replace(tzinfo=timezone.utc)).
+	•	Replace all naive datetimes used in bot rounds, timers, or schedulers.
+check if the lottery is using  Chainlink VRF Integration if use okay if not make it use Replace pseudo-random number generation with verifiable randomness for lottery draws.
+⸻
+
+Step 3: Load Environment Variables from .env File
+
+Replit requires using the Secrets tab to securely store environment variables.
+
+Action for Agent:
+	•	Install python-dotenv if not already installed:
+
+name and ask for all eviroment variables
+Step 5: Deployment Checklist for Agent
+	1.	Ensure all datetime operations are UTC-aware.
+	2.	Load .env variables using python-dotenv.
+	3.	Add BOT_TOKEN and other secrets to Replit Secrets tab.
+	4.	Ensure bot’s main loop is async and starts at Replit runtime.
+	5.	Optionally add keep-alive endpoint or external uptime ping.
+
+⸻
+
+Step 6: Testing
+	•	Run bot locally or in Replit console:
+
+Confirm no offset-naive errors appear.
+	•	Verify bot responds to Telegram messages.
+	•	Check that all environment variables are loaded correctly (print(BOT_TOKEN) for debug).
+        
+
+
+
