@@ -1774,9 +1774,6 @@ async def generic_message_handler(message: types.Message):
 # ---------------------------
 # Admin commands
 # ---------------------------
-def is_admin(user_id):
-    return user_id == ADMIN_ID
-
 
 @dp.message(Command("admin_draw"))
 async def cmd_admin_draw(message: types.Message):
