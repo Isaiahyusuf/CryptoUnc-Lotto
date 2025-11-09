@@ -25,3 +25,12 @@ python-dotenv
 requests
 solana
 solders
+aiogram
+aiohttp
+base58
+construct
+cryptography
+python-dotenv
+requests
+solana
+solders
