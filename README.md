@@ -206,3 +206,151 @@ Agent please add
 
 Please add the ability for bot to show wallet private key to users and users after creating a wallet to create a 4 digit pin to use to see private key and bot remember this pin users can use this pin too for sending out solana on the bot wallet
 
+Developer Task (Agent):
+Please follow this document carefully and upgrade the CryptoUnc Lotto Bot to a complete, fair, transparent, and powerful Solana-based lottery system.
+Keep all existing features functional while adding the following upgrades.
+
+⸻
+
+⚙️ 1. Chainlink VRF Integration
+	•	Replace any pseudo-random number generation logic with Chainlink VRF to ensure verifiable and tamper-proof randomness.
+	•	Use this system to select winners after each qualifying round.
+
+⸻
+
+💰 2. Stake Options & Rounds per Day
+
+There will be 4 rounds per day, evenly distributed within 24 hours.
+Each round has 12 stake categories, each treated as its own sub-round:
+
+0.025 SOL  
+0.05 SOL  
+0.5 SOL  
+0.7 SOL  
+1 SOL  
+1.5 SOL  
+2 SOL  
+2.5 SOL  
+3 SOL  
+3.5 SOL  
+4 SOL  
+4.5 SOL  
+5 SOL
+
+Players can only join when a round is open.
+Rounds are automatically managed and start/close based on the daily schedule.
+
+
+🕒 3. Round Scheduling
+	•	Total: 4 rounds per 24 hours.
+	•	Suggested times (UTC):
+	•	Round 1 → 00:00
+	•	Round 2 → 06:00
+	•	Round 3 → 12:00
+	•	Round 4 → 18:00
+
+Each round:
+	•	Opens for 15 minutes for players to join.
+	•	If the round reaches the minimum number of players (10), Chainlink VRF runs and picks a winner.
+	•	If not enough players join within 15 minutes, refund logic triggers (see section 6).
+
+⸻
+
+📢 4. Channel Announcements
+	•	Announcements go to the official channel, not the group.
+	•	The bot must announce:
+	•	“Next round starts in 30 minutes!”
+	•	“Round X of 4 is now open!”
+	•	“Minimum 10 players needed per stake.”
+	•	“Join your preferred stake amount to play now!”
+	•	Each announcement includes buttons to “Join Round” or “Check Active Rounds.”
+
+⸻
+
+👥 5. Player Tracking & Round Info
+
+For each stake round:
+	•	Show how many players have joined.
+	•	Show the minimum required (10 players).
+	•	Show how many players are still needed.
+
+When users press Check Rounds, bot should:
+	•	Display which rounds have active players joining.
+	•	Indicate which stake rounds are closest to being full.
+	•	Suggest players join the rounds with the highest participation.
+
+⸻
+
+💸 6. Refund System
+	•	If after 15 minutes, fewer than 10 players joined a stake round:
+	•	Refund every participant automatically.
+	•	Deduct a small configurable network fee before refund.
+	•	Log and announce the refund event in the channel (not group).
+	•	Refund logic must be safe, non-blocking, and fully automatic.
+
+⸻
+
+🏆 7. Winner Selection & Prize Distribution
+	•	Once a round meets the minimum players (10), trigger Chainlink VRF to select a winner randomly.
+	•	The prize pool split must always follow:
+	•	🥇 Winner: 80% of total stake pool.
+	•	💼 Team wallet(s): 20% (sent to predefined team wallets).
+
+After each round’s winner is determined:
+	•	Announce the winner in the channel.
+	•	Display stake category, number of players, and prize won.
+	•	Send rewards automatically to the winner’s wallet.
+
+⸻
+
+🔐 8. Secrets & Configuration Audit
+
+Agent must check and ensure all environment variables are correctly configured.
+If any are missing, prompt for setup instructions or display warnings.
+
+
+Ensure wallet private keys remain encrypted at all times and never printed in logs.
+
+⸻
+
+🎮 9. Player Flow
+	1.	Player taps Play Now → bot displays all active stake categories.
+	2.	Player chooses stake → bot checks if round is open.
+	3.	If round is open → player joins and is added to that stake pool.
+	4.	If round is closed/full → bot suggests another round (the one with most joined players).
+	5.	Player can check live status of all stake pools anytime via Check Rounds.
+
+⸻
+
+🧠 10. Refund Logic Summary
+	•	Minimum players: 10
+	•	Join window: 15 minutes
+	•	If minimum not met → auto refund (minus network fee)
+	•	Refund details logged + channel notification
+	•	Admin can override via commands (see section 11)
+
+⸻
+
+⏱ 11. Admin Commands
+
+Optional but recommended:
+
+/status – Show all active rounds, players, and stake counts.
+/refund [round_id] – Manually trigger refund.
+/force_draw [round_id] – Force trigger winner selection.
+/announce [text] – Send custom message to channel.
+
+12. Transparency & Security
+	•	Use Chainlink VRF to ensure results cannot be manipulated.
+	•	Keep user wallet private keys encrypted and only accessible by their PIN if implemented.
+	•	Log all transactions (join, refund, reward) securely.
+	•	Maintain fairness and transparency for players and admins.
+
+⸻
+
+✅ Final Notes
+	•	Maintain existing database and wallet structure.
+	•	Ensure network fee, reward distribution, and Chainlink VRF are fully tested.
+	•	Announcements must go to channel only (no group).
+	•	Add timestamps for every event in logs.
+	•	Keep code modular and readable.
