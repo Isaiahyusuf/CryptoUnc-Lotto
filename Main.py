@@ -2468,10 +2468,11 @@ async def start_web_server():
     
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', 8080)
+    site = web.TCPSite(runner, '0.0.0.0', 5000)
     await site.start()
-    print("🌐 Web server started on http://0.0.0.0:8080 for UptimeRobot pings")
-    print("📌 Configure UptimeRobot to ping your Replit URL to keep bot alive")
+    print("🌐 Web server started on http://0.0.0.0:5000 for UptimeRobot pings")
+    print("📌 Health endpoint: /health")
+    print("📌 Your Replit URL: Check the Webview tab above ⬆️")
 
 
 async def main():
