@@ -13,7 +13,7 @@ A decentralized lottery bot for Telegram with **real Solana mainnet integration*
 - **Database**: SQLite (local file-based database)
 - **Hosting**: Replit
 
-## Recent Changes (Nov 7, 2025)
+## Recent Changes (Nov 9, 2025)
 - ✅ Installed Python 3.11 and all dependencies
 - ✅ Implemented real Solana mainnet integration with actual transactions
 - ✅ Added support for multiple wallets per user (up to 3)
@@ -32,6 +32,10 @@ A decentralized lottery bot for Telegram with **real Solana mainnet integration*
 - ✅ Enhanced lottery ticket display with Ticket ID
 - ✅ Improved winner announcement with prize pool and better formatting
 - ✅ Added all required environment variables (SUPPORT_USERNAME, etc.)
+- ✅ Replaced pseudo-random with SHA256-based cryptographic randomness
+- ✅ Implemented verifiable seed generation using transaction signatures
+- ✅ Added aiohttp web server for UptimeRobot keep-alive functionality
+- ✅ Exposed health check endpoints (/, /health, /ping) on port 8080
 
 ## Project Architecture
 
@@ -220,6 +224,23 @@ If you see "webhook is active" error:
 python -c "import asyncio; from aiogram import Bot; import os; from dotenv import load_dotenv; load_dotenv(); bot = Bot(token=os.getenv('BOT_TOKEN')); asyncio.run(bot.delete_webhook(drop_pending_updates=True))"
 ```
 
+### Keep Bot Alive 24/7
+The bot includes a web server on port 8080 to prevent Replit from sleeping:
+
+1. **UptimeRobot Setup** (Recommended):
+   - Sign up at https://uptimerobot.com (free)
+   - Create new HTTP(S) monitor
+   - Use your Replit URL + `/health` (e.g., `https://your-repl.username.repl.co/health`)
+   - Set interval to 5 minutes
+   - UptimeRobot will ping your bot to keep it awake
+
+2. **Available Endpoints**:
+   - `/` - Bot status message
+   - `/health` - Health check (returns "✅ CryptoUnc Lotto Bot is alive!")
+   - `/ping` - Same as /health
+
+3. **Note**: For guaranteed 24/7 uptime, consider using Replit Deployments (paid) or hosting on VPS/cloud providers.
+
 ## Development Notes
 
 ### Current Implementation
@@ -231,6 +252,8 @@ python -c "import asyncio; from aiogram import Bot; import os; from dotenv impor
 ✅ External wallet connection
 ✅ Database persistence
 ✅ Transaction signature tracking
+✅ Web server for UptimeRobot keep-alive (port 8080)
+✅ SHA256-based cryptographic randomness with verifiable seeds
 
 ### Future Improvements (Phase 2)
 - WalletConnect integration for seamless Phantom/Solflare connection
