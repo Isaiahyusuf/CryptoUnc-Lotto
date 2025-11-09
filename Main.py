@@ -82,6 +82,66 @@ pending_pins = {}  # Stores PIN attempts: {user_id: {"pin": "1234", "action": "v
 # ---------------------------
 # Database helpers
 # ---------------------------
+def migrate_database():
+    """Safely migrate existing database to new schema with pending_refund status"""
+    if not os.path.exists(DB_PATH):
+        return
+    
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    
+    try:
+        # Check if round_stakes exists and needs migration
+        c.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='round_stakes'")
+        table_def = c.fetchone()
+        
+        if table_def and 'pending_refund' not in table_def[0]:
+            print("🔄 Migrating database schema to add 'pending_refund' status...")
+            
+            # Create new table with updated schema
+            c.execute("""
+                CREATE TABLE round_stakes_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    round_id INTEGER NOT NULL,
+                    stake_amount REAL NOT NULL,
+                    status TEXT DEFAULT 'open' CHECK(status IN ('open', 'closed', 'drawn', 'pending_refund', 'refunded')),
+                    winner_user_id INTEGER,
+                    prize_amount REAL,
+                    tx_signature TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(round_id, stake_amount),
+                    FOREIGN KEY (round_id) REFERENCES scheduled_rounds(round_id) ON DELETE CASCADE,
+                    FOREIGN KEY (winner_user_id) REFERENCES users(user_id)
+                )
+            """)
+            
+            # Copy existing data
+            c.execute("""
+                INSERT INTO round_stakes_new 
+                SELECT * FROM round_stakes
+            """)
+            
+            # Drop old table
+            c.execute("DROP TABLE round_stakes")
+            
+            # Rename new table
+            c.execute("ALTER TABLE round_stakes_new RENAME TO round_stakes")
+            
+            # Recreate indexes
+            c.execute("CREATE INDEX IF NOT EXISTS idx_round_stakes_round ON round_stakes(round_id, status)")
+            
+            conn.commit()
+            print("✅ Database migration completed successfully!")
+        else:
+            print("✅ Database schema is up to date (pending_refund supported)")
+    
+    except Exception as e:
+        print(f"⚠️ Migration error: {e}")
+        conn.rollback()
+    finally:
+        conn.close()
+
+
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -146,7 +206,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             round_id INTEGER NOT NULL,
             stake_amount REAL NOT NULL,
-            status TEXT DEFAULT 'open' CHECK(status IN ('open', 'closed', 'drawn', 'refunded')),
+            status TEXT DEFAULT 'open' CHECK(status IN ('open', 'closed', 'drawn', 'pending_refund', 'refunded')),
             winner_user_id INTEGER,
             prize_amount REAL,
             tx_signature TEXT,
@@ -478,32 +538,97 @@ async def process_refunds_for_stake(round_stake_id: int):
         stake_amount = Decimal(str(stake_row[0]))
         refund_amount = stake_amount * (Decimal("1") - NETWORK_FEE_PERCENTAGE)
     
-    refunded_users = []
-    for participant_id, user_id, _ in participants:
-        wallet = get_active_wallet(user_id)
-        private_key = get_wallet_private_key(user_id, wallet) if wallet else None
-        
-        if wallet and private_key and refund_amount > 0:
-            result = await send_sol(wallet, wallet, refund_amount, private_key)
-            
-            if result["success"]:
-                c.execute("""
-                    UPDATE round_participants
-                    SET refunded = 1, refund_tx = ?
-                    WHERE id = ?
-                """, (result["signature"], participant_id))
-                refunded_users.append((user_id, refund_amount, result["signature"]))
-    
     c.execute("""
         UPDATE round_stakes
-        SET status = 'refunded'
+        SET status = 'pending_refund'
         WHERE id = ?
     """, (round_stake_id,))
     
     conn.commit()
+    
+    refund_list = []
+    for participant_id, user_id, _ in participants:
+        participant_wallet = get_active_wallet(user_id)
+        
+        if participant_wallet:
+            refund_list.append({
+                'participant_id': participant_id,
+                'user_id': user_id,
+                'wallet': participant_wallet,
+                'amount': float(refund_amount)
+            })
+            
+            try:
+                await bot.send_message(
+                    user_id,
+                    f"⏳ <b>Refund Pending</b>\n\n"
+                    f"Your round did not meet the minimum {MIN_PLAYERS_PER_STAKE} players.\n"
+                    f"Refund amount: {refund_amount} SOL\n"
+                    f"(Original stake minus {float(NETWORK_FEE_PERCENTAGE * 100)}% network fee)\n\n"
+                    f"Your refund will be processed by admin shortly.\n"
+                    f"Target wallet: <code>{participant_wallet}</code>",
+                    parse_mode="HTML"
+                )
+            except:
+                pass
+    
     conn.close()
     
-    return refunded_users
+    print(f"💸 Refunds pending for stake {round_stake_id}: {len(refund_list)} participants")
+    for refund in refund_list:
+        print(f"   → User {refund['user_id']}: {refund['amount']} SOL to {refund['wallet']}")
+    
+    return refund_list
+
+
+async def mark_refund_completed(participant_id: int, tx_signature: str):
+    conn = get_db_conn()
+    c = conn.cursor()
+    
+    c.execute("""
+        UPDATE round_participants
+        SET refunded = 1, refund_tx = ?
+        WHERE id = ?
+    """, (tx_signature, participant_id))
+    
+    c.execute("SELECT user_id, round_stake_id FROM round_participants WHERE id = ?", (participant_id,))
+    participant_row = c.fetchone()
+    
+    if participant_row:
+        user_id, stake_id = participant_row
+        
+        c.execute("""
+            SELECT COUNT(*) FROM round_participants
+            WHERE round_stake_id = ? AND refunded = 0
+        """, (stake_id,))
+        pending_count = c.fetchone()[0]
+        
+        if pending_count == 0:
+            c.execute("""
+                UPDATE round_stakes
+                SET status = 'refunded'
+                WHERE id = ?
+            """, (stake_id,))
+            print(f"✅ Stake {stake_id} marked as fully refunded (all participants processed)")
+        
+        conn.commit()
+        conn.close()
+        
+        try:
+            await bot.send_message(
+                user_id,
+                f"✅ <b>Refund Completed!</b>\n\n"
+                f"📝 TX: <code>{tx_signature[:20]}...</code>\n\n"
+                f"Thank you for playing!",
+                parse_mode="HTML"
+            )
+        except:
+            pass
+        
+        return True
+    
+    conn.close()
+    return False
 
 
 # ---------------------------
@@ -514,6 +639,7 @@ async def cmd_start(message: types.Message):
     save_user(message.from_user.id, message.from_user.username or "")
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎲 Play", callback_data="play_now")],
+        [InlineKeyboardButton(text="🎰 Check Active Rounds", callback_data="check_active_rounds")],
         [InlineKeyboardButton(text="💼 My Wallets", callback_data="my_wallets")],
         [InlineKeyboardButton(text="📊 View Results", callback_data="view_results")],
         [InlineKeyboardButton(text="📘 Rules", callback_data="rules")],
@@ -521,8 +647,11 @@ async def cmd_start(message: types.Message):
     ])
     await message.answer(
         "🎟️ <b>Welcome to CryptoUnc Lotto!</b>\n\n"
-        "Play the lottery with real SOL on Solana mainnet!\n"
-        "Pick 5 numbers (1–40) and choose your stake.\n",
+        "🚀 New: Scheduled Rounds - 4 rounds daily!\n"
+        "⏰ Times: 00:00, 06:00, 12:00, 18:00 UTC\n"
+        "💰 13 stake options: 0.025 - 5 SOL\n"
+        "👥 Min 10 players per stake to draw\n\n"
+        "Check active rounds and join now!",
         reply_markup=keyboard,
         parse_mode="HTML"
     )
@@ -974,6 +1103,215 @@ async def inline_handler(query: types.CallbackQuery):
             parse_mode="HTML"
         )
 
+    elif data == "check_active_rounds":
+        await query.answer()
+        rounds = get_active_rounds()
+        
+        if not rounds:
+            await bot.send_message(uid,
+                "🎰 <b>No Active Rounds</b>\n\n"
+                "There are no open rounds at the moment.\n"
+                f"Rounds open daily at: {', '.join(ROUND_TIMES_UTC)} UTC\n\n"
+                "Check back soon!",
+                parse_mode="HTML"
+            )
+            return
+        
+        for round_id, round_number, scheduled_time, start_time, end_time, status in rounds:
+            stakes = get_round_stakes_with_counts(round_id)
+            
+            text = f"🎰 <b>Round {round_id}</b>\n"
+            text += f"Status: {'🟢 OPEN' if status == 'open' else '🟡 Pending'}\n\n"
+            
+            if status == 'open' and start_time:
+                start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+                now = datetime.now(pytz.UTC)
+                elapsed = (now - start_dt).total_seconds() / 60
+                remaining = max(0, ROUND_DURATION_MINUTES - elapsed)
+                text += f"⏰ Time Remaining: {int(remaining)} minutes\n\n"
+            
+            text += "💰 <b>Stake Options:</b>\n"
+            
+            stake_buttons = []
+            for stake_id, stake_amount, stake_status, player_count in stakes:
+                needed = max(0, MIN_PLAYERS_PER_STAKE - player_count)
+                status_icon = "✅" if player_count >= MIN_PLAYERS_PER_STAKE else "🎯"
+                
+                text += f"{status_icon} {stake_amount} SOL: {player_count}/{MIN_PLAYERS_PER_STAKE} players"
+                if needed > 0:
+                    text += f" ({needed} needed)"
+                text += "\n"
+                
+                if status == 'open':
+                    stake_buttons.append([InlineKeyboardButton(
+                        text=f"{status_icon} Join {stake_amount} SOL ({player_count}/{MIN_PLAYERS_PER_STAKE})",
+                        callback_data=f"join_stake_{stake_id}"
+                    )])
+            
+            if status == 'open':
+                stake_buttons.append([InlineKeyboardButton(
+                    text="🔄 Refresh",
+                    callback_data=f"check_round_{round_id}"
+                )])
+            
+            stake_buttons.append([InlineKeyboardButton(
+                text="🔙 Back to Menu",
+                callback_data="back_to_main"
+            )])
+            
+            keyboard = InlineKeyboardMarkup(inline_keyboard=stake_buttons)
+            await bot.send_message(uid, text, reply_markup=keyboard, parse_mode="HTML")
+    
+    elif data.startswith("check_round_"):
+        await query.answer("Refreshing...")
+        round_id = int(data.split("_")[2])
+        
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("SELECT round_number, status, start_time FROM scheduled_rounds WHERE round_id = ?", (round_id,))
+        round_data = c.fetchone()
+        conn.close()
+        
+        if not round_data:
+            await bot.send_message(uid, "❌ Round not found.", parse_mode="HTML")
+            return
+        
+        round_number, status, start_time = round_data
+        stakes = get_round_stakes_with_counts(round_id)
+        
+        text = f"🎰 <b>Round {round_id} - Updated</b>\n\n"
+        
+        if status == 'open' and start_time:
+            start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+            now = datetime.now(pytz.UTC)
+            elapsed = (now - start_dt).total_seconds() / 60
+            remaining = max(0, ROUND_DURATION_MINUTES - elapsed)
+            text += f"⏰ Time Remaining: {int(remaining)} minutes\n\n"
+        
+        text += "💰 <b>Current Players:</b>\n"
+        
+        stake_buttons = []
+        for stake_id, stake_amount, stake_status, player_count in stakes:
+            needed = max(0, MIN_PLAYERS_PER_STAKE - player_count)
+            status_icon = "✅" if player_count >= MIN_PLAYERS_PER_STAKE else "🎯"
+            
+            text += f"{status_icon} {stake_amount} SOL: {player_count}/{MIN_PLAYERS_PER_STAKE}"
+            if needed > 0:
+                text += f" ({needed} more needed)"
+            text += "\n"
+            
+            if status == 'open':
+                stake_buttons.append([InlineKeyboardButton(
+                    text=f"{status_icon} Join {stake_amount} SOL",
+                    callback_data=f"join_stake_{stake_id}"
+                )])
+        
+        if status == 'open':
+            stake_buttons.append([InlineKeyboardButton(
+                text="🔄 Refresh Again",
+                callback_data=f"check_round_{round_id}"
+            )])
+        
+        stake_buttons.append([InlineKeyboardButton(
+            text="🔙 Back",
+            callback_data="check_active_rounds"
+        )])
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=stake_buttons)
+        await bot.send_message(uid, text, reply_markup=keyboard, parse_mode="HTML")
+    
+    elif data.startswith("join_stake_"):
+        await query.answer("Processing...")
+        stake_id = int(data.split("_")[2])
+        
+        wallet = get_active_wallet(uid)
+        if not wallet:
+            await bot.send_message(uid,
+                "❌ <b>No Wallet Found</b>\n\n"
+                "Please create or connect a wallet first!",
+                parse_mode="HTML"
+            )
+            return
+        
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("SELECT stake_amount FROM round_stakes WHERE id = ?", (stake_id,))
+        stake_row = c.fetchone()
+        conn.close()
+        
+        if not stake_row:
+            await bot.send_message(uid, "❌ Stake not found.")
+            return
+        
+        stake_amount = Decimal(str(stake_row[0]))
+        
+        balance = await get_real_balance(wallet)
+        if balance < stake_amount:
+            await bot.send_message(uid,
+                f"⚠️ <b>Insufficient Balance</b>\n\n"
+                f"Your balance: {balance} SOL\n"
+                f"Required: {stake_amount} SOL\n\n"
+                f"Please deposit more SOL to your wallet:\n"
+                f"<code>{wallet}</code>",
+                parse_mode="HTML"
+            )
+            return
+        
+        private_key = get_wallet_private_key(uid, wallet)
+        
+        if not private_key:
+            await bot.send_message(uid,
+                f"⚠️ This is an external wallet.\n\n"
+                f"Please send <b>{stake_amount} SOL</b> to:\n"
+                f"<code>{OWNER_WALLET}</code>\n\n"
+                f"Then reply with your transaction signature.",
+                parse_mode="HTML"
+            )
+            return
+        
+        owner_amt = stake_amount * Decimal("0.8")
+        team_amt = stake_amount * Decimal("0.2")
+        
+        await bot.send_message(uid, "⏳ Processing payment...")
+        
+        result = await send_sol(wallet, OWNER_WALLET, owner_amt, private_key)
+        
+        if not result["success"]:
+            await bot.send_message(uid,
+                f"❌ <b>Transaction failed!</b>\n\n"
+                f"Error: {result.get('error', 'Unknown error')}\n\n"
+                f"Please try again or contact support.",
+                parse_mode="HTML"
+            )
+            return
+        
+        tx_signature = result["signature"]
+        
+        if TEAM_WALLET and TEAM_WALLET != OWNER_WALLET:
+            await send_sol(wallet, TEAM_WALLET, team_amt, private_key)
+        
+        lottery_numbers = sorted(random.sample(range(1, 41), 5))
+        
+        add_result = add_round_participant(stake_id, uid, lottery_numbers, tx_signature)
+        
+        if add_result["success"]:
+            await bot.send_message(uid,
+                f"✅ <b>Successfully Joined!</b>\n\n"
+                f"🎰 Stake: {stake_amount} SOL\n"
+                f"🎲 Your Numbers: {numbers_to_str(lottery_numbers)}\n"
+                f"📝 TX: <code>{tx_signature[:20]}...</code>\n\n"
+                f"🍀 Good luck! Winners announced after the round ends.",
+                parse_mode="HTML"
+            )
+        else:
+            await bot.send_message(uid,
+                f"❌ <b>Failed to join round</b>\n\n"
+                f"Error: {add_result.get('error')}\n\n"
+                f"Payment was processed. Contact support with TX:\n"
+                f"<code>{tx_signature}</code>",
+                parse_mode="HTML"
+            )
+
     elif data == "back_to_main":
         await query.answer()
         await cmd_start(query.message)
@@ -1300,10 +1638,523 @@ async def cmd_admin_draw(message: types.Message):
     await message.reply(f"✅ Draw completed. Moved to Round {cur_round + 1}.")
 
 
+def is_admin(user_id: int) -> bool:
+    return user_id == ADMIN_ID
+
+
+@dp.message(Command("status"))
+async def cmd_status(message: types.Message):
+    if not is_admin(message.from_user.id):
+        await message.reply("⛔ Not authorized.")
+        return
+    
+    rounds = get_active_rounds()
+    
+    text = "📊 <b>System Status</b>\n\n"
+    text += f"⏰ Next rounds: {', '.join(ROUND_TIMES_UTC)} UTC\n"
+    text += f"👥 Min players: {MIN_PLAYERS_PER_STAKE}\n"
+    text += f"⏱ Round duration: {ROUND_DURATION_MINUTES} min\n\n"
+    
+    if not rounds:
+        text += "🎰 No active rounds\n"
+    else:
+        text += f"🎰 <b>Active Rounds: {len(rounds)}</b>\n\n"
+        
+        for round_id, round_number, scheduled_time, start_time, end_time, status in rounds:
+            text += f"<b>Round {round_id}</b>\n"
+            text += f"Status: {status}\n"
+            
+            if start_time:
+                start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+                now = datetime.now(pytz.UTC)
+                elapsed = (now - start_dt).total_seconds() / 60
+                remaining = max(0, ROUND_DURATION_MINUTES - elapsed)
+                text += f"Time remaining: {int(remaining)} min\n"
+            
+            stakes = get_round_stakes_with_counts(round_id)
+            total_players = sum(player_count for _, _, _, player_count in stakes)
+            text += f"Total players: {total_players}\n"
+            
+            text += "Stakes:\n"
+            for stake_id, stake_amount, stake_status, player_count in stakes:
+                text += f"  • {stake_amount} SOL: {player_count} players\n"
+            
+            text += "\n"
+    
+    await message.reply(text, parse_mode="HTML")
+
+
+@dp.message(Command("refund"))
+async def cmd_refund(message: types.Message):
+    if not is_admin(message.from_user.id):
+        await message.reply("⛔ Not authorized.")
+        return
+    
+    try:
+        args = message.text.split()
+        
+        if len(args) == 1:
+            conn = get_db_conn()
+            c = conn.cursor()
+            c.execute("""
+                SELECT rs.id, rs.round_id, rs.stake_amount, 
+                       COUNT(rp.id) as pending_count
+                FROM round_stakes rs
+                LEFT JOIN round_participants rp ON rs.id = rp.round_stake_id AND rp.refunded = 0
+                WHERE rs.status = 'pending_refund'
+                GROUP BY rs.id
+            """)
+            pending_stakes = c.fetchall()
+            conn.close()
+            
+            if not pending_stakes:
+                await message.reply("✅ No pending refunds!")
+                return
+            
+            text = "💸 <b>Pending Refunds</b>\n\n"
+            for stake_id, round_id, stake_amount, count in pending_stakes:
+                text += f"<b>Stake ID {stake_id}</b>\n"
+                text += f"Round: {round_id}\n"
+                text += f"Amount: {stake_amount} SOL\n"
+                text += f"Participants: {count}\n"
+                text += f"Command: /refund {stake_id}\n\n"
+            
+            await message.reply(text, parse_mode="HTML")
+            return
+        
+        stake_id = int(args[1])
+        
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("""
+            SELECT rp.id, rp.user_id, rs.stake_amount
+            FROM round_participants rp
+            JOIN round_stakes rs ON rp.round_stake_id = rs.id
+            WHERE rp.round_stake_id = ? AND rp.refunded = 0
+        """, (stake_id,))
+        participants = c.fetchall()
+        conn.close()
+        
+        if not participants:
+            await message.reply("✅ No pending refunds for this stake.")
+            return
+        
+        stake_amount = Decimal(str(participants[0][2]))
+        refund_amount = stake_amount * (Decimal("1") - NETWORK_FEE_PERCENTAGE)
+        
+        text = f"💸 <b>Refund Details - Stake {stake_id}</b>\n\n"
+        text += f"Participants: {len(participants)}\n"
+        text += f"Refund per participant: {refund_amount} SOL\n\n"
+        text += "<b>Participant List:</b>\n"
+        
+        for participant_id, user_id, _ in participants:
+            wallet = get_active_wallet(user_id)
+            text += f"• User {user_id}\n"
+            text += f"  Wallet: <code>{wallet}</code>\n"
+            text += f"  Participant ID: {participant_id}\n\n"
+        
+        text += f"\n<b>To process refunds:</b>\n"
+        text += f"1. Send {refund_amount} SOL to each wallet above from your treasury wallet\n"
+        text += f"2. After sending, use: /mark_refund <participant_id> <tx_signature>\n"
+        
+        await message.reply(text, parse_mode="HTML")
+    
+    except ValueError:
+        await message.reply("❌ Invalid stake ID. Must be a number.")
+    except Exception as e:
+        await message.reply(f"❌ Error: {str(e)}")
+
+
+@dp.message(Command("mark_refund"))
+async def cmd_mark_refund(message: types.Message):
+    if not is_admin(message.from_user.id):
+        await message.reply("⛔ Not authorized.")
+        return
+    
+    try:
+        args = message.text.split()
+        if len(args) < 3:
+            await message.reply(
+                "Usage: /mark_refund <participant_id> <tx_signature>\n\n"
+                "Mark a refund as completed after you've sent the funds manually."
+            )
+            return
+        
+        participant_id = int(args[1])
+        tx_signature = args[2]
+        
+        success = await mark_refund_completed(participant_id, tx_signature)
+        
+        if success:
+            await message.reply(
+                f"✅ Refund marked as completed!\n"
+                f"Participant ID: {participant_id}\n"
+                f"TX: <code>{tx_signature[:20]}...</code>\n\n"
+                f"User has been notified.",
+                parse_mode="HTML"
+            )
+        else:
+            await message.reply("❌ Failed to mark refund as completed.")
+    
+    except ValueError:
+        await message.reply("❌ Invalid participant ID. Must be a number.")
+    except Exception as e:
+        await message.reply(f"❌ Error: {str(e)}")
+
+
+@dp.message(Command("force_draw"))
+async def cmd_force_draw(message: types.Message):
+    if not is_admin(message.from_user.id):
+        await message.reply("⛔ Not authorized.")
+        return
+    
+    try:
+        args = message.text.split()
+        if len(args) < 2:
+            await message.reply(
+                "Usage: /force_draw <round_stake_id>\n\n"
+                "Get stake IDs from /status command.\n"
+                "This will draw a winner immediately regardless of player count."
+            )
+            return
+        
+        stake_id = int(args[1])
+        
+        await message.reply("⏳ Processing draw...")
+        
+        result = process_round_stake_draw(stake_id)
+        
+        if result:
+            await message.reply(
+                f"✅ Draw completed!\n\n"
+                f"Winner: {result['winner_user_id']}\n"
+                f"Prize: {result['prize_amount']} SOL\n"
+                f"Winning numbers: {', '.join(map(str, result['winning_numbers']))}\n"
+                f"Players: {result['player_count']}"
+            )
+            
+            conn = get_db_conn()
+            c = conn.cursor()
+            c.execute("SELECT round_id, stake_amount FROM round_stakes WHERE id = ?", (stake_id,))
+            round_data = c.fetchone()
+            conn.close()
+            
+            if round_data:
+                round_id, stake_amount = round_data
+                await announce_winner(round_id, stake_amount, result)
+                await distribute_prize(stake_id, result)
+        else:
+            await message.reply("❌ Draw failed. No participants found.")
+    
+    except ValueError:
+        await message.reply("❌ Invalid stake ID. Must be a number.")
+    except Exception as e:
+        await message.reply(f"❌ Error: {str(e)}")
+
+
+@dp.message(Command("announce"))
+async def cmd_announce(message: types.Message):
+    if not is_admin(message.from_user.id):
+        await message.reply("⛔ Not authorized.")
+        return
+    
+    try:
+        text = message.text.replace("/announce", "").strip()
+        
+        if not text:
+            await message.reply(
+                "Usage: /announce <message>\n\n"
+                "This will send a custom message to the channel."
+            )
+            return
+        
+        await bot.send_message(
+            ROUND_CHANNEL,
+            f"📢 <b>Announcement</b>\n\n{text}",
+            parse_mode="HTML"
+        )
+        
+        await message.reply("✅ Announcement sent to channel!")
+    
+    except Exception as e:
+        await message.reply(f"❌ Error: {str(e)}")
+
+
 # ---------------------------
 # Startup
 # ---------------------------
+async def schedule_daily_rounds():
+    while True:
+        try:
+            now = datetime.now(pytz.UTC)
+            today = now.date()
+            
+            for round_num, time_str in enumerate(ROUND_TIMES_UTC, 1):
+                hour, minute = map(int, time_str.split(':'))
+                scheduled_dt = datetime(today.year, today.month, today.day, hour, minute, tzinfo=pytz.UTC)
+                
+                if scheduled_dt > now:
+                    conn = get_db_conn()
+                    c = conn.cursor()
+                    c.execute("SELECT round_id FROM scheduled_rounds WHERE scheduled_time = ?", (scheduled_dt,))
+                    if not c.fetchone():
+                        round_id = create_scheduled_round(round_num, scheduled_dt)
+                        print(f"📅 Scheduled round {round_num} for {scheduled_dt}")
+                    conn.close()
+            
+            await asyncio.sleep(3600)
+        except Exception as e:
+            print(f"❌ Scheduler error: {e}")
+            await asyncio.sleep(60)
+
+
+async def manage_rounds():
+    while True:
+        try:
+            now = datetime.now(pytz.UTC)
+            
+            conn = get_db_conn()
+            c = conn.cursor()
+            c.execute("""
+                SELECT round_id, scheduled_time FROM scheduled_rounds
+                WHERE status = 'pending' AND scheduled_time <= ?
+            """, (now,))
+            pending_rounds = c.fetchall()
+            
+            for round_id, scheduled_time in pending_rounds:
+                update_round_status(round_id, 'open')
+                print(f"🎰 Round {round_id} is now OPEN!")
+                await announce_round_opened(round_id)
+            
+            c.execute("""
+                SELECT round_id, start_time FROM scheduled_rounds
+                WHERE status = 'open'
+            """)
+            open_rounds = c.fetchall()
+            
+            for round_id, start_time in open_rounds:
+                start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+                elapsed = (now - start_dt).total_seconds() / 60
+                
+                if elapsed >= ROUND_DURATION_MINUTES:
+                    await process_round_end(round_id)
+            
+            conn.close()
+            await asyncio.sleep(30)
+        except Exception as e:
+            print(f"❌ Round manager error: {e}")
+            await asyncio.sleep(30)
+
+
+async def process_round_end(round_id: int):
+    stakes = get_round_stakes_with_counts(round_id)
+    
+    for stake_id, stake_amount, status, player_count in stakes:
+        if player_count >= MIN_PLAYERS_PER_STAKE:
+            result = process_round_stake_draw(stake_id)
+            if result:
+                await announce_winner(round_id, stake_amount, result)
+                await distribute_prize(stake_id, result)
+        else:
+            refunded = await process_refunds_for_stake(stake_id)
+            await announce_refunds(round_id, stake_amount, len(refunded))
+    
+    update_round_status(round_id, 'completed')
+    print(f"✅ Round {round_id} completed!")
+
+
+async def announce_round_opened(round_id: int):
+    try:
+        stakes = get_round_stakes_with_counts(round_id)
+        stake_buttons = []
+        for stake_id, stake_amount, status, player_count in stakes:
+            needed = max(0, MIN_PLAYERS_PER_STAKE - player_count)
+            stake_buttons.append([InlineKeyboardButton(
+                text=f"{'✅' if player_count >= MIN_PLAYERS_PER_STAKE else '🎯'} {stake_amount} SOL ({player_count}/{MIN_PLAYERS_PER_STAKE})",
+                callback_data=f"join_stake_{stake_id}"
+            )])
+        
+        stake_buttons.append([InlineKeyboardButton(text="🔄 Refresh", callback_data=f"check_round_{round_id}")])
+        keyboard = InlineKeyboardMarkup(inline_keyboard=stake_buttons)
+        
+        await bot.send_message(
+            ROUND_CHANNEL,
+            f"🎰 <b>Round {round_id} is NOW OPEN!</b>\n\n"
+            f"⏰ Duration: {ROUND_DURATION_MINUTES} minutes\n"
+            f"👥 Minimum players per stake: {MIN_PLAYERS_PER_STAKE}\n"
+            f"💰 Prize: 80% of pool to winner\n\n"
+            f"Choose your stake amount:",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        print(f"❌ Announcement error: {e}")
+
+
+async def announce_winner(round_id: int, stake_amount: float, result: dict):
+    try:
+        winner_id = result['winner_user_id']
+        prize = result['prize_amount']
+        players = result['player_count']
+        winning_nums = result['winning_numbers']
+        
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("SELECT username FROM users WHERE user_id = ?", (winner_id,))
+        user_row = c.fetchone()
+        winner_name = user_row[0] if user_row and user_row[0] else f"User {winner_id}"
+        conn.close()
+        
+        await bot.send_message(
+            ROUND_CHANNEL,
+            f"🏆 <b>WINNER ANNOUNCEMENT!</b>\n\n"
+            f"🎰 Round: {round_id}\n"
+            f"💰 Stake: {stake_amount} SOL\n"
+            f"👥 Players: {players}\n\n"
+            f"🎲 Winning Numbers: {', '.join(map(str, winning_nums))}\n\n"
+            f"🥇 Winner: @{winner_name}\n"
+            f"💵 Prize: <b>{prize} SOL</b>\n\n"
+            f"Congratulations! 🎉",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        print(f"❌ Winner announcement error: {e}")
+
+
+async def announce_refunds(round_id: int, stake_amount: float, refund_count: int):
+    try:
+        if refund_count > 0:
+            await bot.send_message(
+                ROUND_CHANNEL,
+                f"💸 <b>Refund Processed</b>\n\n"
+                f"🎰 Round: {round_id}\n"
+                f"💰 Stake: {stake_amount} SOL\n"
+                f"👥 Participants: {refund_count}\n\n"
+                f"❌ Minimum players not met ({MIN_PLAYERS_PER_STAKE} required)\n"
+                f"✅ All participants refunded (minus {float(NETWORK_FEE_PERCENTAGE * 100)}% network fee)",
+                parse_mode="HTML"
+            )
+    except Exception as e:
+        print(f"❌ Refund announcement error: {e}")
+
+
+async def distribute_prize(stake_id: int, result: dict):
+    try:
+        winner_id = result['winner_user_id']
+        prize_amount = result['prize_amount']
+        
+        winner_wallet = get_active_wallet(winner_id)
+        if not winner_wallet:
+            print(f"❌ Winner {winner_id} has no active wallet!")
+            return
+        
+        team_amount = Decimal(str(prize_amount)) * Decimal("0.2") / Decimal("0.8")
+        
+        if TEAM_WALLET:
+            try:
+                team_result = await send_sol(OWNER_WALLET, TEAM_WALLET, team_amount, None)
+                print(f"💼 Team payment: {team_amount} SOL")
+            except:
+                pass
+        
+        try:
+            prize_result = await send_sol(OWNER_WALLET, winner_wallet, Decimal(str(prize_amount)), None)
+            
+            if prize_result and prize_result.get("success"):
+                conn = get_db_conn()
+                c = conn.cursor()
+                c.execute("""
+                    UPDATE round_stakes
+                    SET tx_signature = ?
+                    WHERE id = ?
+                """, (prize_result["signature"], stake_id))
+                conn.commit()
+                conn.close()
+                
+                await bot.send_message(
+                    winner_id,
+                    f"🎉 <b>Congratulations! You WON!</b>\n\n"
+                    f"💰 Prize: {prize_amount} SOL\n"
+                    f"📝 TX: <code>{prize_result['signature'][:20]}...</code>\n\n"
+                    f"The prize has been sent to your wallet!",
+                    parse_mode="HTML"
+                )
+        except Exception as e:
+            print(f"❌ Prize distribution error: {e}")
+    except Exception as e:
+        print(f"❌ Distribute prize error: {e}")
+
+
+def audit_configuration():
+    """Audit all required environment variables and warn if any are missing"""
+    print("\n🔐 Auditing Configuration...")
+    
+    required_secrets = {
+        'BOT_TOKEN': 'Telegram Bot Token',
+        'OWNER_WALLET': 'Treasury Wallet Address',
+        'ROUND_CHANNEL_ID': 'Announcement Channel ID',
+        'SOLANA_RPC': 'Solana RPC Endpoint',
+        'ADMIN_ID': 'Admin User ID'
+    }
+    
+    optional_secrets = {
+        'TEAM_WALLET': 'Team Wallet Address (defaults to OWNER_WALLET)',
+        'SUPPORT_USERNAME': 'Support Contact Username',
+        'ENCRYPTION_KEY': 'Wallet Encryption Key'
+    }
+    
+    missing_required = []
+    missing_optional = []
+    
+    for key, description in required_secrets.items():
+        value = os.getenv(key)
+        if not value:
+            missing_required.append(f"  ❌ {key}: {description}")
+            print(f"  ❌ MISSING REQUIRED: {key} ({description})")
+        else:
+            # Mask sensitive values
+            if 'TOKEN' in key or 'KEY' in key:
+                display_value = value[:10] + "..." if len(value) > 10 else "***"
+            else:
+                display_value = value
+            print(f"  ✅ {key}: {display_value}")
+    
+    for key, description in optional_secrets.items():
+        value = os.getenv(key)
+        if not value:
+            missing_optional.append(f"  ⚠️ {key}: {description}")
+            print(f"  ⚠️ Optional: {key} ({description}) - Not set")
+        else:
+            if 'TOKEN' in key or 'KEY' in key:
+                display_value = "***"
+            else:
+                display_value = value
+            print(f"  ✅ {key}: {display_value}")
+    
+    if missing_required:
+        print("\n⛔ CRITICAL: Missing required environment variables!")
+        for msg in missing_required:
+            print(msg)
+        print("\nBot may not function correctly. Please set these variables and restart.")
+        return False
+    
+    if missing_optional:
+        print("\n⚠️ Warning: Some optional configurations are missing:")
+        for msg in missing_optional:
+            print(msg)
+        print("Bot will use defaults, but functionality may be limited.")
+    
+    print("\n✅ Configuration audit complete!\n")
+    return True
+
+
 async def main():
+    # Audit configuration before starting
+    config_ok = audit_configuration()
+    if not config_ok:
+        print("\n⚠️ Starting anyway, but expect issues...\n")
+    
+    migrate_database()  # Migrate existing databases before init
     init_db()
     init_wallet_db()  # Initialize wallet tables
     print("🤖 CryptoUnc Lotto Bot with Real Solana Integration starting...")
@@ -1318,6 +2169,10 @@ async def main():
     # Delete webhook to ensure polling works
     await bot.delete_webhook(drop_pending_updates=True)
     print("✅ Webhook deleted, starting polling...")
+    
+    asyncio.create_task(schedule_daily_rounds())
+    asyncio.create_task(manage_rounds())
+    print("📅 Background scheduler started!")
     
     await dp.start_polling(bot)
 
