@@ -48,10 +48,10 @@ if not OWNER_WALLET:
     raise ValueError("OWNER_WALLET environment variable is required")
 
 STAKE_PACKAGES = [
+    Decimal("0.025"),
     Decimal("0.05"),
-    Decimal("0.1"),
-    Decimal("0.3"),
     Decimal("0.5"),
+    Decimal("0.7"),
     Decimal("1"),
     Decimal("1.5"),
     Decimal("2"),
@@ -62,6 +62,12 @@ STAKE_PACKAGES = [
     Decimal("4.5"),
     Decimal("5")
 ]
+
+ROUNDS_PER_DAY = 4
+ROUND_TIMES_UTC = ["00:00", "06:00", "12:00", "18:00"]
+MIN_PLAYERS_PER_STAKE = 10
+ROUND_DURATION_MINUTES = 15
+NETWORK_FEE_PERCENTAGE = Decimal("0.02")
 
 DB_PATH = "cryptounc_lotto.db"
 
@@ -115,6 +121,65 @@ def init_db():
         )
     """)
     c.execute("INSERT OR IGNORE INTO meta(key, value) VALUES('current_round','1')")
+    
+    # Scheduled rounds table - tracks each scheduled round
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS scheduled_rounds (
+            round_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            round_number INTEGER NOT NULL,
+            scheduled_time TIMESTAMP NOT NULL,
+            start_time TIMESTAMP,
+            end_time TIMESTAMP,
+            status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'open', 'closed', 'completed', 'cancelled')),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(round_number, scheduled_time)
+        )
+    """)
+    
+    # Create index for scheduled rounds lookups
+    c.execute("CREATE INDEX IF NOT EXISTS idx_scheduled_rounds_time ON scheduled_rounds(scheduled_time, status)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_scheduled_rounds_status ON scheduled_rounds(status)")
+    
+    # Round stakes table - tracks each stake category within a round
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS round_stakes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            round_id INTEGER NOT NULL,
+            stake_amount REAL NOT NULL,
+            status TEXT DEFAULT 'open' CHECK(status IN ('open', 'closed', 'drawn', 'refunded')),
+            winner_user_id INTEGER,
+            prize_amount REAL,
+            tx_signature TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(round_id, stake_amount),
+            FOREIGN KEY (round_id) REFERENCES scheduled_rounds(round_id) ON DELETE CASCADE,
+            FOREIGN KEY (winner_user_id) REFERENCES users(user_id)
+        )
+    """)
+    
+    # Create index for round stakes lookups
+    c.execute("CREATE INDEX IF NOT EXISTS idx_round_stakes_round ON round_stakes(round_id, status)")
+    
+    # Round participants table - tracks individual participants per stake
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS round_participants (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            round_stake_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            numbers TEXT NOT NULL,
+            tx_signature TEXT,
+            refunded INTEGER DEFAULT 0 CHECK(refunded IN (0, 1)),
+            refund_tx TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (round_stake_id) REFERENCES round_stakes(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(user_id)
+        )
+    """)
+    
+    # Create index for participant lookups
+    c.execute("CREATE INDEX IF NOT EXISTS idx_round_participants_stake ON round_participants(round_stake_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_round_participants_user ON round_participants(user_id)")
+    
     conn.commit()
     conn.close()
 
@@ -199,6 +264,246 @@ def save_draw(round_num: int, winning_numbers):
     )
     conn.commit()
     conn.close()
+
+
+from datetime import datetime, timedelta
+import pytz
+
+def create_scheduled_round(round_number: int, scheduled_time: datetime):
+    conn = get_db_conn()
+    c = conn.cursor()
+    try:
+        c.execute("""
+            INSERT INTO scheduled_rounds (round_number, scheduled_time, status)
+            VALUES (?, ?, 'pending')
+        """, (round_number, scheduled_time))
+        round_id = c.lastrowid
+        
+        for stake in STAKE_PACKAGES:
+            c.execute("""
+                INSERT INTO round_stakes (round_id, stake_amount, status)
+                VALUES (?, ?, 'open')
+            """, (round_id, float(stake)))
+        
+        conn.commit()
+        return round_id
+    except sqlite3.IntegrityError:
+        conn.rollback()
+        return None
+    finally:
+        conn.close()
+
+
+def get_active_rounds():
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("""
+        SELECT round_id, round_number, scheduled_time, start_time, end_time, status
+        FROM scheduled_rounds
+        WHERE status IN ('open', 'pending')
+        ORDER BY scheduled_time ASC
+    """)
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+
+def get_round_stakes_with_counts(round_id: int):
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("""
+        SELECT rs.id, rs.stake_amount, rs.status,
+               COUNT(rp.id) as player_count
+        FROM round_stakes rs
+        LEFT JOIN round_participants rp ON rs.id = rp.round_stake_id AND rp.refunded = 0
+        WHERE rs.round_id = ?
+        GROUP BY rs.id
+        ORDER BY rs.stake_amount ASC
+    """, (round_id,))
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+
+def add_round_participant(round_stake_id: int, user_id: int, numbers: list, tx_signature: str):
+    conn = get_db_conn()
+    c = conn.cursor()
+    
+    c.execute("""
+        SELECT rs.status, rs.round_id, sr.status as round_status, sr.end_time
+        FROM round_stakes rs
+        JOIN scheduled_rounds sr ON rs.round_id = sr.round_id
+        WHERE rs.id = ?
+    """, (round_stake_id,))
+    stake_info = c.fetchone()
+    
+    if not stake_info:
+        conn.close()
+        return {"success": False, "error": "Round stake not found"}
+    
+    stake_status, round_id, round_status, end_time = stake_info
+    
+    if stake_status != 'open' or round_status != 'open':
+        conn.close()
+        return {"success": False, "error": "Round is not accepting participants"}
+    
+    if end_time:
+        end_datetime = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+        if datetime.now(pytz.UTC) > end_datetime:
+            conn.close()
+            return {"success": False, "error": "Round has ended"}
+    
+    c.execute("""
+        SELECT id FROM round_participants
+        WHERE round_stake_id = ? AND user_id = ?
+    """, (round_stake_id, user_id))
+    if c.fetchone():
+        conn.close()
+        return {"success": False, "error": "Already joined this stake round"}
+    
+    try:
+        c.execute("""
+            INSERT INTO round_participants (round_stake_id, user_id, numbers, tx_signature)
+            VALUES (?, ?, ?, ?)
+        """, (round_stake_id, user_id, numbers_to_str(numbers), tx_signature))
+        participant_id = c.lastrowid
+        conn.commit()
+        conn.close()
+        return {"success": True, "participant_id": participant_id}
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return {"success": False, "error": str(e)}
+
+
+def get_round_stake_by_amount(round_id: int, stake_amount: Decimal):
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("""
+        SELECT id, status FROM round_stakes
+        WHERE round_id = ? AND stake_amount = ?
+    """, (round_id, float(stake_amount)))
+    row = c.fetchone()
+    conn.close()
+    return row
+
+
+def update_round_status(round_id: int, status: str):
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("""
+        UPDATE scheduled_rounds
+        SET status = ?, 
+            start_time = CASE WHEN ? = 'open' AND start_time IS NULL THEN CURRENT_TIMESTAMP ELSE start_time END,
+            end_time = CASE WHEN ? IN ('closed', 'completed') THEN CURRENT_TIMESTAMP ELSE end_time END
+        WHERE round_id = ?
+    """, (status, status, status, round_id))
+    conn.commit()
+    conn.close()
+
+
+def process_round_stake_draw(round_stake_id: int):
+    conn = get_db_conn()
+    c = conn.cursor()
+    
+    c.execute("""
+        SELECT rp.id, rp.user_id, rp.numbers
+        FROM round_participants rp
+        WHERE rp.round_stake_id = ? AND rp.refunded = 0
+    """, (round_stake_id,))
+    participants = c.fetchall()
+    
+    if not participants:
+        conn.close()
+        return None
+    
+    winning_numbers = sorted(random.sample(range(1, 41), 5))
+    winning_numbers_str = numbers_to_str(winning_numbers)
+    
+    best_match_count = 0
+    winner = None
+    
+    for participant_id, user_id, numbers_str in participants:
+        user_numbers = str_to_numbers(numbers_str)
+        matches = len(set(user_numbers) & set(winning_numbers))
+        
+        if matches > best_match_count or (matches == best_match_count and random.random() < 0.5):
+            best_match_count = matches
+            winner = (participant_id, user_id)
+    
+    c.execute("""
+        SELECT rs.stake_amount, COUNT(rp.id) as player_count
+        FROM round_stakes rs
+        LEFT JOIN round_participants rp ON rs.id = rp.round_stake_id AND rp.refunded = 0
+        WHERE rs.id = ?
+    """, (round_stake_id,))
+    stake_amount, player_count = c.fetchone()
+    
+    total_pool = Decimal(str(stake_amount)) * player_count
+    prize = total_pool * Decimal("0.8")
+    
+    if winner:
+        c.execute("""
+            UPDATE round_stakes
+            SET status = 'drawn', winner_user_id = ?, prize_amount = ?
+            WHERE id = ?
+        """, (winner[1], float(prize), round_stake_id))
+        conn.commit()
+    
+    conn.close()
+    return {
+        "winner_user_id": winner[1] if winner else None,
+        "prize_amount": prize,
+        "winning_numbers": winning_numbers,
+        "player_count": player_count
+    }
+
+
+async def process_refunds_for_stake(round_stake_id: int):
+    conn = get_db_conn()
+    c = conn.cursor()
+    
+    c.execute("""
+        SELECT rp.id, rp.user_id, rs.stake_amount
+        FROM round_participants rp
+        JOIN round_stakes rs ON rp.round_stake_id = rs.id
+        WHERE rp.round_stake_id = ? AND rp.refunded = 0
+    """, (round_stake_id,))
+    participants = c.fetchall()
+    
+    refund_amount = Decimal("0")
+    c.execute("SELECT stake_amount FROM round_stakes WHERE id = ?", (round_stake_id,))
+    stake_row = c.fetchone()
+    if stake_row:
+        stake_amount = Decimal(str(stake_row[0]))
+        refund_amount = stake_amount * (Decimal("1") - NETWORK_FEE_PERCENTAGE)
+    
+    refunded_users = []
+    for participant_id, user_id, _ in participants:
+        wallet = get_active_wallet(user_id)
+        private_key = get_wallet_private_key(user_id, wallet) if wallet else None
+        
+        if wallet and private_key and refund_amount > 0:
+            result = await send_sol(wallet, wallet, refund_amount, private_key)
+            
+            if result["success"]:
+                c.execute("""
+                    UPDATE round_participants
+                    SET refunded = 1, refund_tx = ?
+                    WHERE id = ?
+                """, (result["signature"], participant_id))
+                refunded_users.append((user_id, refund_amount, result["signature"]))
+    
+    c.execute("""
+        UPDATE round_stakes
+        SET status = 'refunded'
+        WHERE id = ?
+    """, (round_stake_id,))
+    
+    conn.commit()
+    conn.close()
+    
+    return refunded_users
 
 
 # ---------------------------
