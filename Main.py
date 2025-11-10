@@ -238,6 +238,82 @@ def migrate_database():
         conn.close()
 
 
+def migrate_timestamps_to_iso():
+    """Migrate legacy CURRENT_TIMESTAMP values to UTC ISO format strings"""
+    if not os.path.exists(DB_PATH):
+        return
+    
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    
+    try:
+        print("🔄 Migrating timestamps to UTC ISO format...")
+        
+        # Check if scheduled_rounds table exists
+        c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='scheduled_rounds'")
+        if not c.fetchone():
+            print("✅ No scheduled_rounds table, skipping timestamp migration")
+            conn.close()
+            return
+        
+        # Get all rows with timestamps that need conversion
+        c.execute("""
+            SELECT round_id, scheduled_time, start_time, end_time 
+            FROM scheduled_rounds
+        """)
+        rows = c.fetchall()
+        
+        migrated_count = 0
+        for round_id, scheduled_time, start_time, end_time in rows:
+            # Only update start_time and end_time, NOT scheduled_time
+            # (scheduled_time is part of UNIQUE constraint and shouldn't change)
+            updates = []
+            params = []
+            
+            # Convert start_time if needed
+            if start_time and 'T' not in start_time:
+                try:
+                    dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=pytz.UTC)
+                    updates.append("start_time = ?")
+                    params.append(dt.isoformat())
+                except:
+                    pass
+            
+            # Convert end_time if needed
+            if end_time and 'T' not in end_time:
+                try:
+                    dt = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=pytz.UTC)
+                    updates.append("end_time = ?")
+                    params.append(dt.isoformat())
+                except:
+                    pass
+            
+            # Update if any conversions were made
+            if updates:
+                params.append(round_id)
+                query = f"UPDATE scheduled_rounds SET {', '.join(updates)} WHERE round_id = ?"
+                c.execute(query, params)
+                migrated_count += 1
+        
+        conn.commit()
+        if migrated_count > 0:
+            print(f"✅ Migrated {migrated_count} rounds to UTC ISO format")
+        else:
+            print("✅ All timestamps already in ISO format")
+    
+    except Exception as e:
+        print(f"⚠️ Timestamp migration error: {e}")
+        import traceback
+        traceback.print_exc()
+        conn.rollback()
+    finally:
+        conn.close()
+
+
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -426,10 +502,12 @@ def create_scheduled_round(round_number: int, scheduled_time: datetime):
     conn = get_db_conn()
     c = conn.cursor()
     try:
+        # Convert datetime to ISO string for SQLite storage
+        scheduled_time_str = scheduled_time.isoformat() if hasattr(scheduled_time, 'isoformat') else scheduled_time
         c.execute("""
             INSERT INTO scheduled_rounds (round_number, scheduled_time, status)
             VALUES (?, ?, 'pending')
-        """, (round_number, scheduled_time))
+        """, (round_number, scheduled_time_str))
         round_id = c.lastrowid
         
         for stake in STAKE_PACKAGES:
@@ -502,6 +580,9 @@ def add_round_participant(round_stake_id: int, user_id: int, numbers: list, tx_s
     
     if end_time:
         end_datetime = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+        # Ensure end_datetime is timezone-aware
+        if end_datetime.tzinfo is None:
+            end_datetime = end_datetime.replace(tzinfo=pytz.UTC)
         if datetime.now(pytz.UTC) > end_datetime:
             conn.close()
             return {"success": False, "error": "Round has ended"}
@@ -544,13 +625,39 @@ def get_round_stake_by_amount(round_id: int, stake_amount: Decimal):
 def update_round_status(round_id: int, status: str):
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute("""
-        UPDATE scheduled_rounds
-        SET status = ?, 
-            start_time = CASE WHEN ? = 'open' AND start_time IS NULL THEN CURRENT_TIMESTAMP ELSE start_time END,
-            end_time = CASE WHEN ? IN ('closed', 'completed') THEN CURRENT_TIMESTAMP ELSE end_time END
-        WHERE round_id = ?
-    """, (status, status, status, round_id))
+    
+    # Use UTC timezone-aware timestamps in ISO format
+    now_utc = datetime.now(pytz.UTC).isoformat()
+    
+    # Check if we need to set start_time
+    if status == 'open':
+        c.execute("SELECT start_time FROM scheduled_rounds WHERE round_id = ?", (round_id,))
+        row = c.fetchone()
+        if row and not row[0]:
+            c.execute("""
+                UPDATE scheduled_rounds
+                SET status = ?, start_time = ?
+                WHERE round_id = ?
+            """, (status, now_utc, round_id))
+        else:
+            c.execute("""
+                UPDATE scheduled_rounds
+                SET status = ?
+                WHERE round_id = ?
+            """, (status, round_id))
+    elif status in ('closed', 'completed'):
+        c.execute("""
+            UPDATE scheduled_rounds
+            SET status = ?, end_time = ?
+            WHERE round_id = ?
+        """, (status, now_utc, round_id))
+    else:
+        c.execute("""
+            UPDATE scheduled_rounds
+            SET status = ?
+            WHERE round_id = ?
+        """, (status, round_id))
+    
     conn.commit()
     conn.close()
 
@@ -1374,6 +1481,8 @@ async def inline_handler(query: types.CallbackQuery):
             
             if status == 'open' and start_time:
                 start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+                if start_dt.tzinfo is None:
+                    start_dt = start_dt.replace(tzinfo=pytz.UTC)
                 now = datetime.now(pytz.UTC)
                 elapsed = (now - start_dt).total_seconds() / 60
                 remaining = max(0, ROUND_DURATION_MINUTES - elapsed)
@@ -1432,6 +1541,8 @@ async def inline_handler(query: types.CallbackQuery):
         
         if status == 'open' and start_time:
             start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+            if start_dt.tzinfo is None:
+                start_dt = start_dt.replace(tzinfo=pytz.UTC)
             now = datetime.now(pytz.UTC)
             elapsed = (now - start_dt).total_seconds() / 60
             remaining = max(0, ROUND_DURATION_MINUTES - elapsed)
@@ -1918,6 +2029,8 @@ async def cmd_status(message: types.Message):
             
             if start_time:
                 start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+                if start_dt.tzinfo is None:
+                    start_dt = start_dt.replace(tzinfo=pytz.UTC)
                 now = datetime.now(pytz.UTC)
                 elapsed = (now - start_dt).total_seconds() / 60
                 remaining = max(0, ROUND_DURATION_MINUTES - elapsed)
@@ -2158,7 +2271,9 @@ async def schedule_daily_rounds():
                 if scheduled_dt > now:
                     conn = get_db_conn()
                     c = conn.cursor()
-                    c.execute("SELECT round_id FROM scheduled_rounds WHERE scheduled_time = ?", (scheduled_dt,))
+                    # Convert timezone-aware datetime to ISO string for SQLite
+                    scheduled_dt_str = scheduled_dt.isoformat()
+                    c.execute("SELECT round_id FROM scheduled_rounds WHERE scheduled_time = ?", (scheduled_dt_str,))
                     existing = c.fetchone()
                     
                     if not existing:
@@ -2196,10 +2311,12 @@ async def manage_rounds():
             
             conn = get_db_conn()
             c = conn.cursor()
+            # Convert timezone-aware datetime to ISO string for SQLite comparison
+            now_str = now.isoformat()
             c.execute("""
                 SELECT round_id, scheduled_time FROM scheduled_rounds
                 WHERE status = 'pending' AND scheduled_time <= ?
-            """, (now,))
+            """, (now_str,))
             pending_rounds = c.fetchall()
             
             if pending_rounds:
@@ -2220,7 +2337,13 @@ async def manage_rounds():
                 print(f"[Round Manager] Monitoring {len(open_rounds)} open rounds")
             
             for round_id, start_time in open_rounds:
+                # Ensure start_dt is timezone-aware
                 start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+                if start_dt.tzinfo is None:
+                    start_dt = start_dt.replace(tzinfo=pytz.UTC)
+                
+                # Both now and start_dt are now timezone-aware
+                print(f"[Round Manager] Now: {now} (tz: {now.tzinfo}) | Start: {start_dt} (tz: {start_dt.tzinfo})")
                 elapsed = (now - start_dt).total_seconds() / 60
                 
                 print(f"[Round Manager] Round {round_id}: {elapsed:.1f}/{ROUND_DURATION_MINUTES} minutes elapsed")
@@ -2484,6 +2607,7 @@ async def main():
     migrate_database()  # Migrate existing databases before init
     init_db()
     init_wallet_db()  # Initialize wallet tables
+    migrate_timestamps_to_iso()  # Migrate legacy timestamps to ISO format
     print("🤖 CryptoUnc Lotto Bot with Real Solana Integration starting...")
     rpc_endpoint = os.getenv('SOLANA_RPC', 'mainnet-beta')
     # Mask API key in logs for security
