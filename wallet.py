@@ -352,6 +352,54 @@ def get_wallet_private_key(user_id: int, wallet_address: str) -> Optional[str]:
         return None
 
 
+async def estimate_transaction_fee(from_address: str, to_address: str, amount_sol: Decimal) -> Decimal:
+    """
+    Estimate the transaction fee for a SOL transfer
+    Returns fee in SOL
+    NOTE: Does not require private key - only estimates the fee for a transfer
+    """
+    try:
+        # Convert amount to lamports
+        lamports = int(amount_sol * Decimal(1_000_000_000))
+
+        async with AsyncClient(SOLANA_RPC) as client:
+            # Get recent blockhash
+            recent_blockhash_resp = await client.get_latest_blockhash()
+            recent_blockhash = recent_blockhash_resp.value.blockhash
+
+            # Create transfer instruction
+            from_pubkey = Pubkey.from_string(from_address)
+            to_pubkey = Pubkey.from_string(to_address)
+
+            transfer_ix = transfer(
+                TransferParams(
+                    from_pubkey=from_pubkey,
+                    to_pubkey=to_pubkey,
+                    lamports=lamports
+                )
+            )
+
+            # Create message
+            message = Message.new_with_blockhash(
+                [transfer_ix],
+                from_pubkey,
+                recent_blockhash
+            )
+            
+            # Get fee for message
+            fee_response = await client.get_fee_for_message(message)
+            if fee_response.value is not None:
+                fee_lamports = fee_response.value
+                return Decimal(fee_lamports) / Decimal(1_000_000_000)
+            
+            # Fallback: typical transfer fee is 5000 lamports
+            return Decimal("0.000005")
+    except Exception as e:
+        print(f"Error estimating fee: {e}")
+        # Return typical transfer fee as fallback
+        return Decimal("0.000005")
+
+
 async def send_sol(from_address: str, to_address: str, amount_sol: Decimal, private_key_hex: str) -> Dict:
     """
     Send SOL from one address to another
@@ -367,7 +415,8 @@ async def send_sol(from_address: str, to_address: str, amount_sol: Decimal, priv
 
         async with AsyncClient(SOLANA_RPC) as client:
             # Get recent blockhash
-            recent_blockhash = await client.get_latest_blockhash()
+            recent_blockhash_resp = await client.get_latest_blockhash()
+            recent_blockhash = recent_blockhash_resp.value.blockhash
 
             # Create transfer instruction
             from_pubkey = Pubkey.from_string(from_address)
@@ -381,13 +430,16 @@ async def send_sol(from_address: str, to_address: str, amount_sol: Decimal, priv
                 )
             )
 
-            # Create and sign transaction
+            # Create message with blockhash
             message = Message.new_with_blockhash(
                 [transfer_ix],
                 from_pubkey,
-                recent_blockhash.value.blockhash
+                recent_blockhash
             )
-            transaction = Transaction([keypair], message, recent_blockhash.value.blockhash)
+            
+            # Create transaction from message and sign it
+            transaction = Transaction.new_unsigned(message)
+            transaction.sign([keypair], recent_blockhash)
 
             # Send transaction
             result = await client.send_transaction(transaction)
@@ -399,6 +451,8 @@ async def send_sol(from_address: str, to_address: str, amount_sol: Decimal, priv
             }
     except Exception as e:
         print(f"Error sending SOL: {e}")
+        import traceback
+        traceback.print_exc()
         return {
             "success": False,
             "error": str(e)

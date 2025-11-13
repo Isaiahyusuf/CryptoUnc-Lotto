@@ -6,7 +6,7 @@ import hashlib
 import time
 import decimal
 from decimal import Decimal
-from typing import List
+from typing import List, Dict
 from datetime import datetime, timedelta
 import pytz
 
@@ -22,6 +22,7 @@ get_active_wallet,
 save_external_wallet,
 get_real_balance,
 send_sol,
+estimate_transaction_fee,
 create_wallet,
 set_active_wallet,
 get_wallet_private_key,
@@ -382,6 +383,7 @@ def init_db():
             winner_user_id INTEGER,
             prize_amount REAL,
             tx_signature TEXT,
+            first_stake_time TIMESTAMP,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(round_id, stake_amount),
             FOREIGN KEY (round_id) REFERENCES scheduled_rounds(round_id) ON DELETE CASCADE,
@@ -601,6 +603,24 @@ def add_round_participant(round_stake_id: int, user_id: int, numbers: list, tx_s
             VALUES (?, ?, ?, ?)
         """, (round_stake_id, user_id, numbers_to_str(numbers), tx_signature))
         participant_id = c.lastrowid
+        
+        # Update first_stake_time if this is the first non-refunded participant for this stake
+        c.execute("""
+            SELECT first_stake_time, COUNT(rp.id) as count
+            FROM round_stakes rs
+            LEFT JOIN round_participants rp ON rs.id = rp.round_stake_id AND rp.refunded = 0
+            WHERE rs.id = ?
+        """, (round_stake_id,))
+        first_time, count = c.fetchone()
+        
+        if not first_time and count == 1:  # First non-refunded participant
+            now_utc = datetime.now(pytz.UTC).isoformat()
+            c.execute("""
+                UPDATE round_stakes
+                SET first_stake_time = ?
+                WHERE id = ?
+            """, (now_utc, round_stake_id))
+        
         conn.commit()
         conn.close()
         return {"success": True, "participant_id": participant_id}
@@ -660,6 +680,108 @@ def update_round_status(round_id: int, status: str):
     
     conn.commit()
     conn.close()
+
+
+async def send_winner_payout(winner_user_id: int, prize_amount: Decimal, round_stake_id: int) -> Dict:
+    """
+    Send prize to winner with updated payout logic:
+    - Team gets 20% of total pool
+    - Winner gets 80% of total pool MINUS transaction fee
+    - Network fee is deducted from winner's share only
+    - Sends team payment FIRST to ensure atomicity
+    """
+    try:
+        # Get winner's wallet
+        winner_wallet = get_active_wallet(winner_user_id)
+        if not winner_wallet:
+            print(f"❌ Winner {winner_user_id} has no active wallet")
+            return {"success": False, "error": "Winner has no active wallet"}
+        
+        # Calculate amounts from database
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("""
+            SELECT rs.stake_amount, COUNT(rp.id) as player_count
+            FROM round_stakes rs
+            LEFT JOIN round_participants rp ON rs.id = rp.round_stake_id AND rp.refunded = 0
+            WHERE rs.id = ?
+        """, (round_stake_id,))
+        result = c.fetchone()
+        conn.close()
+        
+        if not result or result[0] is None:
+            print(f"❌ Round stake {round_stake_id} not found or invalid")
+            return {"success": False, "error": "Round stake not found"}
+        
+        stake_amount, player_count = result
+        
+        if player_count < 1:
+            print(f"❌ No participants in round stake {round_stake_id}")
+            return {"success": False, "error": "No participants in round"}
+        
+        total_pool = Decimal(str(stake_amount)) * player_count
+        team_share = total_pool * Decimal("0.2")  # 20% to team
+        winner_share_before_fee = total_pool * Decimal("0.8")  # 80% to winner
+        
+        # Estimate transaction fee for winner's payout
+        try:
+            winner_fee = await estimate_transaction_fee(OWNER_WALLET, winner_wallet, winner_share_before_fee)
+        except Exception as e:
+            print(f"⚠️ Could not estimate fee, using default: {e}")
+            winner_fee = Decimal("0.000005")  # Fallback fee
+        
+        # Deduct fee from winner's share, ensuring non-negative
+        winner_final_amount = max(Decimal("0"), winner_share_before_fee - winner_fee)
+        
+        if winner_final_amount <= Decimal("0"):
+            print(f"❌ Winner amount after fee is zero or negative (fee: {winner_fee}, share: {winner_share_before_fee})")
+            return {"success": False, "error": "Prize too small to cover network fee"}
+        
+        print(f"💰 Payout calculation:")
+        print(f"   Total pool: {total_pool} SOL")
+        print(f"   Team share (20%): {team_share} SOL")
+        print(f"   Winner share before fee (80%): {winner_share_before_fee} SOL")
+        print(f"   Transaction fee: {winner_fee} SOL")
+        print(f"   Winner final amount: {winner_final_amount} SOL")
+        
+        # Send to team FIRST to ensure both succeed before marking as paid
+        team_tx = None
+        if TEAM_WALLET and TEAM_WALLET != OWNER_WALLET and team_share > Decimal("0"):
+            print(f"   → Sending {team_share} SOL to team wallet...")
+            team_result = await send_sol(OWNER_WALLET, TEAM_WALLET, team_share, OWNER_WALLET_PRIVATE_KEY)
+            if not team_result.get("success"):
+                print(f"   ❌ Team payment failed: {team_result.get('error')}")
+                return {"success": False, "error": f"Team payment failed: {team_result.get('error')}"}
+            team_tx = team_result.get("signature")
+            print(f"   ✅ Team payment sent! TX: {team_tx[:16]}...")
+        
+        # Send to winner (with fee deducted)
+        print(f"   → Sending {winner_final_amount} SOL to winner {winner_wallet[:8]}...")
+        winner_result = await send_sol(OWNER_WALLET, winner_wallet, winner_final_amount, OWNER_WALLET_PRIVATE_KEY)
+        
+        if not winner_result.get("success"):
+            print(f"   ❌ Winner payment failed: {winner_result.get('error')}")
+            # Team was already paid, log this critical inconsistency
+            print(f"   ⚠️ CRITICAL: Team paid but winner payment failed! Team TX: {team_tx}")
+            return {"success": False, "error": f"Winner payment failed (team was paid): {winner_result.get('error')}", "team_tx": team_tx}
+        
+        winner_tx = winner_result.get("signature")
+        print(f"   ✅ Winner payment sent! TX: {winner_tx[:16]}...")
+        
+        return {
+            "success": True,
+            "winner_tx": winner_tx,
+            "team_tx": team_tx,
+            "winner_amount": float(winner_final_amount),
+            "team_amount": float(team_share),
+            "fee_deducted": float(winner_fee),
+            "total_pool": float(total_pool)
+        }
+    except Exception as e:
+        print(f"❌ Payout error: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
 
 
 def process_round_stake_draw(round_stake_id: int):
@@ -739,7 +861,9 @@ def process_round_stake_draw(round_stake_id: int):
         "winner_user_id": winner[1] if winner else None,
         "prize_amount": prize,
         "winning_numbers": winning_numbers,
-        "player_count": player_count
+        "player_count": player_count,
+        "stake_amount": stake_amount,
+        "round_stake_id": round_stake_id
     }
 
 
