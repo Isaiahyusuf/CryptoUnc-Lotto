@@ -1,0 +1,62 @@
+Task for Replit agent:
+	1.	Check the current solders library version in the project.
+	•	Ensure it’s the latest stable version that supports Transaction.with_blockhash().
+	2.	Locate all places where transaction.recent_blockhash is being accessed.
+	•	These lines are outdated and causing the error.
+	3.	Replace them with the correct way to attach a blockhash:
+	•	First, fetch a recent blockhash from Solana RPC:
+
+•	Then attach it to the transaction properly:
+
+4.	Ensure all transactions are signed after setting the blockhash, before sending.
+	5.	Test sending a transaction with the bot wallet to confirm it works.
+	•	Check that no recent_blockhash attribute errors appear.
+	•	Verify the transaction actually goes through on Solana testnet/mainnet.
+	6.	If any other errors appear due to solders updates, adjust imports and method calls according to the latest documentation.
+
+
+INSTRUCTIONS FOR REPLIT AGENT
+
+Please update the Solana payout logic in my lottery bot with the following rules:
+	1.	Main Goal:
+After a winner is chosen, the bot should automatically handle payouts in this way:
+	•	20% of the total pool goes to the team wallet.
+	•	80% goes to the winner — but before sending it, the bot should deduct the Solana network transaction fee from the winner’s 80% portion only.
+	2.	How It Should Work (Step by Step):
+	1.	Calculate the total amount of SOL collected for that round.
+	2.	Compute 20% of that total and assign it to the team share.
+	3.	Compute 80% of that total and assign it to the winner share.
+	4.	Before sending the winner’s payment, estimate the Solana transaction fee (for example, use client.get_fee_for_message() or a similar function).
+	5.	Subtract that fee amount from the 80% portion.
+	6.	Send the deducted amount to the winner’s wallet.
+	7.	Then send the 20% team share to the team wallet.
+	3.	Notes for Implementation:
+	•	Make sure the fee is only deducted from the winner’s share, not from the team’s share.
+	•	The code should ensure both transactions happen in sequence — if the winner’s transaction fails, the team payout should not execute yet.
+	•	Log each transaction clearly: total pool, fee deducted, winner paid amount, team paid amount, and transaction signatures.
+	•	Use the existing Solana connection and signer setup (the bot wallet private key) to send both payments.
+
+
+There’s an error in the project when sending a Solana transaction:
+
+“solders.transaction.Transaction object has no attribute recent_blockhash”.
+
+This means the transaction object being used doesn’t match the correct SDK version. The code is mixing or using the wrong Solana library. It’s either using the solders module incorrectly or should be using the solana-py package instead.
+
+Please investigate the SDK conflict and fix it so that the transaction can be created, signed, and sent successfully again. Make sure the dependencies and imports match the correct transaction structure for the version in use, and confirm that the send function works properly on Solana devnet before pushing changes.
+
+Instruction for Replit Agent:
+
+Please modify the lottery draw system so it no longer depends on the /admin_draw command.
+
+Instead, make the bot automatically trigger the draw when any of these conditions are met:
+	1.	The round has reached the minimum required number of players (for example, 10).
+	2.	OR a set amount of time (e.g., 30 minutes) has passed since the first stake in that round.
+
+When the condition is met:
+	•	The bot should automatically generate the winning numbers using the same provable seed system already in the code.
+	•	Then it should determine the winner, process payouts (80% to winner minus network fee, 20% to team), and announce the result publicly.
+	•	Remove or disable the /admin_draw command since it won’t be needed anymore.
+
+
+Check with all the environment variables and ask for them do all the task and make sure send sol is working check if the bot can post to round channel make sure
