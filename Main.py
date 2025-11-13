@@ -2010,119 +2010,17 @@ async def generic_message_handler(message: types.Message):
 # Admin commands
 # ---------------------------
 
-@dp.message(Command("admin_draw"))
-async def cmd_admin_draw(message: types.Message):
-    if not is_admin(message.from_user.id):
-        await message.reply("⛔ Not authorized.")
-        return
-
-    cur_round = get_current_round()
-    # Generate winning numbers deterministically from round data
-    # NOTE: Admin draws should ideally use round participant data for verifiability
-    # This is a legacy feature - new system uses automatic scheduled draws
-    draw_seed = generate_provable_seed(cur_round, "admin_manual_draw")
-    winning_numbers = generate_lottery_numbers(draw_seed, count=5, min_val=1, max_val=40)
-    save_draw(cur_round, winning_numbers)
-
-    # Announce winners
-    rows = get_entries_for_round(cur_round)
-    winners = []
-    winner_details = []
-    total_entries = 0
-    total_prize_pool = Decimal("0")
-    
-    # Calculate prize pool
-    conn = get_db_conn()
-    c = conn.cursor()
-    c.execute("SELECT SUM(stake_amount) FROM entries WHERE round = ? AND paid = 1", (cur_round,))
-    total_pool = c.fetchone()[0]
-    if total_pool:
-        total_prize_pool = Decimal(str(total_pool)) * Decimal("0.8")  # 80% goes to prize pool
-    
-    for row in rows:
-        entry_id, uid, numbers_str, paid = row
-        if not paid:
-            continue
-        total_entries += 1
-        entry_nums = str_to_numbers(numbers_str)
-        if sorted(entry_nums) == winning_numbers:
-            # Get winner's wallet for display
-            c.execute("SELECT username FROM users WHERE user_id = ?", (uid,))
-            user_row = c.fetchone()
-            username = user_row[0] if user_row and user_row[0] else f"User{uid}"
-            
-            winners.append(uid)
-            winner_details.append({
-                "uid": uid,
-                "username": username,
-                "ticket_id": entry_id,
-                "numbers": numbers_to_str(entry_nums)
-            })
-    
-    conn.close()
-
-    # Create announcement text with better formatting
-    announce_text = (
-        f"═══════════════════════\n"
-        f"🏆 <b>CRYPTOUNC LOTTO</b> 🏆\n"
-        f"═══════════════════════\n\n"
-        f"📅 <b>Round {cur_round} - RESULTS</b>\n\n"
-        f"🎲 <b>Winning Numbers:</b>\n"
-        f"     <code>[ {numbers_to_str(winning_numbers)} ]</code>\n\n"
-        f"═══════════════════════\n"
-        f"📊 <b>Statistics:</b>\n"
-        f"• Total Tickets: <b>{total_entries}</b>\n"
-        f"• Prize Pool: <b>{total_prize_pool:.4f} SOL</b>\n"
-        f"═══════════════════════\n\n"
-    )
-
-    if winners:
-        winner_count = len(winners)
-        prize_per_winner = total_prize_pool / winner_count if winner_count > 0 else Decimal("0")
-        
-        announce_text += f"🎉 <b>WE HAVE {winner_count} WINNER(S)!</b> 🎉\n\n"
-        
-        for i, details in enumerate(winner_details, 1):
-            announce_text += (
-                f"🥇 <b>Winner #{i}</b>\n"
-                f"   👤 <a href='tg://user?id={details['uid']}'>{details['username']}</a>\n"
-                f"   🎫 Ticket ID: #{details['ticket_id']}\n"
-                f"   🎲 Numbers: {details['numbers']}\n"
-                f"   💰 Prize: <b>{prize_per_winner:.4f} SOL</b>\n\n"
-            )
-        
-        announce_text += (
-            f"═══════════════════════\n"
-            f"🎊 <b>CONGRATULATIONS!</b> 🎊\n"
-            f"Winners, please contact admin to claim your prize.\n"
-            f"═══════════════════════\n"
-        )
-    else:
-        announce_text += (
-            f"😔 <b>No Winners This Round</b>\n\n"
-            f"No one matched all 5 numbers.\n"
-            f"Prize pool rolls over to next round!\n\n"
-            f"═══════════════════════\n"
-            f"🎰 <b>Try Again!</b>\n"
-            f"Round {cur_round + 1} is now open!\n"
-            f"═══════════════════════\n"
-        )
-
-    # Post to channel
-    posted_to_channel = False
-    if ROUND_CHANNEL:
-        try:
-            await bot.send_message(ROUND_CHANNEL, announce_text, parse_mode="HTML")
-            posted_to_channel = True
-            await message.reply(f"✅ Results posted to {ROUND_CHANNEL}")
-        except Exception as e:
-            await message.reply(f"⚠️ Failed to post to channel: {str(e)}\n\nResults:\n{announce_text}", parse_mode="HTML")
-    
-    if not posted_to_channel:
-        await message.reply(announce_text, parse_mode="HTML")
-
-    increment_round()
-    await message.reply(f"✅ Draw completed. Moved to Round {cur_round + 1}.")
+# DISABLED: Manual draw command replaced by automatic draws
+# Automatic draws now trigger when:
+#  1. 10 players join a stake, OR
+#  2. 30 minutes pass since first participant
+#
+# @dp.message(Command("admin_draw"))
+# async def cmd_admin_draw(message: types.Message):
+#     if not is_admin(message.from_user.id):
+#         await message.reply("⛔ Not authorized.")
+#         return
+#     await message.reply("⚠️ Manual draws are disabled. The system now uses automatic draws based on player count or time elapsed.")
 
 
 def is_admin(user_id: int) -> bool:
@@ -2472,7 +2370,47 @@ async def manage_rounds():
                 
                 print(f"[Round Manager] Round {round_id}: {elapsed:.1f}/{ROUND_DURATION_MINUTES} minutes elapsed")
                 
-                if elapsed >= ROUND_DURATION_MINUTES:
+                # Check if we should trigger automatic draw based on player count or time
+                should_draw = False
+                draw_reason = ""
+                
+                # Check each stake in this round for automatic draw conditions
+                c.execute("""
+                    SELECT rs.id, rs.stake_amount, rs.first_stake_time, COUNT(rp.id) as player_count
+                    FROM round_stakes rs
+                    LEFT JOIN round_participants rp ON rs.id = rp.round_stake_id AND rp.refunded = 0
+                    WHERE rs.round_id = ? AND rs.status = 'open'
+                    GROUP BY rs.id
+                """, (round_id,))
+                stakes_data = c.fetchall()
+                
+                for stake_id, stake_amount, first_stake_time, player_count in stakes_data:
+                    # Condition 1: 10 players reached
+                    if player_count >= MIN_PLAYERS_PER_STAKE:
+                        print(f"[Round Manager] 🎯 Stake {stake_id} ({stake_amount} SOL) reached {player_count} players - triggering automatic draw!")
+                        should_draw = True
+                        draw_reason = f"minimum {MIN_PLAYERS_PER_STAKE} players reached"
+                        break
+                    
+                    # Condition 2: 30 minutes since first stake (and at least 1 player)
+                    if first_stake_time and player_count > 0:
+                        first_stake_dt = datetime.fromisoformat(first_stake_time.replace('Z', '+00:00'))
+                        if first_stake_dt.tzinfo is None:
+                            first_stake_dt = first_stake_dt.replace(tzinfo=pytz.UTC)
+                        
+                        time_since_first = (now - first_stake_dt).total_seconds() / 60
+                        
+                        if time_since_first >= 30:  # 30 minutes
+                            print(f"[Round Manager] ⏰ Stake {stake_id} ({stake_amount} SOL) has been active for {time_since_first:.1f} minutes - triggering automatic draw!")
+                            should_draw = True
+                            draw_reason = "30 minutes elapsed since first participant"
+                            break
+                
+                # If automatic draw condition met OR round duration reached, process end
+                if should_draw:
+                    print(f"[Round Manager] 🎲 Automatic draw triggered for Round {round_id}: {draw_reason}")
+                    await process_round_end(round_id)
+                elif elapsed >= ROUND_DURATION_MINUTES:
                     print(f"[Round Manager] ⏰ Round {round_id} duration reached, processing end...")
                     await process_round_end(round_id)
             
