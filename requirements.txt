@@ -45,3 +45,13 @@ python-dotenv==1.0.0
 requests==2.31.0
 solana==0.30.2
 solders==0.18.1
+aiogram
+aiohttp
+base58
+construct
+cryptography
+python-dotenv
+pytz
+requests
+solana
+solders
