@@ -128,6 +128,9 @@ def validate_environment():
     Raises detailed errors if any are missing.
     """
     missing = []
+    warnings = []
+    
+    # ===== REQUIRED SECRETS =====
     
     # Check BOT_TOKEN
     if not os.getenv("BOT_TOKEN"):
@@ -161,6 +164,30 @@ def validate_environment():
         print(f"   3. It will reply with your numeric user ID (e.g., 123456789)")
         raise ValueError(f"ADMIN_ID must be a numeric value, not '{admin_id_str}'")
     
+    # Check ROUND_CHANNEL_ID
+    if not os.getenv("ROUND_CHANNEL_ID"):
+        missing.append("ROUND_CHANNEL_ID - Telegram channel ID for round announcements (e.g., @yourchannel or -100123456789)")
+    
+    # ===== OPTIONAL SECRETS (warnings only) =====
+    
+    # Check TEAM_WALLET (optional)
+    if not os.getenv("TEAM_WALLET"):
+        warnings.append("TEAM_WALLET - Team Solana wallet for 20% fees (will use OWNER_WALLET if not set)")
+    
+    # Check SUPPORT_USERNAME (optional)
+    if not os.getenv("SUPPORT_USERNAME"):
+        warnings.append("SUPPORT_USERNAME - Telegram username for support contact")
+    
+    # Print warnings for optional secrets
+    if warnings:
+        print("\n" + "-"*60)
+        print("⚠️ OPTIONAL ENVIRONMENT VARIABLES NOT SET")
+        print("-"*60)
+        for var in warnings:
+            print(f"  ℹ️ {var}")
+        print("-"*60 + "\n")
+    
+    # Fail on missing required secrets
     if missing:
         print("\n" + "="*60)
         print("❌ MISSING REQUIRED ENVIRONMENT VARIABLES")
