@@ -404,6 +404,8 @@ async def send_sol(from_address: str, to_address: str, amount_sol: Decimal, priv
     """
     Send SOL from one address to another
     Returns transaction result dict
+    
+    Updated to use correct solders 0.18.x transaction format.
     """
     try:
         # Convert amount to lamports
@@ -437,9 +439,9 @@ async def send_sol(from_address: str, to_address: str, amount_sol: Decimal, priv
                 recent_blockhash
             )
             
-            # Create transaction from message and sign it
-            transaction = Transaction.new_unsigned(message)
-            transaction.sign([keypair], recent_blockhash)
+            # Create signed transaction using Transaction.new()
+            # This creates and signs the transaction in one step
+            transaction = Transaction.new([keypair], message, recent_blockhash)
 
             # Send transaction
             result = await client.send_transaction(transaction)

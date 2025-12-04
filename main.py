@@ -116,57 +116,148 @@ def select_winner_deterministically(seed: str, participant_count: int) -> int:
     hash_val = int(hashlib.sha256(seed.encode()).hexdigest(), 16)
     return hash_val % participant_count
 
+# ==============================================================================
+# ENVIRONMENT VARIABLE VALIDATION
+# ==============================================================================
+# The bot MUST validate all required secrets before starting.
+# If any mandatory secret is missing, the bot will refuse to start.
+
+def validate_environment():
+    """
+    Validate all required environment variables.
+    Raises detailed errors if any are missing.
+    """
+    missing = []
+    
+    # Check BOT_TOKEN
+    if not os.getenv("BOT_TOKEN"):
+        missing.append("BOT_TOKEN - Your Telegram Bot API token from @BotFather")
+    
+    # Check OWNER_WALLET (bot's Solana wallet address)
+    if not os.getenv("OWNER_WALLET"):
+        missing.append("OWNER_WALLET - Bot's Solana wallet public address")
+    
+    # Check OWNER_WALLET_PRIVATE_KEY
+    if not os.getenv("OWNER_WALLET_PRIVATE_KEY"):
+        missing.append("OWNER_WALLET_PRIVATE_KEY - Bot's Solana wallet private key (hex or JSON array)")
+    
+    # Check SOLANA_RPC
+    if not os.getenv("SOLANA_RPC"):
+        missing.append("SOLANA_RPC - Solana RPC endpoint URL (e.g., https://api.mainnet-beta.solana.com)")
+    
+    # Check ENCRYPTION_KEY (for wallet encryption)
+    if not os.getenv("ENCRYPTION_KEY"):
+        missing.append("ENCRYPTION_KEY - Strong random key (min 32 chars) for wallet encryption")
+    
+    # Check ADMIN_ID
+    admin_id_str = os.getenv("ADMIN_ID", "")
+    if not admin_id_str:
+        missing.append("ADMIN_ID - Your numeric Telegram user ID (get from @userinfobot)")
+    elif not admin_id_str.isdigit():
+        print(f"❌ ERROR: ADMIN_ID must be a numeric Telegram user ID, got: '{admin_id_str}'")
+        print(f"💡 To get your numeric Telegram user ID:")
+        print(f"   1. Open Telegram and search for @userinfobot")
+        print(f"   2. Start a chat with it")
+        print(f"   3. It will reply with your numeric user ID (e.g., 123456789)")
+        raise ValueError(f"ADMIN_ID must be a numeric value, not '{admin_id_str}'")
+    
+    if missing:
+        print("\n" + "="*60)
+        print("❌ MISSING REQUIRED ENVIRONMENT VARIABLES")
+        print("="*60)
+        print("\nThe bot cannot start without the following secrets:\n")
+        for var in missing:
+            print(f"  • {var}")
+        print("\n" + "="*60)
+        print("Please set these environment variables in Replit Secrets")
+        print("="*60 + "\n")
+        raise ValueError(f"Missing required environment variables: {', '.join([v.split(' -')[0] for v in missing])}")
+
+# Validate environment on startup
+validate_environment()
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OWNER_WALLET = os.getenv("OWNER_WALLET")
 OWNER_WALLET_PRIVATE_KEY = os.getenv("OWNER_WALLET_PRIVATE_KEY")
-TEAM_WALLET = os.getenv("TEAM_WALLET")
-
-# Parse ADMIN_ID with better error handling
-admin_id_str = os.getenv("ADMIN_ID", "0")
-try:
-    ADMIN_ID = int(admin_id_str)
-except ValueError:
-    print(f"❌ ERROR: ADMIN_ID must be a numeric Telegram user ID, got: '{admin_id_str}'")
-    print(f"💡 To get your numeric Telegram user ID:")
-    print(f"   1. Open Telegram and search for @userinfobot")
-    print(f"   2. Start a chat with it")
-    print(f"   3. It will reply with your numeric user ID (e.g., 123456789)")
-    print(f"   4. Update the ADMIN_ID secret in Replit with that number")
-    raise ValueError(f"ADMIN_ID must be a numeric value, not '{admin_id_str}'")
-
+TEAM_WALLET = os.getenv("TEAM_WALLET")  # Optional - if not set, all goes to owner wallet
+SOLANA_RPC = os.getenv("SOLANA_RPC", "https://api.mainnet-beta.solana.com")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 ROUND_CHANNEL = os.getenv("ROUND_CHANNEL_ID", "@cryptounclottoportal")
 
-# Validate required environment variables
-if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN environment variable is required")
-if not OWNER_WALLET:
-    raise ValueError("OWNER_WALLET environment variable is required")
-if not OWNER_WALLET_PRIVATE_KEY:
-    raise ValueError("OWNER_WALLET_PRIVATE_KEY environment variable is required for automatic prize payments and refunds")
+# ==============================================================================
+# LOTTERY CONFIGURATION
+# ==============================================================================
+# Players select their own stake amount between MIN and MAX
+# All players enter the SAME round (not grouped by stake amount)
+# The pot accumulates all stakes from all players
 
-STAKE_PACKAGES = [
-    Decimal("0.025"),
-    Decimal("0.05"),
-    Decimal("0.5"),
-    Decimal("0.7"),
-    Decimal("1"),
-    Decimal("1.5"),
-    Decimal("2"),
-    Decimal("2.5"),
-    Decimal("3"),
-    Decimal("3.5"),
-    Decimal("4"),
-    Decimal("4.5"),
-    Decimal("5")
-]
+STAKE_MIN = Decimal("0.025")  # Minimum stake: 0.025 SOL
+STAKE_MAX = Decimal("5.0")    # Maximum stake: 5 SOL
 
+# Round schedule - 4 rounds per day at fixed times
 ROUNDS_PER_DAY = 4
 ROUND_TIMES_UTC = ["00:00", "06:00", "12:00", "18:00"]
-MIN_PLAYERS_PER_STAKE = 10
-ROUND_DURATION_MINUTES = 15
-NETWORK_FEE_PERCENTAGE = Decimal("0.02")
+
+# Player requirements
+MIN_PLAYERS_TO_DRAW = 10     # Minimum 10 players needed to run a draw
+JOIN_TIMEOUT_MINUTES = 30    # If <10 players after 30 min, cancel and refund
+ROUND_DURATION_MINUTES = 30  # Alias for timeout
+
+# Fee structure
+TEAM_FEE_PERCENTAGE = Decimal("0.20")  # 20% to team when no winner
+NETWORK_FEE_PERCENTAGE = Decimal("0.02")  # 2% network fee for refunds
+
+# Legacy compatibility aliases
+MIN_PLAYERS_PER_STAKE = MIN_PLAYERS_TO_DRAW  # Alias for legacy code
+
+# Legacy: Keep STAKE_PACKAGES for database compatibility but use single pool
+STAKE_PACKAGES = [STAKE_MIN]  # Single stake pool
 
 DB_PATH = "cryptounc_lotto.db"
+
+# ==============================================================================
+# JACKPOT / POT SYSTEM
+# ==============================================================================
+# The pot accumulates and carries forward when there's no winner.
+# When someone wins (matches all 5 numbers), they get the ENTIRE pot.
+# If no one wins, 20% goes to team and 80% carries forward.
+
+def get_current_pot() -> Decimal:
+    """Get the current accumulated pot amount from database"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("SELECT value FROM meta WHERE key = 'current_pot'")
+    row = c.fetchone()
+    conn.close()
+    if row:
+        return Decimal(row[0])
+    return Decimal("0")
+
+
+def set_current_pot(amount: Decimal):
+    """Set the current pot amount in database"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO meta (key, value) VALUES ('current_pot', ?)
+        ON CONFLICT(key) DO UPDATE SET value = ?
+    """, (str(amount), str(amount)))
+    conn.commit()
+    conn.close()
+
+
+def add_to_pot(amount: Decimal):
+    """Add stake amount to the pot"""
+    current = get_current_pot()
+    new_total = current + amount
+    set_current_pot(new_total)
+    return new_total
+
+
+def reset_pot():
+    """Reset pot to zero after a winner claims it"""
+    set_current_pot(Decimal("0"))
+
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -784,87 +875,140 @@ async def send_winner_payout(winner_user_id: int, prize_amount: Decimal, round_s
         return {"success": False, "error": str(e)}
 
 
-def process_round_stake_draw(round_stake_id: int):
+def process_round_draw(round_id: int):
+    """
+    Process the lottery draw for a round.
+    
+    NEW JACKPOT LOGIC:
+    - Bot generates 5 winning numbers (1-40) for the round
+    - Only players who match ALL 5 numbers win the ENTIRE pot
+    - If no one matches all 5: 20% to team, 80% carries forward to next round
+    - Pot accumulates across rounds until there's a winner
+    """
     conn = get_db_conn()
     c = conn.cursor()
     
+    # Get all participants for this round
     c.execute("""
-        SELECT rp.id, rp.user_id, rp.numbers, rp.tx_signature
+        SELECT rp.id, rp.user_id, rp.numbers, rp.tx_signature, rs.stake_amount
         FROM round_participants rp
-        WHERE rp.round_stake_id = ? AND rp.refunded = 0
+        JOIN round_stakes rs ON rp.round_stake_id = rs.id
+        WHERE rs.round_id = ? AND rp.refunded = 0
         ORDER BY rp.id ASC
-    """, (round_stake_id,))
+    """, (round_id,))
     participants = c.fetchall()
     
     if not participants:
         conn.close()
         return None
     
+    # Calculate total stakes from this round
+    round_total = Decimal("0")
+    for p in participants:
+        round_total += Decimal(str(p[4]))  # stake_amount
+    
     # Generate provable randomness seed from IMMUTABLE on-chain data only
-    # Uses transaction signatures in canonical order (by participant ID)
-    # NOTE: For true verifiability, we should fetch and use the blockhash from the last transaction
-    # Current limitation: Without querying Solana RPC for blockhash, we use tx signatures as entropy
-    # This is verifiable (anyone can reproduce) but still allows operator to choose when to draw
-    # RECOMMENDED: Upgrade to ORAO VRF for production to eliminate operator discretion
-    tx_signatures_ordered = [str(p[3]) for p in participants]  # Already ordered by id ASC
-    seed = generate_provable_seed(round_stake_id, "draw", *tx_signatures_ordered)
+    tx_signatures_ordered = [str(p[3]) for p in participants]
+    seed = generate_provable_seed(round_id, "draw", *tx_signatures_ordered)
     
-    # Generate winning numbers deterministically from seed
+    # Generate 5 winning numbers deterministically from seed
     winning_numbers = generate_lottery_numbers(seed, count=5, min_val=1, max_val=40)
-    winning_numbers_str = numbers_to_str(winning_numbers)
     
-    # Find participants with best matches
-    best_match_count = 0
-    winners_with_best_match = []
+    # Find players who matched ALL 5 numbers
+    jackpot_winners = []
     
-    for idx, (participant_id, user_id, numbers_str, tx_sig) in enumerate(participants):
+    for participant_id, user_id, numbers_str, tx_sig, stake_amount in participants:
         user_numbers = str_to_numbers(numbers_str)
         matches = len(set(user_numbers) & set(winning_numbers))
         
-        if matches > best_match_count:
-            best_match_count = matches
-            winners_with_best_match = [(idx, participant_id, user_id)]
-        elif matches == best_match_count:
-            winners_with_best_match.append((idx, participant_id, user_id))
+        if matches == 5:  # JACKPOT - All 5 numbers match!
+            jackpot_winners.append((participant_id, user_id, stake_amount))
     
-    # If multiple winners with same match count, select deterministically
-    if len(winners_with_best_match) > 1:
-        winner_seed = generate_provable_seed(seed, "tiebreaker", len(winners_with_best_match))
-        winner_idx = select_winner_deterministically(winner_seed, len(winners_with_best_match))
-        _, participant_id, user_id = winners_with_best_match[winner_idx]
-        winner = (participant_id, user_id)
-    else:
-        _, participant_id, user_id = winners_with_best_match[0]
-        winner = (participant_id, user_id)
+    # Get current pot amount (includes carryover from previous rounds)
+    current_pot = get_current_pot()
+    total_pot = current_pot + round_total
     
-    c.execute("""
-        SELECT rs.stake_amount, COUNT(rp.id) as player_count
-        FROM round_stakes rs
-        LEFT JOIN round_participants rp ON rs.id = rp.round_stake_id AND rp.refunded = 0
-        WHERE rs.id = ?
-    """, (round_stake_id,))
-    stake_amount, player_count = c.fetchone()
+    result = {
+        "winning_numbers": winning_numbers,
+        "player_count": len(participants),
+        "round_total": round_total,
+        "pot_before": current_pot,
+        "total_pot": total_pot,
+        "round_id": round_id
+    }
     
-    total_pool = Decimal(str(stake_amount)) * player_count
-    prize = total_pool * Decimal("0.8")
-    
-    if winner:
+    if jackpot_winners:
+        # JACKPOT! Someone won the entire pot!
+        if len(jackpot_winners) == 1:
+            winner = jackpot_winners[0]
+        else:
+            # Multiple winners - split equally or select one deterministically
+            winner_seed = generate_provable_seed(seed, "tiebreaker", len(jackpot_winners))
+            winner_idx = select_winner_deterministically(winner_seed, len(jackpot_winners))
+            winner = jackpot_winners[winner_idx]
+        
+        result["has_winner"] = True
+        result["winner_user_id"] = winner[1]
+        result["winner_participant_id"] = winner[0]
+        result["prize_amount"] = total_pot
+        result["jackpot_winners_count"] = len(jackpot_winners)
+        
+        # Reset pot to zero after jackpot win
+        reset_pot()
+        
+        # Update database
         c.execute("""
             UPDATE round_stakes
             SET status = 'drawn', winner_user_id = ?, prize_amount = ?
-            WHERE id = ?
-        """, (winner[1], float(prize), round_stake_id))
+            WHERE round_id = ?
+        """, (winner[1], float(total_pot), round_id))
         conn.commit()
+        
+        print(f"🎉 JACKPOT WINNER! User {winner[1]} matched all 5 numbers!")
+        print(f"   Prize: {total_pot} SOL")
+    else:
+        # No winner - take 20% team fee, carry 80% forward
+        team_fee = round_total * TEAM_FEE_PERCENTAGE
+        carryover = round_total * (Decimal("1") - TEAM_FEE_PERCENTAGE)
+        new_pot = current_pot + carryover
+        
+        # Update pot with carryover
+        set_current_pot(new_pot)
+        
+        result["has_winner"] = False
+        result["winner_user_id"] = None
+        result["team_fee"] = team_fee
+        result["carryover"] = carryover
+        result["new_pot"] = new_pot
+        
+        # Update database
+        c.execute("""
+            UPDATE round_stakes
+            SET status = 'drawn'
+            WHERE round_id = ?
+        """, (round_id,))
+        conn.commit()
+        
+        print(f"📊 No jackpot winner this round.")
+        print(f"   Round stakes: {round_total} SOL")
+        print(f"   Team fee (20%): {team_fee} SOL")
+        print(f"   Carryover (80%): {carryover} SOL")
+        print(f"   New pot total: {new_pot} SOL")
     
     conn.close()
-    return {
-        "winner_user_id": winner[1] if winner else None,
-        "prize_amount": prize,
-        "winning_numbers": winning_numbers,
-        "player_count": player_count,
-        "stake_amount": stake_amount,
-        "round_stake_id": round_stake_id
-    }
+    return result
+
+
+def process_round_stake_draw(round_stake_id: int):
+    """Legacy wrapper for compatibility - redirects to new process_round_draw"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("SELECT round_id FROM round_stakes WHERE id = ?", (round_stake_id,))
+    row = c.fetchone()
+    conn.close()
+    if row:
+        return process_round_draw(row[0])
+    return None
 
 
 async def process_refunds_for_stake(round_stake_id: int):
@@ -1116,8 +1260,12 @@ async def mark_refund_completed(participant_id: int, tx_signature: str):
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     save_user(message.from_user.id, message.from_user.username or "")
+    
+    # Get current jackpot pot
+    current_pot = get_current_pot()
+    
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎲 Play", callback_data="play_now")],
+        [InlineKeyboardButton(text="🎲 Play Now", callback_data="play_now")],
         [InlineKeyboardButton(text="🎰 Check Active Rounds", callback_data="check_active_rounds")],
         [InlineKeyboardButton(text="💼 My Wallets", callback_data="my_wallets")],
         [InlineKeyboardButton(text="📊 View Results", callback_data="view_results")],
@@ -1125,12 +1273,16 @@ async def cmd_start(message: types.Message):
         [InlineKeyboardButton(text="🛠 Support", callback_data="support")]
     ])
     await message.answer(
-        "🎟️ <b>Welcome to CryptoUnc Lotto!</b>\n\n"
-        "🚀 New: Scheduled Rounds - 4 rounds daily!\n"
-        "⏰ Times: 00:00, 06:00, 12:00, 18:00 UTC\n"
-        "💰 13 stake options: 0.025 - 5 SOL\n"
-        "👥 Min 10 players per stake to draw\n\n"
-        "Check active rounds and join now!",
+        f"🎟️ <b>Welcome to CryptoUnc Lotto!</b>\n\n"
+        f"🏆 <b>Current Jackpot: {current_pot} SOL</b>\n\n"
+        f"📋 <b>How It Works:</b>\n"
+        f"• Pick 5 numbers (1-40)\n"
+        f"• Match ALL 5 to win the ENTIRE pot!\n"
+        f"• No winner? Pot grows each round!\n\n"
+        f"💰 Stakes: {STAKE_MIN} - {STAKE_MAX} SOL\n"
+        f"⏰ 4 Rounds Daily: 00:00, 06:00, 12:00, 18:00 UTC\n"
+        f"👥 Min {MIN_PLAYERS_TO_DRAW} players per round\n\n"
+        f"Join now and win the jackpot!",
         reply_markup=keyboard,
         parse_mode="HTML"
     )
@@ -2426,43 +2578,211 @@ async def manage_rounds():
 
 
 async def process_round_end(round_id: int):
-    stakes = get_round_stakes_with_counts(round_id)
+    """
+    Process the end of a round:
+    - If 10+ players: run the draw
+    - If <10 players: refund everyone
+    """
+    # Get total participants across all stakes in this round
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("""
+        SELECT COUNT(rp.id)
+        FROM round_participants rp
+        JOIN round_stakes rs ON rp.round_stake_id = rs.id
+        WHERE rs.round_id = ? AND rp.refunded = 0
+    """, (round_id,))
+    total_players = c.fetchone()[0] or 0
+    conn.close()
     
-    for stake_id, stake_amount, status, player_count in stakes:
-        if player_count >= MIN_PLAYERS_PER_STAKE:
-            result = process_round_stake_draw(stake_id)
-            if result:
-                await announce_winner(round_id, stake_amount, result)
-                await distribute_prize(stake_id, result)
-        else:
-            refunded = await process_refunds_for_stake(stake_id)
-            await announce_refunds(round_id, stake_amount, len(refunded))
+    if total_players >= MIN_PLAYERS_TO_DRAW:
+        # Run the lottery draw
+        result = process_round_draw(round_id)
+        if result:
+            await announce_draw_result(round_id, result)
+            
+            if result.get("has_winner"):
+                # Pay the jackpot winner
+                await pay_jackpot_winner(result)
+            else:
+                # No winner - pay team fee
+                await pay_team_fee(result)
+    else:
+        # Not enough players - refund everyone
+        stakes = get_round_stakes_with_counts(round_id)
+        total_refunded = 0
+        for stake_id, stake_amount, status, player_count in stakes:
+            if player_count > 0:
+                refunded = await process_refunds_for_stake(stake_id)
+                total_refunded += len(refunded)
+        
+        await announce_round_cancelled(round_id, total_players, total_refunded)
     
     update_round_status(round_id, 'completed')
     print(f"✅ Round {round_id} completed!")
 
 
-async def announce_round_opened(round_id: int):
+async def announce_draw_result(round_id: int, result: dict):
+    """Announce the draw results to the channel"""
     try:
-        stakes = get_round_stakes_with_counts(round_id)
-        stake_buttons = []
-        for stake_id, stake_amount, status, player_count in stakes:
-            needed = max(0, MIN_PLAYERS_PER_STAKE - player_count)
-            stake_buttons.append([InlineKeyboardButton(
-                text=f"{'✅' if player_count >= MIN_PLAYERS_PER_STAKE else '🎯'} {stake_amount} SOL ({player_count}/{MIN_PLAYERS_PER_STAKE})",
-                callback_data=f"join_stake_{stake_id}"
-            )])
+        winning_nums = result['winning_numbers']
+        player_count = result['player_count']
+        total_pot = result['total_pot']
         
-        stake_buttons.append([InlineKeyboardButton(text="🔄 Refresh", callback_data=f"check_round_{round_id}")])
-        keyboard = InlineKeyboardMarkup(inline_keyboard=stake_buttons)
+        if result.get("has_winner"):
+            winner_id = result['winner_user_id']
+            prize = result['prize_amount']
+            
+            conn = get_db_conn()
+            c = conn.cursor()
+            c.execute("SELECT username FROM users WHERE user_id = ?", (winner_id,))
+            user_row = c.fetchone()
+            winner_name = user_row[0] if user_row and user_row[0] else f"User {winner_id}"
+            conn.close()
+            
+            await bot.send_message(
+                ROUND_CHANNEL,
+                f"🎉🎉🎉 <b>JACKPOT WINNER!!!</b> 🎉🎉🎉\n\n"
+                f"🎰 Round: {round_id}\n"
+                f"👥 Players: {player_count}\n\n"
+                f"🎲 Winning Numbers: <b>{', '.join(map(str, winning_nums))}</b>\n\n"
+                f"🏆 Winner: @{winner_name}\n"
+                f"💰 JACKPOT: <b>{prize} SOL</b>\n\n"
+                f"Someone matched ALL 5 numbers and won the ENTIRE POT!\n"
+                f"The pot has been reset to 0. A new jackpot starts now!\n\n"
+                f"🍀 Congratulations!!! 🍀",
+                parse_mode="HTML"
+            )
+        else:
+            new_pot = result['new_pot']
+            team_fee = result['team_fee']
+            
+            await bot.send_message(
+                ROUND_CHANNEL,
+                f"📊 <b>Round {round_id} Results</b>\n\n"
+                f"👥 Players: {player_count}\n"
+                f"🎲 Winning Numbers: <b>{', '.join(map(str, winning_nums))}</b>\n\n"
+                f"❌ No one matched all 5 numbers this round.\n\n"
+                f"💼 Team fee (20%): {team_fee} SOL\n"
+                f"💰 Carryover (80%): Added to pot\n\n"
+                f"🏆 <b>Current Jackpot: {new_pot} SOL</b>\n\n"
+                f"The pot keeps growing! Join the next round for a chance to win it all!",
+                parse_mode="HTML"
+            )
+    except Exception as e:
+        print(f"❌ Draw result announcement error: {e}")
+
+
+async def pay_jackpot_winner(result: dict):
+    """Pay the entire jackpot pot to the winner"""
+    try:
+        winner_id = result['winner_user_id']
+        prize_amount = result['prize_amount']
+        
+        winner_wallet = get_active_wallet(winner_id)
+        if not winner_wallet:
+            print(f"❌ Winner {winner_id} has no active wallet!")
+            return
+        
+        print(f"💰 Sending JACKPOT {prize_amount} SOL to winner {winner_id} at {winner_wallet[:8]}...")
+        
+        prize_result = await send_sol(OWNER_WALLET, winner_wallet, Decimal(str(prize_amount)), OWNER_WALLET_PRIVATE_KEY)
+        
+        if prize_result and prize_result.get("success"):
+            print(f"✅ Jackpot paid! TX: {prize_result['signature'][:16]}...")
+            
+            # Notify winner
+            await bot.send_message(
+                winner_id,
+                f"🎉🎉🎉 <b>CONGRATULATIONS! YOU WON THE JACKPOT!</b> 🎉🎉🎉\n\n"
+                f"You matched ALL 5 winning numbers!\n\n"
+                f"💰 <b>Prize: {prize_amount} SOL</b>\n"
+                f"📝 TX: <code>{prize_result['signature'][:20]}...</code>\n\n"
+                f"The jackpot has been sent to your wallet!\n"
+                f"View on Solscan: https://solscan.io/tx/{prize_result['signature']}",
+                parse_mode="HTML"
+            )
+        else:
+            print(f"❌ Jackpot payment failed: {prize_result.get('error')}")
+    except Exception as e:
+        print(f"❌ Jackpot payment error: {e}")
+
+
+async def pay_team_fee(result: dict):
+    """Pay team their 20% fee when there's no winner"""
+    try:
+        team_fee = result.get('team_fee')
+        if not team_fee or team_fee <= 0:
+            return
+        
+        if TEAM_WALLET and TEAM_WALLET != OWNER_WALLET:
+            print(f"💼 Sending team fee {team_fee} SOL to team wallet...")
+            
+            team_result = await send_sol(OWNER_WALLET, TEAM_WALLET, Decimal(str(team_fee)), OWNER_WALLET_PRIVATE_KEY)
+            
+            if team_result and team_result.get("success"):
+                print(f"✅ Team fee paid! TX: {team_result['signature'][:16]}...")
+            else:
+                print(f"⚠️ Team fee payment failed: {team_result.get('error')}")
+        else:
+            print(f"ℹ️ Team fee ({team_fee} SOL) kept in owner wallet")
+    except Exception as e:
+        print(f"❌ Team fee payment error: {e}")
+
+
+async def announce_round_cancelled(round_id: int, player_count: int, refund_count: int):
+    """Announce when a round is cancelled due to insufficient players"""
+    try:
+        current_pot = get_current_pot()
+        
+        await bot.send_message(
+            ROUND_CHANNEL,
+            f"⚠️ <b>Round {round_id} Cancelled</b>\n\n"
+            f"👥 Players: {player_count}/{MIN_PLAYERS_TO_DRAW}\n"
+            f"❌ Not enough players to start the draw.\n"
+            f"✅ All {refund_count} participants have been refunded.\n\n"
+            f"💰 <b>Current Jackpot: {current_pot} SOL</b>\n\n"
+            f"Join the next round for a chance to win!",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        print(f"❌ Round cancelled announcement error: {e}")
+
+
+async def announce_round_opened(round_id: int):
+    """Announce when a new round opens with current pot information"""
+    try:
+        current_pot = get_current_pot()
+        
+        # Get total participants for this round
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("""
+            SELECT COUNT(rp.id)
+            FROM round_participants rp
+            JOIN round_stakes rs ON rp.round_stake_id = rs.id
+            WHERE rs.round_id = ? AND rp.refunded = 0
+        """, (round_id,))
+        player_count = c.fetchone()[0] or 0
+        conn.close()
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f"🎟️ Join Round ({player_count}/{MIN_PLAYERS_TO_DRAW} players)", callback_data=f"join_round_{round_id}")],
+            [InlineKeyboardButton(text="🔄 Refresh", callback_data=f"check_round_{round_id}")]
+        ])
         
         await bot.send_message(
             ROUND_CHANNEL,
             f"🎰 <b>Round {round_id} is NOW OPEN!</b>\n\n"
-            f"⏰ Duration: {ROUND_DURATION_MINUTES} minutes\n"
-            f"👥 Minimum players per stake: {MIN_PLAYERS_PER_STAKE}\n"
-            f"💰 Prize: 80% of pool to winner\n\n"
-            f"Choose your stake amount:",
+            f"🏆 <b>Current Jackpot: {current_pot} SOL</b>\n\n"
+            f"📋 <b>Rules:</b>\n"
+            f"• Pick 5 numbers (1-40)\n"
+            f"• Match ALL 5 to win the ENTIRE pot!\n"
+            f"• If no winner: 20% to team, 80% carries forward\n\n"
+            f"💰 <b>Stakes:</b> {STAKE_MIN} - {STAKE_MAX} SOL\n"
+            f"👥 <b>Min players:</b> {MIN_PLAYERS_TO_DRAW}\n"
+            f"⏰ <b>Timeout:</b> {JOIN_TIMEOUT_MINUTES} minutes\n\n"
+            f"Join now for a chance to win the jackpot!",
             reply_markup=keyboard,
             parse_mode="HTML"
         )

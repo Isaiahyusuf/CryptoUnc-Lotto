@@ -22,13 +22,12 @@ args = "web-server"
 name = "web-server"
 author = "agent"
 
+[workflows.workflow.metadata]
+outputType = "console"
+
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python Main.py"
-waitForPort = 5000
-
-[workflows.workflow.metadata]
-outputType = "webview"
+args = "python main.py"
 
 [[ports]]
 localPort = 5000
