@@ -216,3 +216,26 @@ Preferred communication style: Simple, everyday language.
 - Challenge-response authentication pattern
 - Session-based verification using server-generated challenges
 - Public key extraction without exposing private keys
+
+### Recent Changes (December 4, 2025)
+
+**Navigation System:**
+- Added Start and Back buttons to all prompts for consistent navigation
+- Helper functions: `get_start_button()`, `get_back_button()`, `create_keyboard_with_nav()`
+- All major screens now include navigation buttons at the bottom
+
+**Wallet Connection Flow Improvements:**
+- Added dedicated wallet type selection (Phantom, Solflare, Manual)
+- Step-by-step instructions for each wallet type
+- Improved error handling and validation messages
+
+**Security Enhancements:**
+- Auto-delete for private key messages (30 seconds after viewing)
+- Clear warning displayed before deletion countdown
+- Security notice sent after auto-deletion
+- Helper function: `schedule_private_key_deletion()`
+
+**UI/UX Improvements:**
+- Consistent keyboard layouts across all prompts
+- Clear visual hierarchy with emoji indicators
+- Better error messages with navigation options
