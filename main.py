@@ -760,6 +760,197 @@ def get_round_stake_by_amount(round_id: int, stake_amount: Decimal):
     return row
 
 
+def get_or_create_active_round_stake(stake_amount: Decimal):
+    """
+    Get or create an active round and stake for the given stake amount.
+    Returns (round_stake_id, round_id) tuple or (None, None) if no active round.
+    """
+    conn = get_db_conn()
+    c = conn.cursor()
+    
+    # Find an open round
+    c.execute("""
+        SELECT round_id FROM scheduled_rounds 
+        WHERE status = 'open' 
+        ORDER BY scheduled_time ASC LIMIT 1
+    """)
+    round_row = c.fetchone()
+    
+    if not round_row:
+        # No open round, check for pending round and open it
+        c.execute("""
+            SELECT round_id FROM scheduled_rounds 
+            WHERE status = 'pending' 
+            ORDER BY scheduled_time ASC LIMIT 1
+        """)
+        pending_row = c.fetchone()
+        
+        if not pending_row:
+            # No rounds at all - create one
+            now_utc = datetime.now(pytz.UTC)
+            c.execute("""
+                INSERT INTO scheduled_rounds (round_number, scheduled_time, status, start_time)
+                VALUES (?, ?, 'open', ?)
+            """, (get_current_round(), now_utc.isoformat(), now_utc.isoformat()))
+            round_id = c.lastrowid
+        else:
+            round_id = pending_row[0]
+            # Open the pending round
+            now_utc = datetime.now(pytz.UTC).isoformat()
+            c.execute("""
+                UPDATE scheduled_rounds SET status = 'open', start_time = ?
+                WHERE round_id = ?
+            """, (now_utc, round_id))
+    else:
+        round_id = round_row[0]
+    
+    # Check if stake exists for this round
+    c.execute("""
+        SELECT id, status FROM round_stakes 
+        WHERE round_id = ? AND stake_amount = ?
+    """, (round_id, float(stake_amount)))
+    stake_row = c.fetchone()
+    
+    if stake_row:
+        stake_id, status = stake_row
+        if status != 'open':
+            conn.close()
+            return None, None  # Stake is not open
+    else:
+        # Create the stake
+        c.execute("""
+            INSERT INTO round_stakes (round_id, stake_amount, status)
+            VALUES (?, ?, 'open')
+        """, (round_id, float(stake_amount)))
+        stake_id = c.lastrowid
+    
+    conn.commit()
+    conn.close()
+    return stake_id, round_id
+
+
+async def verify_solana_transaction(tx_signature: str, expected_recipient: str, expected_amount: Decimal, sender_wallet: str = None):
+    """
+    Verify a Solana transaction on-chain with robust security checks.
+    
+    Args:
+        tx_signature: The transaction signature to verify
+        expected_recipient: The wallet that should have received SOL
+        expected_amount: The minimum amount that should have been sent
+        sender_wallet: Optional sender wallet to verify (if known)
+    
+    Returns:
+        dict with 'valid', 'error', and transaction details
+    
+    Security checks:
+        - Transaction must be confirmed and successful
+        - Recipient must receive at least expected_amount (minus small margin)
+        - Sender must match if specified
+        - Checks for suspicious rebate patterns (recipient also sending back)
+    """
+    try:
+        from solana.rpc.async_api import AsyncClient
+        from solders.signature import Signature
+        
+        async with AsyncClient(SOLANA_RPC) as client:
+            # Parse the signature
+            try:
+                sig = Signature.from_string(tx_signature)
+            except Exception as e:
+                return {"valid": False, "error": f"Invalid signature format: {e}"}
+            
+            # Get transaction details
+            try:
+                tx_response = await client.get_transaction(
+                    sig,
+                    encoding="jsonParsed",
+                    max_supported_transaction_version=0
+                )
+            except Exception as e:
+                return {"valid": False, "error": f"Failed to fetch transaction: {e}"}
+            
+            if not tx_response or not tx_response.value:
+                return {"valid": False, "error": "Transaction not found on blockchain. Please wait for confirmation."}
+            
+            tx = tx_response.value
+            
+            # Check if transaction was successful
+            if tx.transaction.meta.err is not None:
+                return {"valid": False, "error": "Transaction failed on blockchain"}
+            
+            # Parse the transaction to find SOL transfers
+            try:
+                # Get pre and post balances
+                pre_balances = tx.transaction.meta.pre_balances
+                post_balances = tx.transaction.meta.post_balances
+                account_keys = tx.transaction.transaction.message.account_keys
+                
+                # Build account map for balance changes
+                account_changes = {}
+                recipient_idx = None
+                sender_idx = None
+                
+                for i, key in enumerate(account_keys):
+                    key_str = str(key.pubkey) if hasattr(key, 'pubkey') else str(key)
+                    balance_change = post_balances[i] - pre_balances[i]
+                    account_changes[key_str] = Decimal(balance_change) / Decimal("1000000000")
+                    
+                    if key_str == expected_recipient:
+                        recipient_idx = i
+                    if sender_wallet and key_str == sender_wallet:
+                        sender_idx = i
+                
+                # Check recipient received funds
+                if recipient_idx is None:
+                    return {"valid": False, "error": f"Recipient {expected_recipient[:8]}... not found in transaction"}
+                
+                amount_received = account_changes[expected_recipient]
+                
+                # Security check: recipient should ONLY receive, not send back
+                if amount_received <= Decimal("0"):
+                    return {"valid": False, "error": "Recipient did not receive positive balance in this transaction"}
+                
+                # Check sender if specified
+                if sender_wallet:
+                    if sender_idx is None:
+                        return {"valid": False, "error": "Your wallet is not part of this transaction"}
+                    
+                    sender_change = account_changes[sender_wallet]
+                    # Sender should have negative balance change (sent funds + fees)
+                    if sender_change >= Decimal("0"):
+                        return {"valid": False, "error": "Sender did not send funds in this transaction"}
+                
+                # Security: Check for suspicious patterns
+                # If sender received any funds back (net positive to sender from recipient)
+                # This could indicate a rebate attack
+                if sender_wallet and sender_wallet in account_changes:
+                    # The recipient should not have any outgoing transfers back to sender
+                    # We check this by ensuring recipient only gained balance
+                    pass  # Already checked above that recipient gained balance
+                
+                # Allow small margin (0.001 SOL) for rounding only
+                min_expected = expected_amount - Decimal("0.001")
+                if amount_received < min_expected:
+                    return {
+                        "valid": False, 
+                        "error": f"Amount received ({amount_received:.6f} SOL) less than required ({expected_amount} SOL)"
+                    }
+                
+                return {
+                    "valid": True,
+                    "amount_received": float(amount_received),
+                    "signature": tx_signature
+                }
+                
+            except Exception as e:
+                return {"valid": False, "error": f"Failed to parse transaction: {e}"}
+                
+    except ImportError as e:
+        return {"valid": False, "error": f"Solana library error: {e}"}
+    except Exception as e:
+        return {"valid": False, "error": f"Verification failed: {e}"}
+
+
 def update_round_status(round_id: int, status: str):
     conn = get_db_conn()
     c = conn.cursor()
@@ -2261,28 +2452,50 @@ async def generic_message_handler(message: types.Message):
                 if TEAM_WALLET and TEAM_WALLET != OWNER_WALLET:
                     await send_sol(wallet, TEAM_WALLET, team_amt, private_key)
                 
+                # Get or create active round stake for this amount
+                stake_id, round_id = get_or_create_active_round_stake(amount)
+                
+                if not stake_id:
+                    await message.answer(
+                        f"❌ <b>No Active Round</b>\n\n"
+                        f"There is no active lottery round at the moment.\n"
+                        f"Your payment was processed. Contact support with TX:\n"
+                        f"<code>{tx_signature}</code>",
+                        parse_mode="HTML"
+                    )
+                    return
+                
                 # Generate lottery numbers deterministically from transaction signature
-                round_num = get_current_round()
-                number_seed = generate_provable_seed(uid, round_num, tx_signature, "player_numbers")
+                number_seed = generate_provable_seed(uid, stake_id, tx_signature, "player_numbers")
                 lottery_numbers = generate_lottery_numbers(number_seed, count=5, min_val=1, max_val=40)
                 
-                # Add entry and get ticket ID
-                conn = get_db_conn()
-                c = conn.cursor()
-                c.execute(
-                    "INSERT INTO entries(user_id, round, numbers, stake_amount, tx_signature, paid) VALUES (?, ?, ?, ?, ?, ?)",
-                    (uid, round_num, numbers_to_str(lottery_numbers), float(amount), tx_signature, 1)
-                )
-                ticket_id = c.lastrowid
-                conn.commit()
-                conn.close()
+                # Add to round_participants (this is what the draw system uses)
+                add_result = add_round_participant(stake_id, uid, lottery_numbers, tx_signature)
+                
+                if not add_result["success"]:
+                    await message.answer(
+                        f"❌ <b>Failed to Join Round</b>\n\n"
+                        f"Error: {add_result.get('error', 'Unknown error')}\n\n"
+                        f"Payment was processed. Contact support with TX:\n"
+                        f"<code>{tx_signature}</code>",
+                        parse_mode="HTML"
+                    )
+                    return
+                
+                participant_id = add_result["participant_id"]
+                
+                # Also add to entries table for legacy/backup tracking
+                add_entry(uid, get_current_round(), lottery_numbers, float(amount), tx_signature, paid=1)
+                
+                # Add stake to pot
+                add_to_pot(amount)
                 
                 await message.answer(
                     f"✅ <b>Stake Successful!</b>\n\n"
-                    f"🎫 <b>Ticket ID:</b> #{ticket_id}\n"
+                    f"🎫 <b>Ticket ID:</b> #{participant_id}\n"
                     f"🎲 <b>Your Numbers:</b> {numbers_to_str(lottery_numbers)}\n"
-                    f"🎰 <b>Round:</b> {round_num}\n"
-                    f"💰 <b>Stake:</b> {amount} SOL\n\n"
+                    f"💰 <b>Stake:</b> {amount} SOL\n"
+                    f"🏆 <b>Current Pot:</b> {get_current_pot()} SOL\n\n"
                     f"📝 Transaction:\n<code>{tx_signature[:20]}...</code>\n\n"
                     f"🍀 <b>Good luck!</b> Winner will be announced in the channel.",
                     parse_mode="HTML"
@@ -2315,32 +2528,77 @@ async def generic_message_handler(message: types.Message):
                 )
                 return
             
-            # Clear state
+            await message.answer("⏳ Verifying your transaction on the blockchain...")
+            
+            # Verify the transaction on-chain
+            verification = await verify_solana_transaction(
+                tx_signature=tx_signature,
+                expected_recipient=OWNER_WALLET,
+                expected_amount=stake_amount,
+                sender_wallet=wallet
+            )
+            
+            if not verification["valid"]:
+                await message.answer(
+                    f"❌ <b>Transaction Verification Failed</b>\n\n"
+                    f"Error: {verification.get('error', 'Unknown error')}\n\n"
+                    f"Please ensure you:\n"
+                    f"1. Sent {stake_amount} SOL to <code>{OWNER_WALLET}</code>\n"
+                    f"2. The transaction is confirmed on the blockchain\n"
+                    f"3. You entered the correct transaction signature\n\n"
+                    f"Try again with the correct signature:",
+                    parse_mode="HTML"
+                )
+                return
+            
+            # Clear state after successful verification
             del user_states[uid]
             
-            # Generate lottery numbers from transaction signature
-            round_num = get_current_round()
-            number_seed = generate_provable_seed(uid, round_num, tx_signature, "player_numbers")
+            # Get or create active round stake for this amount
+            stake_id, round_id = get_or_create_active_round_stake(stake_amount)
+            
+            if not stake_id:
+                await message.answer(
+                    f"❌ <b>No Active Round</b>\n\n"
+                    f"There is no active lottery round at the moment.\n"
+                    f"Your payment was verified. Contact support with TX:\n"
+                    f"<code>{tx_signature}</code>",
+                    parse_mode="HTML"
+                )
+                return
+            
+            # Generate lottery numbers deterministically from transaction signature
+            number_seed = generate_provable_seed(uid, stake_id, tx_signature, "player_numbers")
             lottery_numbers = generate_lottery_numbers(number_seed, count=5, min_val=1, max_val=40)
             
-            # Add entry and get ticket ID
-            conn = get_db_conn()
-            c = conn.cursor()
-            c.execute(
-                "INSERT INTO entries(user_id, round, numbers, stake_amount, tx_signature, paid) VALUES (?, ?, ?, ?, ?, ?)",
-                (uid, round_num, numbers_to_str(lottery_numbers), float(stake_amount), tx_signature, 1)
-            )
-            ticket_id = c.lastrowid
-            conn.commit()
-            conn.close()
+            # Add to round_participants (this is what the draw system uses)
+            add_result = add_round_participant(stake_id, uid, lottery_numbers, tx_signature)
+            
+            if not add_result["success"]:
+                await message.answer(
+                    f"❌ <b>Failed to Join Round</b>\n\n"
+                    f"Error: {add_result.get('error', 'Unknown error')}\n\n"
+                    f"Payment was verified. Contact support with TX:\n"
+                    f"<code>{tx_signature}</code>",
+                    parse_mode="HTML"
+                )
+                return
+            
+            participant_id = add_result["participant_id"]
+            
+            # Also add to entries table for legacy/backup tracking
+            add_entry(uid, get_current_round(), lottery_numbers, float(stake_amount), tx_signature, paid=1)
+            
+            # Add stake to pot
+            add_to_pot(stake_amount)
             
             await message.answer(
                 f"✅ <b>Stake Confirmed!</b>\n\n"
-                f"🎫 <b>Ticket ID:</b> #{ticket_id}\n"
+                f"🎫 <b>Ticket ID:</b> #{participant_id}\n"
                 f"🎲 <b>Your Numbers:</b> {numbers_to_str(lottery_numbers)}\n"
-                f"🎰 <b>Round:</b> {round_num}\n"
-                f"💰 <b>Stake:</b> {stake_amount} SOL\n\n"
-                f"📝 Transaction:\n<code>{tx_signature[:20]}...</code>\n\n"
+                f"💰 <b>Stake:</b> {stake_amount} SOL\n"
+                f"🏆 <b>Current Pot:</b> {get_current_pot()} SOL\n\n"
+                f"📝 Transaction verified:\n<code>{tx_signature[:20]}...</code>\n\n"
                 f"🍀 <b>Good luck!</b> Winner will be announced in the channel.",
                 parse_mode="HTML"
             )
