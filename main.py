@@ -1725,16 +1725,31 @@ async def inline_handler(query: types.CallbackQuery):
 
     elif data == "rules":
         await query.message.answer(
-            "📘 <b>Game Rules</b>\n\n"
-            "1. Create or connect a Solana wallet\n"
-            "2. Deposit SOL to your wallet\n"
-            "3. Choose a stake amount (0.05 - 5 SOL)\n"
-            "4. Receive 5 random numbers (1-40)\n"
-            "5. Wait for admin to draw winning numbers\n"
-            "6. Winners are announced publicly!\n\n"
-            "💰 Stakes are split:\n"
-            "• 80% to prize pool\n"
-            "• 20% to team/operations",
+            f"📘 <b>CryptoUnc Lotto - Game Rules</b>\n\n"
+            f"<b>🎮 How to Play:</b>\n"
+            f"1. Create or connect a Solana wallet\n"
+            f"2. Deposit SOL to your wallet\n"
+            f"3. Tap 'Stake' and enter your amount\n"
+            f"   • Minimum: <b>{STAKE_MIN} SOL</b>\n"
+            f"   • Maximum: <b>{STAKE_MAX} SOL</b>\n"
+            f"4. Receive 5 random lottery numbers (1-40)\n"
+            f"5. Wait for the automatic draw\n\n"
+            f"<b>🎯 Draw Schedule:</b>\n"
+            f"• {ROUNDS_PER_DAY} rounds daily at: {', '.join(ROUND_TIMES_UTC)} UTC\n"
+            f"• Draw triggers when {MIN_PLAYERS_TO_DRAW} players join\n"
+            f"• Or after {JOIN_TIMEOUT_MINUTES} minutes from first entry\n\n"
+            f"<b>🏆 Winning:</b>\n"
+            f"• Match all 5 numbers to win the jackpot!\n"
+            f"• Partial matches may win smaller prizes\n"
+            f"• Winners announced in the public channel\n\n"
+            f"<b>💰 Prize Pool:</b>\n"
+            f"• 80% of stakes go to prize pool\n"
+            f"• 20% for team/operations\n"
+            f"• Jackpot rolls over if no winner!\n\n"
+            f"<b>🔐 Security:</b>\n"
+            f"• Provably fair random numbers\n"
+            f"• All draws verifiable on blockchain\n"
+            f"• Your wallet keys stay private",
             parse_mode="HTML"
         )
 
