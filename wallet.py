@@ -256,6 +256,101 @@ def save_external_wallet(user_id: int, wallet_address: str, wallet_type: str = "
         return False
 
 
+def import_wallet_from_private_key(user_id: int, private_key_input: str, wallet_name: Optional[str] = None) -> Dict:
+    """
+    Import a wallet using private key (hex or base58 format)
+    Returns dict with success status, address, or error message
+    
+    SECURITY: Private key is encrypted before storage
+    """
+    import base58
+    
+    # Check wallet limit
+    if get_user_wallet_count(user_id) >= MAX_WALLETS_PER_USER:
+        return {"success": False, "error": f"Maximum {MAX_WALLETS_PER_USER} wallets allowed"}
+    
+    # Verify encryption is configured
+    if not is_encryption_configured():
+        return {"success": False, "error": "Encryption not configured"}
+    
+    private_key_input = private_key_input.strip()
+    private_key_bytes = None
+    
+    try:
+        # Try to parse as hex (128 chars = 64 bytes)
+        if len(private_key_input) == 128 and all(c in '0123456789abcdefABCDEF' for c in private_key_input):
+            private_key_bytes = bytes.fromhex(private_key_input)
+        # Try to parse as base58 (typical Phantom export format, ~88 chars)
+        elif len(private_key_input) >= 64 and len(private_key_input) <= 100:
+            try:
+                private_key_bytes = base58.b58decode(private_key_input)
+            except:
+                pass
+        # Try to parse as JSON array (Solflare format)
+        elif private_key_input.startswith('[') and private_key_input.endswith(']'):
+            import json
+            try:
+                key_array = json.loads(private_key_input)
+                if isinstance(key_array, list) and len(key_array) == 64:
+                    private_key_bytes = bytes(key_array)
+            except:
+                pass
+        
+        if not private_key_bytes or len(private_key_bytes) != 64:
+            return {
+                "success": False, 
+                "error": "Invalid private key format. Expected hex (128 chars), base58, or JSON array [64 numbers]"
+            }
+        
+        # Create keypair from private key bytes
+        keypair = Keypair.from_bytes(private_key_bytes)
+        wallet_address = str(keypair.pubkey())
+        private_key_hex = private_key_bytes.hex()
+        
+        # Check if wallet already exists for this user
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("SELECT 1 FROM wallets WHERE user_id = ? AND wallet_address = ?", (user_id, wallet_address))
+        if c.fetchone():
+            conn.close()
+            return {"success": False, "error": "This wallet is already imported"}
+        conn.close()
+        
+        # Encrypt the private key
+        encrypted_private_key = encrypt_private_key(private_key_hex)
+        
+        if not wallet_name:
+            count = get_user_wallet_count(user_id) + 1
+            wallet_name = f"Imported Wallet {count}"
+        
+        conn = get_db_conn()
+        c = conn.cursor()
+        
+        c.execute("""
+            INSERT INTO wallets (user_id, wallet_address, wallet_type, wallet_name, private_key)
+            VALUES (?, ?, ?, ?, ?)
+        """, (user_id, wallet_address, "imported", wallet_name, encrypted_private_key))
+        
+        # Set as active wallet
+        c.execute("""
+            INSERT INTO user_active_wallet (user_id, active_wallet_address)
+            VALUES (?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET active_wallet_address = ?
+        """, (user_id, wallet_address, wallet_address))
+        
+        conn.commit()
+        conn.close()
+        
+        return {
+            "success": True,
+            "address": wallet_address,
+            "name": wallet_name
+        }
+        
+    except Exception as e:
+        return {"success": False, "error": f"Failed to import wallet: {str(e)}"}
+
+
 def _is_hex_string(s: str) -> bool:
     """Check if a string is a valid hex string"""
     try:

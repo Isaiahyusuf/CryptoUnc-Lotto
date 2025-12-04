@@ -219,15 +219,21 @@ Preferred communication style: Simple, everyday language.
 
 ### Recent Changes (December 4, 2025)
 
+**Import Wallet Feature (MAJOR UPDATE):**
+- Replaced "Connect Wallet" with "Import Wallet" for real-time wallet import
+- Users can import existing Solana wallets using private keys
+- Supported formats: Hex (128 chars), Base58 (Phantom), JSON array (Solflare)
+- Function: `import_wallet_from_private_key()` in wallet.py
+- Security measures:
+  - User's private key message is IMMEDIATELY deleted
+  - Private keys are encrypted before database storage
+  - Success confirmation message auto-deletes after 30 seconds
+  - Strong security warnings before import
+
 **Navigation System:**
 - Added Start and Back buttons to all prompts for consistent navigation
 - Helper functions: `get_start_button()`, `get_back_button()`, `create_keyboard_with_nav()`
 - All major screens now include navigation buttons at the bottom
-
-**Wallet Connection Flow Improvements:**
-- Added dedicated wallet type selection (Phantom, Solflare, Manual)
-- Step-by-step instructions for each wallet type
-- Improved error handling and validation messages
 
 **Security Enhancements:**
 - Auto-delete for private key messages (30 seconds after viewing)
@@ -239,3 +245,4 @@ Preferred communication style: Simple, everyday language.
 - Consistent keyboard layouts across all prompts
 - Clear visual hierarchy with emoji indicators
 - Better error messages with navigation options
+- Imported wallets support: View Private Key, Send SOL, Delete

@@ -34,6 +34,7 @@ set_user_pin,
 verify_user_pin,
 has_user_pin,
 init_wallet_db,
+import_wallet_from_private_key,
 MAX_WALLETS_PER_USER
 )
 
@@ -1647,9 +1648,9 @@ async def show_wallet_menu(user_id: int):
         # Add wallet actions for active wallet
         if active_wallet:
             wallet_actions = []
-            # Check if active wallet is bot-managed
+            # Check if active wallet is bot-managed or imported (has private key)
             active_wallet_info = next((w for w in wallets if w["address"] == active_wallet), None)
-            if active_wallet_info and active_wallet_info["type"] == "bot":
+            if active_wallet_info and active_wallet_info["type"] in ("bot", "imported"):
                 wallet_actions.append(
                     InlineKeyboardButton(text="🔑 View Private Key", callback_data="view_private_key")
                 )
@@ -1667,11 +1668,11 @@ async def show_wallet_menu(user_id: int):
     else:
         text = "💼 <b>Your Wallets</b>\n\nYou don't have any wallets yet.\n"
 
-    # Add create/connect buttons if under limit
+    # Add create/import buttons if under limit
     if wallet_count < MAX_WALLETS_PER_USER:
         keyboard_buttons.append([
             InlineKeyboardButton(text="➕ Create Wallet", callback_data="create_wallet"),
-            InlineKeyboardButton(text="🔗 Connect Wallet", callback_data="connect_wallet")
+            InlineKeyboardButton(text="📥 Import Wallet", callback_data="import_wallet")
         ])
     else:
         text += f"\n⚠️ You've reached the maximum of {MAX_WALLETS_PER_USER} wallets."
@@ -1690,12 +1691,12 @@ async def start_private_play(user_id: int):
     if not wallet:
         keyboard = create_keyboard_with_nav([
             [InlineKeyboardButton(text="💳 Create Wallet", callback_data="create_wallet")],
-            [InlineKeyboardButton(text="🔗 Connect Wallet", callback_data="connect_wallet")],
+            [InlineKeyboardButton(text="📥 Import Wallet", callback_data="import_wallet")],
             [InlineKeyboardButton(text="ℹ️ How to Play", callback_data="rules")]
         ])
         await bot.send_message(user_id,
             "🎮 <b>Private Lotto Session</b>\n\n"
-            "You need a wallet to play. Create a new wallet or connect your existing one.",
+            "You need a wallet to play. Create a new wallet or import your existing one.",
             reply_markup=keyboard,
             parse_mode="HTML"
         )
@@ -1886,7 +1887,7 @@ async def inline_handler(query: types.CallbackQuery):
                 parse_mode="HTML"
             )
 
-    elif data == "connect_wallet":
+    elif data == "import_wallet":
         await query.answer()
         wallet_count = get_user_wallet_count(uid)
 
@@ -1898,68 +1899,46 @@ async def inline_handler(query: types.CallbackQuery):
             )
             return
 
-        # Show wallet connection options with Phantom and Solflare
+        # Show import wallet warning and confirmation
         keyboard = create_keyboard_with_nav([
-            [InlineKeyboardButton(text="👻 Connect Phantom", callback_data="connect_phantom")],
-            [InlineKeyboardButton(text="🔥 Connect Solflare", callback_data="connect_solflare")],
-            [InlineKeyboardButton(text="📝 Enter Address Manually", callback_data="connect_manual")]
+            [InlineKeyboardButton(text="✅ I Understand, Continue", callback_data="import_wallet_confirm")],
+            [InlineKeyboardButton(text="❌ Cancel", callback_data="my_wallets")]
         ], "my_wallets")
         
         await bot.send_message(uid,
-            "🔗 <b>Connect External Wallet</b>\n\n"
-            "Choose your wallet type to connect:\n\n"
-            "👻 <b>Phantom</b> - Popular Solana wallet\n"
-            "🔥 <b>Solflare</b> - Feature-rich Solana wallet\n"
-            "📝 <b>Manual</b> - Enter any Solana address\n\n"
-            "⚠️ <b>Never share your private key or seed phrase!</b>",
+            "🔐 <b>Import Wallet with Private Key</b>\n\n"
+            "⚠️ <b>SECURITY WARNING</b> ⚠️\n\n"
+            "You are about to import a wallet using your private key.\n\n"
+            "🔒 <b>Security Measures:</b>\n"
+            "• Your message will be DELETED immediately\n"
+            "• Private key is encrypted before storage\n"
+            "• Never share your key with anyone else\n\n"
+            "⚡ <b>Supported Formats:</b>\n"
+            "• Hex format (128 characters)\n"
+            "• Base58 format (Phantom export)\n"
+            "• JSON array [64 numbers] (Solflare)\n\n"
+            "🛡️ <b>By continuing, you accept full responsibility</b>\n"
+            "<b>for providing your private key.</b>",
             reply_markup=keyboard,
             parse_mode="HTML"
         )
     
-    elif data == "connect_phantom":
+    elif data == "import_wallet_confirm":
         await query.answer()
-        user_states[uid] = {"action": "connect_wallet_address", "wallet_type": "phantom"}
-        keyboard = create_keyboard_with_nav([], "connect_wallet")
+        user_states[uid] = {"action": "import_wallet_private_key"}
+        keyboard = create_keyboard_with_nav([], "import_wallet")
         await bot.send_message(uid,
-            "👻 <b>Connect Phantom Wallet</b>\n\n"
-            "📱 <b>To get your Phantom wallet address:</b>\n"
-            "1. Open Phantom app on your phone\n"
-            "2. Tap your wallet address at the top\n"
-            "3. Tap 'Copy Address'\n"
-            "4. Paste and send it here\n\n"
-            "🔗 Your address looks like: <code>9xQe...4f2K</code>\n\n"
-            "⌨️ <b>Send your Phantom wallet address now:</b>",
-            reply_markup=keyboard,
-            parse_mode="HTML"
-        )
-    
-    elif data == "connect_solflare":
-        await query.answer()
-        user_states[uid] = {"action": "connect_wallet_address", "wallet_type": "solflare"}
-        keyboard = create_keyboard_with_nav([], "connect_wallet")
-        await bot.send_message(uid,
-            "🔥 <b>Connect Solflare Wallet</b>\n\n"
-            "📱 <b>To get your Solflare wallet address:</b>\n"
-            "1. Open Solflare app or extension\n"
-            "2. Click on your wallet address\n"
-            "3. Copy the address\n"
-            "4. Paste and send it here\n\n"
-            "🔗 Your address looks like: <code>5wXk...9j2M</code>\n\n"
-            "⌨️ <b>Send your Solflare wallet address now:</b>",
-            reply_markup=keyboard,
-            parse_mode="HTML"
-        )
-    
-    elif data == "connect_manual":
-        await query.answer()
-        user_states[uid] = {"action": "connect_wallet_address", "wallet_type": "external"}
-        keyboard = create_keyboard_with_nav([], "connect_wallet")
-        await bot.send_message(uid,
-            "📝 <b>Connect Wallet Manually</b>\n\n"
-            "Send your Solana wallet public address now.\n"
-            "This can be from any Solana wallet.\n\n"
-            "🔗 Example: <code>AdsUp4UT3AAGv9m8fYAYXY5mMMAxkJXneVyd6MMwwBVR</code>\n\n"
-            "⚠️ <b>Never share your private key or seed phrase!</b>",
+            "🔑 <b>Enter Your Private Key</b>\n\n"
+            "📱 <b>How to export from Phantom:</b>\n"
+            "1. Open Phantom → Settings → Security\n"
+            "2. Tap 'Export Private Key'\n"
+            "3. Copy and paste it here\n\n"
+            "📱 <b>How to export from Solflare:</b>\n"
+            "1. Open Solflare → Settings\n"
+            "2. Export Private Key (JSON array)\n"
+            "3. Copy and paste it here\n\n"
+            "⚠️ <b>Your message will be deleted immediately for security!</b>\n\n"
+            "⌨️ <b>Send your private key now:</b>",
             reply_markup=keyboard,
             parse_mode="HTML"
         )
@@ -2443,60 +2422,55 @@ async def generic_message_handler(message: types.Message):
                 await message.answer("❌ Incorrect PIN. Please try again:")
             return
         
-        elif action == "connect_wallet_address":
-            # Handle wallet address input from Phantom/Solflare/Manual connection
-            wallet_type = state.get("wallet_type", "external")
-            address = text.strip()
+        elif action == "import_wallet_private_key":
+            # IMMEDIATELY delete the message containing the private key for security
+            try:
+                await message.delete()
+            except Exception as e:
+                print(f"Failed to delete private key message: {e}")
             
-            # Validate Solana address format
-            if 32 <= len(address) <= 44 and address.isalnum():
-                wallet_count = get_user_wallet_count(uid)
-                if wallet_count >= MAX_WALLETS_PER_USER:
-                    del user_states[uid]
-                    keyboard = create_keyboard_with_nav([], "my_wallets")
-                    await message.answer(
-                        f"⚠️ You've reached the maximum of {MAX_WALLETS_PER_USER} wallets.",
-                        reply_markup=keyboard
-                    )
-                    return
+            del user_states[uid]
+            private_key = text.strip()
+            
+            # Import the wallet using the private key
+            result = import_wallet_from_private_key(uid, private_key)
+            
+            if result["success"]:
+                wallet_address = result["address"]
+                wallet_name = result["name"]
                 
-                # Save the wallet with the specified type
-                if save_external_wallet(uid, address, wallet_type):
-                    set_active_wallet(uid, address)
-                    del user_states[uid]
-                    
-                    balance = await get_real_balance(address)
-                    wallet_name = wallet_type.capitalize()
-                    
-                    keyboard = create_keyboard_with_nav([
-                        [InlineKeyboardButton(text="🎲 Play Now", callback_data="play_now")],
-                        [InlineKeyboardButton(text="💼 View Wallets", callback_data="my_wallets")]
-                    ])
-                    
-                    await message.answer(
-                        f"✅ <b>{wallet_name} Wallet Connected!</b>\n\n"
-                        f"📍 Address: <code>{address}</code>\n"
-                        f"💰 Balance: <b>{balance} SOL</b>\n\n"
-                        f"You can now play lottery games with this wallet!",
-                        reply_markup=keyboard,
-                        parse_mode="HTML"
-                    )
-                else:
-                    keyboard = create_keyboard_with_nav([], "connect_wallet")
-                    await message.answer(
-                        "❌ Failed to connect wallet. It may already be connected.\n\n"
-                        "Try a different address or go back.",
-                        reply_markup=keyboard
-                    )
-                    del user_states[uid]
+                # Get balance of imported wallet
+                balance = await get_real_balance(wallet_address)
+                
+                keyboard = create_keyboard_with_nav([
+                    [InlineKeyboardButton(text="🎲 Play Now", callback_data="play_now")],
+                    [InlineKeyboardButton(text="💼 View Wallets", callback_data="my_wallets")]
+                ])
+                
+                # Send success message (will auto-delete after 30 seconds)
+                success_msg = await bot.send_message(uid,
+                    f"✅ <b>Wallet Imported Successfully!</b>\n\n"
+                    f"🔐 Your private key message was deleted for security.\n\n"
+                    f"📍 <b>Wallet Address:</b>\n<code>{wallet_address}</code>\n\n"
+                    f"💰 <b>Balance:</b> {balance} SOL\n\n"
+                    f"⚠️ <b>This message will auto-delete in 30 seconds.</b>",
+                    reply_markup=keyboard,
+                    parse_mode="HTML"
+                )
+                
+                # Schedule auto-deletion of success message for extra security
+                await schedule_private_key_deletion(uid, success_msg, delay_seconds=30)
             else:
-                keyboard = create_keyboard_with_nav([], "connect_wallet")
-                await message.answer(
-                    "❌ <b>Invalid Solana Address</b>\n\n"
-                    "Please enter a valid Solana wallet address.\n"
-                    "It should be 32-44 alphanumeric characters.\n\n"
-                    "Example: <code>9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin</code>\n\n"
-                    "Try again or tap Back to cancel:",
+                error_msg = result.get("error", "Unknown error")
+                keyboard = create_keyboard_with_nav([
+                    [InlineKeyboardButton(text="🔄 Try Again", callback_data="import_wallet_confirm")]
+                ], "my_wallets")
+                
+                await bot.send_message(uid,
+                    f"❌ <b>Import Failed</b>\n\n"
+                    f"🔐 Your message was deleted for security.\n\n"
+                    f"Error: {error_msg}\n\n"
+                    f"Please check your private key format and try again.",
                     reply_markup=keyboard,
                     parse_mode="HTML"
                 )
