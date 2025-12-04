@@ -2214,22 +2214,28 @@ async def generic_message_handler(message: types.Message):
                     )
                     return
                 
-                # Clear state
-                del user_states[uid]
-                
                 # Get private key for bot-managed wallets
                 private_key = get_wallet_private_key(uid, wallet)
                 
                 if not private_key:
-                    # External wallet - user needs to send manually
+                    # External wallet - set state to wait for transaction signature
+                    user_states[uid] = {
+                        "action": "stake_external_tx", 
+                        "wallet": wallet, 
+                        "stake_amount": str(amount)
+                    }
                     await message.answer(
-                        f"⚠️ <b>External Wallet Detected</b>\n\n"
+                        f"⚠️ <b>External Wallet - Manual Payment Required</b>\n\n"
                         f"Please send <b>{amount} SOL</b> to:\n"
                         f"<code>{OWNER_WALLET}</code>\n\n"
-                        f"Then reply with your transaction signature.",
+                        f"After sending, reply with your transaction signature\n"
+                        f"(the long alphanumeric code from your wallet).",
                         parse_mode="HTML"
                     )
                     return
+                
+                # Clear state for bot-managed wallets
+                del user_states[uid]
                 
                 # Process stake for bot-managed wallets
                 owner_amt = amount * Decimal("0.8")
@@ -2290,6 +2296,54 @@ async def generic_message_handler(message: types.Message):
                     f"Stake range: {STAKE_MIN} - {STAKE_MAX} SOL",
                     parse_mode="HTML"
                 )
+            return
+        
+        elif action == "stake_external_tx":
+            # Handle external wallet transaction signature
+            tx_signature = text.strip()
+            wallet = state.get("wallet")
+            stake_amount = Decimal(state.get("stake_amount", "0"))
+            
+            # Validate transaction signature format (base58, typically 88 chars)
+            if len(tx_signature) < 60 or not tx_signature.isalnum():
+                await message.answer(
+                    f"❌ <b>Invalid Transaction Signature</b>\n\n"
+                    f"Please enter a valid Solana transaction signature.\n"
+                    f"It should be a long alphanumeric string (like: 5wBYsK...)\n\n"
+                    f"Or send /cancel to cancel.",
+                    parse_mode="HTML"
+                )
+                return
+            
+            # Clear state
+            del user_states[uid]
+            
+            # Generate lottery numbers from transaction signature
+            round_num = get_current_round()
+            number_seed = generate_provable_seed(uid, round_num, tx_signature, "player_numbers")
+            lottery_numbers = generate_lottery_numbers(number_seed, count=5, min_val=1, max_val=40)
+            
+            # Add entry and get ticket ID
+            conn = get_db_conn()
+            c = conn.cursor()
+            c.execute(
+                "INSERT INTO entries(user_id, round, numbers, stake_amount, tx_signature, paid) VALUES (?, ?, ?, ?, ?, ?)",
+                (uid, round_num, numbers_to_str(lottery_numbers), float(stake_amount), tx_signature, 1)
+            )
+            ticket_id = c.lastrowid
+            conn.commit()
+            conn.close()
+            
+            await message.answer(
+                f"✅ <b>Stake Confirmed!</b>\n\n"
+                f"🎫 <b>Ticket ID:</b> #{ticket_id}\n"
+                f"🎲 <b>Your Numbers:</b> {numbers_to_str(lottery_numbers)}\n"
+                f"🎰 <b>Round:</b> {round_num}\n"
+                f"💰 <b>Stake:</b> {stake_amount} SOL\n\n"
+                f"📝 Transaction:\n<code>{tx_signature[:20]}...</code>\n\n"
+                f"🍀 <b>Good luck!</b> Winner will be announced in the channel.",
+                parse_mode="HTML"
+            )
             return
 
     # Check if it's a Solana wallet address (32-44 chars, alphanumeric)
