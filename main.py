@@ -1607,31 +1607,32 @@ async def inline_handler(query: types.CallbackQuery):
             return
 
         balance = await get_real_balance(wallet)
-
-        # Show stake packages
-        rows = []
-        temp = []
-        for i, pkg in enumerate(STAKE_PACKAGES, 1):
-            # Disable if balance insufficient
-            if balance >= pkg:
-                temp.append(InlineKeyboardButton(text=f"{pkg} SOL", callback_data=f"stake_{pkg}"))
-            else:
-                temp.append(InlineKeyboardButton(text=f"🔒 {pkg} SOL", callback_data="insufficient_funds"))
-
-            if i % 3 == 0:
-                rows.append(temp)
-                temp = []
-        if temp:
-            rows.append(temp)
-
-        keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
+        
+        # Set user state to enter stake amount via keyboard
+        user_states[uid] = {"action": "enter_stake_amount", "balance": str(balance), "wallet": wallet}
+        
+        # Show balance and prompt for stake amount input
+        cancel_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Cancel", callback_data="cancel_stake")]
+        ])
+        
         await bot.send_message(uid,
-            f"💵 <b>Choose Stake Package</b>\n\n"
-            f"Your balance: <b>{balance} SOL</b>\n"
-            f"Available packages:",
-            reply_markup=keyboard,
+            f"💰 <b>Enter Stake Amount</b>\n\n"
+            f"💳 Your Balance: <b>{balance} SOL</b>\n\n"
+            f"📊 Stake Range:\n"
+            f"   • Minimum: <b>{STAKE_MIN} SOL</b>\n"
+            f"   • Maximum: <b>{STAKE_MAX} SOL</b>\n\n"
+            f"⌨️ <b>Type the amount you want to stake</b>\n"
+            f"(Example: 0.1 or 0.5 or 2.5)",
+            reply_markup=cancel_keyboard,
             parse_mode="HTML"
         )
+
+    elif data == "cancel_stake":
+        await query.answer("Stake cancelled")
+        if uid in user_states:
+            del user_states[uid]
+        await bot.send_message(uid, "❌ Stake cancelled. Use /play to try again.")
 
     elif data == "insufficient_funds":
         await query.answer("❌ Insufficient balance for this stake amount", show_alert=True)
@@ -2152,6 +2153,128 @@ async def generic_message_handler(message: types.Message):
                     )
             except (ValueError, decimal.InvalidOperation):
                 await message.answer("❌ Invalid amount. Please enter a number (e.g., 0.5):")
+            return
+        
+        elif action == "enter_stake_amount":
+            try:
+                amount = Decimal(text.strip())
+                wallet = state.get("wallet")
+                stored_balance = Decimal(state.get("balance", "0"))
+                
+                # Get fresh balance
+                current_balance = await get_real_balance(wallet)
+                
+                # Validate minimum stake
+                if amount < STAKE_MIN:
+                    await message.answer(
+                        f"❌ <b>Below Minimum Stake</b>\n\n"
+                        f"You entered: <b>{amount} SOL</b>\n"
+                        f"Minimum stake: <b>{STAKE_MIN} SOL</b>\n\n"
+                        f"Please enter an amount of at least {STAKE_MIN} SOL:",
+                        parse_mode="HTML"
+                    )
+                    return
+                
+                # Validate maximum stake
+                if amount > STAKE_MAX:
+                    await message.answer(
+                        f"❌ <b>Above Maximum Stake</b>\n\n"
+                        f"You entered: <b>{amount} SOL</b>\n"
+                        f"Maximum stake: <b>{STAKE_MAX} SOL</b>\n\n"
+                        f"Please enter an amount up to {STAKE_MAX} SOL:",
+                        parse_mode="HTML"
+                    )
+                    return
+                
+                # Validate balance
+                if amount > current_balance:
+                    await message.answer(
+                        f"❌ <b>Insufficient Balance</b>\n\n"
+                        f"You have: <b>{current_balance} SOL</b>\n"
+                        f"Trying to stake: <b>{amount} SOL</b>\n\n"
+                        f"Please deposit more SOL to your wallet:\n"
+                        f"<code>{wallet}</code>\n\n"
+                        f"Or enter a smaller amount:",
+                        parse_mode="HTML"
+                    )
+                    return
+                
+                # Clear state
+                del user_states[uid]
+                
+                # Get private key for bot-managed wallets
+                private_key = get_wallet_private_key(uid, wallet)
+                
+                if not private_key:
+                    # External wallet - user needs to send manually
+                    await message.answer(
+                        f"⚠️ <b>External Wallet Detected</b>\n\n"
+                        f"Please send <b>{amount} SOL</b> to:\n"
+                        f"<code>{OWNER_WALLET}</code>\n\n"
+                        f"Then reply with your transaction signature.",
+                        parse_mode="HTML"
+                    )
+                    return
+                
+                # Process stake for bot-managed wallets
+                owner_amt = amount * Decimal("0.8")
+                team_amt = amount * Decimal("0.2")
+                
+                await message.answer("⏳ Processing your stake payment...")
+                
+                # Send to owner wallet
+                result = await send_sol(wallet, OWNER_WALLET, owner_amt, private_key)
+                
+                if not result["success"]:
+                    await message.answer(
+                        f"❌ <b>Transaction Failed!</b>\n\n"
+                        f"Error: {result.get('error', 'Unknown error')}\n\n"
+                        f"Please try again or contact support.",
+                        parse_mode="HTML"
+                    )
+                    return
+                
+                tx_signature = result["signature"]
+                
+                # Send to team wallet (if different from owner)
+                if TEAM_WALLET and TEAM_WALLET != OWNER_WALLET:
+                    await send_sol(wallet, TEAM_WALLET, team_amt, private_key)
+                
+                # Generate lottery numbers deterministically from transaction signature
+                round_num = get_current_round()
+                number_seed = generate_provable_seed(uid, round_num, tx_signature, "player_numbers")
+                lottery_numbers = generate_lottery_numbers(number_seed, count=5, min_val=1, max_val=40)
+                
+                # Add entry and get ticket ID
+                conn = get_db_conn()
+                c = conn.cursor()
+                c.execute(
+                    "INSERT INTO entries(user_id, round, numbers, stake_amount, tx_signature, paid) VALUES (?, ?, ?, ?, ?, ?)",
+                    (uid, round_num, numbers_to_str(lottery_numbers), float(amount), tx_signature, 1)
+                )
+                ticket_id = c.lastrowid
+                conn.commit()
+                conn.close()
+                
+                await message.answer(
+                    f"✅ <b>Stake Successful!</b>\n\n"
+                    f"🎫 <b>Ticket ID:</b> #{ticket_id}\n"
+                    f"🎲 <b>Your Numbers:</b> {numbers_to_str(lottery_numbers)}\n"
+                    f"🎰 <b>Round:</b> {round_num}\n"
+                    f"💰 <b>Stake:</b> {amount} SOL\n\n"
+                    f"📝 Transaction:\n<code>{tx_signature[:20]}...</code>\n\n"
+                    f"🍀 <b>Good luck!</b> Winner will be announced in the channel.",
+                    parse_mode="HTML"
+                )
+                
+            except (ValueError, decimal.InvalidOperation):
+                await message.answer(
+                    f"❌ <b>Invalid Amount</b>\n\n"
+                    f"Please enter a valid number.\n"
+                    f"Examples: 0.1, 0.5, 1.25, 2.5\n\n"
+                    f"Stake range: {STAKE_MIN} - {STAKE_MAX} SOL",
+                    parse_mode="HTML"
+                )
             return
 
     # Check if it's a Solana wallet address (32-44 chars, alphanumeric)
