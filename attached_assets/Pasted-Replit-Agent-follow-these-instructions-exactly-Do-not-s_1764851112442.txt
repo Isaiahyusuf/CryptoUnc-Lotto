@@ -1,0 +1,137 @@
+Replit Agent, follow these instructions exactly. Do not skip any step.
+
+⸻
+
+1. Fix the Solana Transaction Error
+
+The bot is currently crashing with the error shown in the screenshot:
+
+“AttributeError: ‘solders.transaction.Transaction’ object has no attribute ‘recent_blockhash’.”
+
+This comes from the send-transaction process using the wrong transaction fields for the version of the Solana library installed.
+
+You must:
+	•	Update all transaction creation and sending logic to match the correct, modern Solana transaction format.
+	•	Remove any usage of recent_blockhash on the solders Transaction object.
+	•	Replace it with the correct field/method required by the installed Solana library.
+	•	Ensure client.send_transaction() works without throwing attribute errors.
+	•	Make sure every SOL payment (stake, refunds, payouts) succeeds reliably.
+
+This error MUST be fully fixed before anything else.
+
+⸻
+
+2. Request and Validate All Required Environment Variables
+
+The bot must require and verify all secrets/environment variables needed to run.
+The agent must check and ensure the following (if any are missing, the agent must request them):
+	•	The bot token for Telegram.
+	•	The Solana RPC URL.
+	•	The bot’s Solana private key (as a JSON array or base58 string depending on the current code format).
+	•	Any database URLs or keys (PostgreSQL, SQLite path, or whatever is used).
+	•	Any other secrets already referenced in the bot code.
+
+If the project uses additional environment variables for rounds, scheduling, or payouts, the agent must ask for those too.
+
+The bot must refuse to start if mandatory secrets are missing.
+
+⸻
+
+3. Remove Wallet-Connect Functionality
+
+Delete all code that asks players to connect their personal wallets.
+Players DO NOT connect any wallet.
+The bot uses only the bot’s wallet for:
+	•	Receiving stakes
+	•	Refunding players
+	•	Paying winners
+	•	Carrying the pot forward
+
+Keep all other bot structures intact.
+
+⸻
+
+4. Number System Update
+
+Update the lottery rules:
+	•	Players select 5 unique numbers from 1–40.
+	•	The bot secretly generates 5 winning numbers for each round, also from 1–40.
+	•	Only the bot knows these numbers until the round ends.
+
+Any player who matches all 5 numbers wins the entire pot.
+
+⸻
+
+5. Daily Round Structure
+
+There must be 4 lottery rounds per day.
+All 4 rounds must occur at fixed times, evenly spaced within a 24-hour cycle.
+
+Examples (just logic, not specific times):
+Round 1 → Round 2 → Round 3 → Round 4
+After 24 hours, restart back at Round 1, same fixed daily times.
+
+The time system must be robust and stable so rounds always run automatically.
+
+⸻
+
+6. Stakes and Conditions
+	•	Stake minimum: 0.025 SOL
+	•	Stake maximum: 5 SOL
+	•	The bot must show these limits to all players before they join a round.
+	•	Stakes are not grouped or categorized — all players enter the same round regardless of amount.
+
+A round needs at least 10 players to start.
+If fewer than 10 join within 30 minutes, the bot:
+	1.	Cancels the round
+	2.	Refunds every player automatically
+	3.	Resets and waits for the next scheduled round
+
+⸻
+
+7. Jackpot (Pot) Logic
+
+The jackpot system must behave like this:
+	•	All stakes in a round form the pot.
+	•	If someone wins:
+	•	The bot pays the entire pot to the winner
+	•	The pot resets to zero
+	•	If nobody wins:
+	•	The bot takes 20% team fee from that round’s stakes
+	•	The remaining 80% is carried into the next round
+	•	The pot continues to grow forever until there is a winner
+	•	This must accumulate across days with no limit
+
+Before each round, the bot must show players the current pot size, including any rolled-over amount.
+
+⸻
+
+8. Keep All Existing Structures Intact
+
+Do not rewrite or redesign the bot’s architecture.
+Only update the parts that I requested:
+	•	Fix the Solana transaction system
+	•	Modify number rules
+	•	Modify stake rules
+	•	Implement pot carryover with 20% deduction
+	•	Fix round schedule
+	•	Remove wallet-connect
+	•	Add environment variable checks
+
+Everything else stays the same.
+
+⸻
+
+9. After Implementing All Updates
+
+The agent must verify:
+	•	SOL transactions succeed with no errors
+	•	Rounds trigger exactly on schedule
+	•	Pot carryover works correctly
+	•	Refunds work when fewer than 10 players join
+	•	A correct winner gets the full pot
+	•	Daily cycle restarts properly
+	•	No transaction or attribute errors
+	•	All secrets are present and validated
+And make sure after there is a winner the bot should reset again and start reading from fresh 
+Continously 
