@@ -35,11 +35,10 @@ import json
 # no client-side check can prevent spoofing. The secrets themselves are the
 # real protection layer.
 
-def verify_railway_environment():
+def verify_authorized_environment():
     """
-    Verify that the bot is running on Railway platform.
-    Railway sets specific environment variables that we can check.
-    Requires multiple indicators to be present for additional security.
+    Verify that the bot is running on an authorized platform (Railway or Replit).
+    Checks for platform-specific environment variables.
     """
     # Check for Railway deploy secret (strongest verification)
     deploy_secret = os.getenv("RAILWAY_DEPLOY_SECRET")
@@ -54,6 +53,9 @@ def verify_railway_environment():
             print("=" * 60)
             sys.exit(1)
         print("Deploy secret verified.")
+    
+    # Check for Replit environment
+    is_replit = os.getenv("REPL_ID") or os.getenv("REPLIT_DEPLOYMENT")
     
     # Railway-specific environment indicators
     railway_required = [
@@ -71,29 +73,33 @@ def verify_railway_environment():
     missing_required = [var for var in railway_required if not os.getenv(var)]
     present_optional = [var for var in railway_optional if os.getenv(var)]
     
-    # Must have ALL required vars, OR have deploy secret match
+    # Must have ALL required vars, OR have deploy secret match, OR be on Replit
     is_railway = len(missing_required) == 0 or (deploy_secret and deploy_secret == expected_secret)
+    is_authorized = is_railway or is_replit
     
-    if not is_railway:
+    if not is_authorized:
         print("=" * 60)
         print("UNAUTHORIZED EXECUTION DETECTED")
         print("=" * 60)
         print("")
-        print("This bot is configured to run ONLY on Railway.")
+        print("This bot is configured to run ONLY on Railway or Replit.")
         print("Execution from other platforms is not permitted.")
         print("")
         print("Missing required Railway env vars:", missing_required)
         print("")
-        print("If you are the owner, please deploy this bot to Railway")
+        print("If you are the owner, please deploy this bot to Railway or Replit")
         print("with the proper environment variables configured.")
         print("=" * 60)
         sys.exit(1)
     
-    print(f"Railway environment verified (project: {os.getenv('RAILWAY_PROJECT_ID', 'N/A')[:8]}...)")
+    if is_replit:
+        print(f"Replit environment verified (REPL_ID: {os.getenv('REPL_ID', 'N/A')[:8]}...)")
+    else:
+        print(f"Railway environment verified (project: {os.getenv('RAILWAY_PROJECT_ID', 'N/A')[:8]}...)")
     if present_optional:
         print(f"Additional Railway markers: {', '.join(present_optional)}")
 
-verify_railway_environment()
+verify_authorized_environment()
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command

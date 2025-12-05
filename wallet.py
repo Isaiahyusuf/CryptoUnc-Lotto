@@ -640,7 +640,7 @@ async def send_sol(from_address: str, to_address: str, amount_sol: Decimal, priv
                 )
                 
                 transaction = Transaction([keypair], message, recent_blockhash)
-                result = await client.send_transaction(transaction)
+                result = await client.send_raw_transaction(bytes(transaction))
                 
                 signature = str(result.value)
                 print(f"  Transaction sent! Signature: {signature[:20]}...")
@@ -862,7 +862,7 @@ async def build_unsigned_transaction(sender_address: str, receiver_address: str,
         return {"success": False, "error": str(e)}
 
 
-async def sign_and_send_transaction(message, blockhash, private_key_hex: str, rpc_url: str = None) -> Dict:
+async def sign_and_send_transaction(message, blockhash, private_key_hex: str, rpc_url: Optional[str] = None) -> Dict:
     """
     Sign a transaction message and send it atomically.
     Uses RPC_ENDPOINTS for automatic failover.
@@ -875,7 +875,7 @@ async def sign_and_send_transaction(message, blockhash, private_key_hex: str, rp
         keypair = Keypair.from_bytes(private_key_bytes)
         signed_tx = Transaction([keypair], message, blockhash)
         
-        rpc_list = [rpc_url] + list(RPC_ENDPOINTS) if rpc_url else list(RPC_ENDPOINTS)
+        rpc_list = ([rpc_url] if rpc_url else []) + list(RPC_ENDPOINTS)
         
         last_error = None
         for rpc in rpc_list:
@@ -884,7 +884,7 @@ async def sign_and_send_transaction(message, blockhash, private_key_hex: str, rp
             try:
                 async with AsyncClient(rpc) as client:
                     try:
-                        result = await client.send_transaction(signed_tx)
+                        result = await client.send_raw_transaction(bytes(signed_tx))
                     except Exception as rpc_error:
                         error_msg = str(rpc_error)
                         if "insufficient funds" in error_msg.lower():
