@@ -20,9 +20,70 @@ except ImportError:
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed
 
-# Constants
-SOLANA_RPC = os.getenv("SOLANA_RPC", "https://api.mainnet-beta.solana.com")
+# ==============================================================================
+# SOLANA RPC CONFIGURATION WITH AUTOMATIC FALLBACK
+# ==============================================================================
+# Uses HELIUS_RPC as primary (from Railway secrets) with public RPC as fallback.
+# Automatically switches to fallback if primary RPC has errors.
+# The RPC list always includes all distinct endpoints for reliable failover.
+
+HELIUS_RPC = os.getenv("HELIUS_RPC")
+FALLBACK_RPC = "https://api.mainnet-beta.solana.com"
+LEGACY_RPC = os.getenv("SOLANA_RPC")
+
+# Build the ordered list of RPC endpoints (deduplicated)
+def _build_rpc_list() -> list:
+    """Build ordered list of distinct RPC endpoints for failover."""
+    endpoints = []
+    seen = set()
+    
+    # Priority 1: Helius RPC (if configured)
+    if HELIUS_RPC and HELIUS_RPC not in seen:
+        endpoints.append(HELIUS_RPC)
+        seen.add(HELIUS_RPC)
+    
+    # Priority 2: Legacy SOLANA_RPC (if configured and different)
+    if LEGACY_RPC and LEGACY_RPC not in seen:
+        endpoints.append(LEGACY_RPC)
+        seen.add(LEGACY_RPC)
+    
+    # Priority 3: Public fallback (always included)
+    if FALLBACK_RPC not in seen:
+        endpoints.append(FALLBACK_RPC)
+        seen.add(FALLBACK_RPC)
+    
+    return endpoints
+
+RPC_ENDPOINTS = _build_rpc_list()
+SOLANA_RPC = RPC_ENDPOINTS[0]  # Primary RPC for compatibility
+
 MAX_WALLETS_PER_USER = 3
+
+
+def get_rpc_list() -> list:
+    """
+    Get the ordered list of RPC endpoints for failover.
+    Always returns at least the public fallback RPC.
+    """
+    return RPC_ENDPOINTS.copy()
+
+
+async def get_working_rpc() -> str:
+    """
+    Get a working RPC endpoint, trying each in order until one succeeds.
+    Returns the RPC URL that successfully connects.
+    """
+    for rpc in RPC_ENDPOINTS:
+        try:
+            async with AsyncClient(rpc) as client:
+                response = await client.get_health()
+                if response:
+                    return rpc
+        except Exception as e:
+            print(f"RPC {rpc[:30]}... failed: {e}")
+            continue
+    
+    return FALLBACK_RPC
 
 DB_PATH = "cryptounc_lotto.db"
 
@@ -76,22 +137,31 @@ def init_wallet_db():
 
 async def get_real_balance(wallet_address: str) -> Decimal:
     """
-    Fetch real balance from Solana mainnet
-    Returns balance in SOL
+    Fetch real balance from Solana mainnet using lamports conversion.
+    Uses all configured RPC endpoints with automatic failover.
+    Returns balance in SOL.
     """
-    try:
-        async with AsyncClient(SOLANA_RPC) as client:
-            pubkey = Pubkey.from_string(wallet_address)
-            response = await client.get_balance(pubkey, commitment=Confirmed)
+    last_error = None
+    for rpc in RPC_ENDPOINTS:
+        try:
+            print(f"Checking balance for {wallet_address[:8]}... using RPC: {rpc[:30]}...")
+            async with AsyncClient(rpc) as client:
+                pubkey = Pubkey.from_string(wallet_address)
+                response = await client.get_balance(pubkey, commitment=Confirmed)
 
-            if response.value is not None:
-                lamports = response.value
-                sol_balance = Decimal(lamports) / Decimal(1_000_000_000)
-                return sol_balance
-            return Decimal("0")
-    except Exception as e:
-        print(f"Error fetching balance for {wallet_address}: {e}")
-        return Decimal("0")
+                if response.value is not None:
+                    lamports = response.value
+                    sol_balance = Decimal(lamports) / Decimal(1_000_000_000)
+                    print(f"Balance: {sol_balance} SOL ({lamports} lamports)")
+                    return sol_balance
+                return Decimal("0")
+        except Exception as e:
+            last_error = e
+            print(f"RPC error ({rpc[:30]}...): {e}, trying next endpoint...")
+            continue
+    
+    print(f"Error fetching balance for {wallet_address}: {last_error}")
+    return Decimal("0")
 
 
 def get_user_wallets(user_id: int) -> List[Dict]:
@@ -461,111 +531,136 @@ def get_wallet_private_key(user_id: int, wallet_address: str) -> Optional[str]:
 
 async def estimate_transaction_fee(from_address: str, to_address: str, amount_sol: Decimal) -> Decimal:
     """
-    Estimate the transaction fee for a SOL transfer
-    Returns fee in SOL
-    NOTE: Does not require private key - only estimates the fee for a transfer
+    Estimate the transaction fee for a SOL transfer.
+    Uses all configured RPC endpoints with automatic failover.
+    Returns fee in SOL (typically ~0.00002 SOL for simple transfers).
+    NOTE: Does not require private key - only estimates the fee for a transfer.
     """
-    try:
-        # Convert amount to lamports
-        lamports = int(amount_sol * Decimal(1_000_000_000))
+    # Standard network fee for SOL transfers (includes buffer for network fees)
+    NETWORK_FEE = Decimal("0.00002")
+    
+    for rpc in RPC_ENDPOINTS:
+        try:
+            lamports = int(amount_sol * Decimal(1_000_000_000))
 
-        async with AsyncClient(SOLANA_RPC) as client:
-            # Get recent blockhash
-            recent_blockhash_resp = await client.get_latest_blockhash()
-            recent_blockhash = recent_blockhash_resp.value.blockhash
+            async with AsyncClient(rpc) as client:
+                recent_blockhash_resp = await client.get_latest_blockhash()
+                recent_blockhash = recent_blockhash_resp.value.blockhash
 
-            # Create transfer instruction
-            from_pubkey = Pubkey.from_string(from_address)
-            to_pubkey = Pubkey.from_string(to_address)
+                from_pubkey = Pubkey.from_string(from_address)
+                to_pubkey = Pubkey.from_string(to_address)
 
-            transfer_ix = transfer(
-                TransferParams(
-                    from_pubkey=from_pubkey,
-                    to_pubkey=to_pubkey,
-                    lamports=lamports
+                transfer_ix = transfer(
+                    TransferParams(
+                        from_pubkey=from_pubkey,
+                        to_pubkey=to_pubkey,
+                        lamports=lamports
+                    )
                 )
-            )
 
-            # Create message
-            message = Message.new_with_blockhash(
-                [transfer_ix],
-                from_pubkey,
-                recent_blockhash
-            )
-            
-            # Get fee for message
-            fee_response = await client.get_fee_for_message(message)
-            if fee_response.value is not None:
-                fee_lamports = fee_response.value
-                return Decimal(fee_lamports) / Decimal(1_000_000_000)
-            
-            # Fallback: typical transfer fee is 5000 lamports
-            return Decimal("0.000005")
-    except Exception as e:
-        print(f"Error estimating fee: {e}")
-        # Return typical transfer fee as fallback
-        return Decimal("0.000005")
+                message = Message.new_with_blockhash(
+                    [transfer_ix],
+                    from_pubkey,
+                    recent_blockhash
+                )
+                
+                fee_response = await client.get_fee_for_message(message)
+                if fee_response.value is not None:
+                    fee_lamports = fee_response.value
+                    return Decimal(fee_lamports) / Decimal(1_000_000_000)
+                
+                return NETWORK_FEE
+        except Exception as e:
+            print(f"Fee estimation error ({rpc[:30]}...): {e}, trying fallback...")
+            continue
+    
+    print(f"Using default network fee: {NETWORK_FEE} SOL")
+    return NETWORK_FEE
 
 
 async def send_sol(from_address: str, to_address: str, amount_sol: Decimal, private_key_hex: str) -> Dict:
     """
-    Send SOL from one address to another
-    Returns transaction result dict
+    Send SOL from one address to another.
+    Uses primary RPC with automatic fallback to ensure transaction success.
+    Always fetches latest blockhash right before creating transaction.
+    Returns transaction result dict.
     
     Updated to use correct solders 0.18.x transaction format.
     """
-    try:
-        # Convert amount to lamports
-        lamports = int(amount_sol * Decimal(1_000_000_000))
-
-        # Recreate keypair from private key
-        private_key_bytes = bytes.fromhex(private_key_hex)
-        keypair = Keypair.from_bytes(private_key_bytes)
-
-        async with AsyncClient(SOLANA_RPC) as client:
-            # Get recent blockhash
-            recent_blockhash_resp = await client.get_latest_blockhash()
-            recent_blockhash = recent_blockhash_resp.value.blockhash
-
-            # Create transfer instruction
-            from_pubkey = Pubkey.from_string(from_address)
-            to_pubkey = Pubkey.from_string(to_address)
-
-            transfer_ix = transfer(
-                TransferParams(
-                    from_pubkey=from_pubkey,
-                    to_pubkey=to_pubkey,
-                    lamports=lamports
-                )
-            )
-
-            # Create message with blockhash
-            message = Message.new_with_blockhash(
-                [transfer_ix],
-                from_pubkey,
-                recent_blockhash
-            )
-            
-            # Create signed transaction using correct solders 0.18.x API
-            # The Transaction constructor takes [signers], message, and blockhash
-            transaction = Transaction([keypair], message, recent_blockhash)
-
-            # Send transaction
-            result = await client.send_transaction(transaction)
-
-            return {
-                "success": True,
-                "signature": str(result.value),
-                "amount": float(amount_sol)
-            }
-    except Exception as e:
-        print(f"Error sending SOL: {e}")
-        import traceback
-        traceback.print_exc()
+    # Network fee buffer for transaction
+    NETWORK_FEE = Decimal("0.00002")
+    
+    # Check balance before attempting transaction
+    current_balance = await get_real_balance(from_address)
+    required_amount = amount_sol + NETWORK_FEE
+    
+    print(f"Transaction: {from_address[:8]}... -> {to_address[:8]}...")
+    print(f"  Amount: {amount_sol} SOL + {NETWORK_FEE} SOL fee = {required_amount} SOL required")
+    print(f"  Current balance: {current_balance} SOL")
+    
+    if current_balance < required_amount:
+        error_msg = f"Insufficient balance. Have {current_balance} SOL, need {required_amount} SOL (including ~{NETWORK_FEE} SOL network fee)"
+        print(f"  ERROR: {error_msg}")
         return {
             "success": False,
-            "error": str(e)
+            "error": error_msg
         }
+    
+    last_error = None
+    for rpc in RPC_ENDPOINTS:
+        try:
+            lamports = int(amount_sol * Decimal(1_000_000_000))
+            private_key_bytes = bytes.fromhex(private_key_hex)
+            keypair = Keypair.from_bytes(private_key_bytes)
+
+            print(f"  Using RPC: {rpc[:30]}...")
+            
+            async with AsyncClient(rpc) as client:
+                recent_blockhash_resp = await client.get_latest_blockhash()
+                recent_blockhash = recent_blockhash_resp.value.blockhash
+                print(f"  Latest blockhash: {str(recent_blockhash)[:20]}...")
+
+                from_pubkey = Pubkey.from_string(from_address)
+                to_pubkey = Pubkey.from_string(to_address)
+
+                transfer_ix = transfer(
+                    TransferParams(
+                        from_pubkey=from_pubkey,
+                        to_pubkey=to_pubkey,
+                        lamports=lamports
+                    )
+                )
+
+                message = Message.new_with_blockhash(
+                    [transfer_ix],
+                    from_pubkey,
+                    recent_blockhash
+                )
+                
+                transaction = Transaction([keypair], message, recent_blockhash)
+                result = await client.send_transaction(transaction)
+                
+                signature = str(result.value)
+                print(f"  Transaction sent! Signature: {signature[:20]}...")
+
+                return {
+                    "success": True,
+                    "signature": signature,
+                    "amount": float(amount_sol),
+                    "rpc_used": rpc[:30]
+                }
+        except Exception as e:
+            last_error = e
+            print(f"  RPC error ({rpc[:30]}...): {e}, trying fallback...")
+            continue
+    
+    print(f"Error sending SOL after all RPC attempts: {last_error}")
+    import traceback
+    traceback.print_exc()
+    return {
+        "success": False,
+        "error": str(last_error)
+    }
 
 
 def delete_wallet(user_id: int, wallet_address: str) -> bool:

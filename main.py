@@ -1,6 +1,7 @@
 # Main.py — CryptoUnc Lotto with Real Solana Wallet Integration
 
 import os
+import sys
 import asyncio
 import hashlib
 import time
@@ -11,6 +12,88 @@ from datetime import datetime, timedelta
 import pytz
 import secrets
 import json
+
+# ==============================================================================
+# RAILWAY-ONLY EXECUTION RESTRICTION
+# ==============================================================================
+# This bot is restricted to run ONLY on Railway platform.
+# Running on any other platform will immediately exit.
+# This prevents unauthorized instances from operating.
+#
+# SECURITY MODEL:
+# This check verifies Railway-specific environment variables automatically set
+# by Railway's runtime. While env vars can technically be spoofed by someone
+# with source code access, the TRUE security comes from:
+# 1. BOT_TOKEN and OWNER_WALLET_PRIVATE_KEY are stored ONLY in Railway secrets
+# 2. The source code is in a private repository
+# 3. This check prevents accidental execution and casual unauthorized runs
+#
+# For maximum security, set RAILWAY_DEPLOY_SECRET in Railway and
+# EXPECTED_DEPLOY_SECRET to match - this adds shared secret verification.
+# 
+# NOTE: If an attacker has access to both the code AND all Railway secrets,
+# no client-side check can prevent spoofing. The secrets themselves are the
+# real protection layer.
+
+def verify_railway_environment():
+    """
+    Verify that the bot is running on Railway platform.
+    Railway sets specific environment variables that we can check.
+    Requires multiple indicators to be present for additional security.
+    """
+    # Check for Railway deploy secret (strongest verification)
+    deploy_secret = os.getenv("RAILWAY_DEPLOY_SECRET")
+    expected_secret = os.getenv("EXPECTED_DEPLOY_SECRET")
+    
+    if deploy_secret and expected_secret:
+        if deploy_secret != expected_secret:
+            print("=" * 60)
+            print("UNAUTHORIZED DEPLOYMENT DETECTED")
+            print("=" * 60)
+            print("Deploy secret mismatch - this is not an authorized instance.")
+            print("=" * 60)
+            sys.exit(1)
+        print("Deploy secret verified.")
+    
+    # Railway-specific environment indicators
+    railway_required = [
+        "RAILWAY_ENVIRONMENT",
+        "RAILWAY_PROJECT_ID",
+    ]
+    
+    railway_optional = [
+        "RAILWAY_SERVICE_ID",
+        "RAILWAY_STATIC_URL",
+        "RAILWAY_PUBLIC_DOMAIN",
+    ]
+    
+    # Require at least the main Railway indicators
+    missing_required = [var for var in railway_required if not os.getenv(var)]
+    present_optional = [var for var in railway_optional if os.getenv(var)]
+    
+    # Must have ALL required vars, OR have deploy secret match
+    is_railway = len(missing_required) == 0 or (deploy_secret and deploy_secret == expected_secret)
+    
+    if not is_railway:
+        print("=" * 60)
+        print("UNAUTHORIZED EXECUTION DETECTED")
+        print("=" * 60)
+        print("")
+        print("This bot is configured to run ONLY on Railway.")
+        print("Execution from other platforms is not permitted.")
+        print("")
+        print("Missing required Railway env vars:", missing_required)
+        print("")
+        print("If you are the owner, please deploy this bot to Railway")
+        print("with the proper environment variables configured.")
+        print("=" * 60)
+        sys.exit(1)
+    
+    print(f"Railway environment verified (project: {os.getenv('RAILWAY_PROJECT_ID', 'N/A')[:8]}...)")
+    if present_optional:
+        print(f"Additional Railway markers: {', '.join(present_optional)}")
+
+verify_railway_environment()
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
@@ -259,9 +342,10 @@ def validate_environment():
     if not os.getenv("OWNER_WALLET_PRIVATE_KEY"):
         missing.append("OWNER_WALLET_PRIVATE_KEY - Bot's Solana wallet private key (hex or JSON array)")
     
-    # Check SOLANA_RPC
-    if not os.getenv("SOLANA_RPC"):
-        missing.append("SOLANA_RPC - Solana RPC endpoint URL (e.g., https://api.mainnet-beta.solana.com)")
+    # Check HELIUS_RPC (primary) or SOLANA_RPC (legacy)
+    if not os.getenv("HELIUS_RPC") and not os.getenv("SOLANA_RPC"):
+        warnings.append("HELIUS_RPC - Primary Helius RPC endpoint (recommended for reliability)")
+        print("ℹ️ Using fallback RPC: https://api.mainnet-beta.solana.com")
     
     # Check ENCRYPTION_KEY (for wallet encryption)
     if not os.getenv("ENCRYPTION_KEY"):
@@ -326,10 +410,25 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 OWNER_WALLET = os.getenv("OWNER_WALLET")
 OWNER_WALLET_PRIVATE_KEY = os.getenv("OWNER_WALLET_PRIVATE_KEY")
 TEAM_WALLET = os.getenv("TEAM_WALLET")  # Optional - if not set, all goes to owner wallet
-SOLANA_RPC = os.getenv("SOLANA_RPC", "https://api.mainnet-beta.solana.com")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 ROUND_CHANNEL = os.getenv("ROUND_CHANNEL_ID", "@cryptounclottoportal")
 ANNOUNCEMENTS_GROUP = os.getenv("ANNOUNCEMENTS_GROUP_ID")  # Optional group for additional announcements
+
+# ==============================================================================
+# SOLANA RPC CONFIGURATION
+# ==============================================================================
+# Uses HELIUS_RPC as primary (from Railway secrets) with public RPC as fallback.
+# The fallback ensures the bot continues working even if Helius has issues.
+
+HELIUS_RPC = os.getenv("HELIUS_RPC")
+FALLBACK_RPC = "https://api.mainnet-beta.solana.com"
+SOLANA_RPC = HELIUS_RPC if HELIUS_RPC else os.getenv("SOLANA_RPC", FALLBACK_RPC)
+
+if HELIUS_RPC:
+    print(f"✅ Primary RPC: Helius (configured)")
+    print(f"   Fallback RPC: {FALLBACK_RPC}")
+else:
+    print(f"⚠️ No HELIUS_RPC configured, using: {SOLANA_RPC}")
 
 # ==============================================================================
 # LOTTERY CONFIGURATION
