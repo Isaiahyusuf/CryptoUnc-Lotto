@@ -58,7 +58,7 @@ def encrypt_private_key(private_key_hex: str) -> str:
         raise RuntimeError(f"Failed to encrypt private key: {str(e)}")
 
 
-def _get_legacy_encryption_key() -> bytes:
+def _get_legacy_encryption_key() -> bytes | None:
     """
     Get the OLD encryption key (BOT_TOKEN-derived salt) for migration
     This is needed to decrypt keys created before the salt was fixed

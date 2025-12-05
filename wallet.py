@@ -471,15 +471,16 @@ def _migrate_plaintext_key(user_id: int, wallet_address: str, plaintext_key: str
 
 def get_wallet_private_key(user_id: int, wallet_address: str) -> Optional[str]:
     """
-    Get DECRYPTED private key for a bot-managed wallet
-    Automatically migrates plaintext keys AND legacy-encrypted keys to new encryption
-    Returns the decrypted hex private key, or None if not found/not bot wallet
+    Get DECRYPTED private key for a bot-managed or imported wallet.
+    Supports both 'bot' and 'imported' wallet types.
+    Automatically migrates plaintext keys AND legacy-encrypted keys to new encryption.
+    Returns the decrypted hex private key, or None if not found or no private key stored.
     """
     conn = get_db_conn()
     c = conn.cursor()
     c.execute("""
-        SELECT private_key FROM wallets 
-        WHERE user_id = ? AND wallet_address = ? AND wallet_type = 'bot'
+        SELECT private_key, wallet_type FROM wallets 
+        WHERE user_id = ? AND wallet_address = ? AND wallet_type IN ('bot', 'imported')
     """, (user_id, wallet_address))
     row = c.fetchone()
     conn.close()
@@ -488,45 +489,46 @@ def get_wallet_private_key(user_id: int, wallet_address: str) -> Optional[str]:
         return None
     
     stored_key = row[0]
+    wallet_type = row[1]
     
     # Check if this is a plaintext hex key (legacy format)
     if _is_hex_string(stored_key):
         print(f"⚠️ Detected plaintext key for {wallet_address[:8]}..., migrating to encrypted format")
-        # Migrate to encrypted format
-        if _migrate_plaintext_key(user_id, wallet_address, stored_key):
-            # Return the plaintext key (it's now encrypted in DB)
+        if _migrate_plaintext_key_any_type(user_id, wallet_address, stored_key, wallet_type):
             return stored_key
         else:
-            # Migration failed, but return the key anyway for this transaction
             return stored_key
     
     # It's an encrypted key, decrypt it
     try:
-        # Decrypt (will try new salt, then legacy salt)
         decrypted_key = decrypt_private_key(stored_key)
-        
-        # Check if it was decrypted with legacy salt (encryption module logs this)
-        # If so, re-encrypt with new salt
-        try:
-            # Try decrypting with new salt to check if migration needed
-            from encryption import _get_encryption_key
-            from cryptography.fernet import Fernet
-            import base64
-            
-            key = _get_encryption_key()
-            fernet = Fernet(key)
-            encrypted_bytes = base64.b64decode(stored_key.encode('utf-8'))
-            fernet.decrypt(encrypted_bytes)  # If this works, already using new salt
-        except Exception:
-            # Decryption with new salt failed, so it's using legacy salt
-            # Re-encrypt with new salt
-            print(f"🔄 Re-encrypting legacy key for {wallet_address[:8]}... with new stable salt")
-            _migrate_plaintext_key(user_id, wallet_address, decrypted_key)
-        
         return decrypted_key
     except Exception as e:
         print(f"Error decrypting private key: {e}")
         return None
+
+
+def _migrate_plaintext_key_any_type(user_id: int, wallet_address: str, plaintext_key: str, wallet_type: str) -> bool:
+    """
+    Migrate a plaintext private key to encrypted format for any wallet type.
+    Returns True if migration successful.
+    """
+    try:
+        encrypted_key = encrypt_private_key(plaintext_key)
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("""
+            UPDATE wallets 
+            SET private_key = ? 
+            WHERE user_id = ? AND wallet_address = ? AND wallet_type = ?
+        """, (encrypted_key, user_id, wallet_address, wallet_type))
+        conn.commit()
+        conn.close()
+        print(f"✅ Migrated plaintext key to encrypted for {wallet_type} wallet {wallet_address[:8]}...")
+        return True
+    except Exception as e:
+        print(f"❌ Failed to migrate key for wallet {wallet_address[:8]}: {e}")
+        return False
 
 
 async def estimate_transaction_fee(from_address: str, to_address: str, amount_sol: Decimal) -> Decimal:
@@ -793,150 +795,137 @@ def has_user_pin(user_id: int) -> bool:
 async def build_unsigned_transaction(sender_address: str, receiver_address: str, amount_sol: Decimal) -> Dict:
     """
     Build an UNSIGNED Solana SOL transfer transaction.
-    
-    This creates the message and instructions but does NOT sign.
-    Use sign_and_send_transaction() to sign and send atomically.
-    
-    Args:
-        sender_address: The sender's Solana wallet address (public key)
-        receiver_address: The recipient's Solana wallet address
-        amount_sol: Amount of SOL to transfer
-    
-    Returns:
-        Dict with 'success', 'message', 'blockhash', 'sender_pubkey', 'lamports' or 'error'
+    Uses RPC_ENDPOINTS for automatic failover.
     """
     try:
-        # Validate amount
         if amount_sol <= Decimal("0"):
             return {"success": False, "error": "Amount must be greater than 0"}
         
-        # Convert amount to lamports
         lamports = int(amount_sol * Decimal(1_000_000_000))
-        
-        # Parse sender and receiver addresses
         sender_pubkey = Pubkey.from_string(sender_address)
         to_pubkey = Pubkey.from_string(receiver_address)
         
-        async with AsyncClient(SOLANA_RPC) as client:
-            # Validate sender has sufficient balance
-            balance_resp = await client.get_balance(sender_pubkey, commitment=Confirmed)
-            if balance_resp.value is None:
-                return {"success": False, "error": "Could not fetch sender balance"}
-            
-            balance_lamports = balance_resp.value
-            estimated_fee = 5000  # Typical Solana transfer fee
-            
-            if balance_lamports < lamports + estimated_fee:
-                return {
-                    "success": False, 
-                    "error": f"Insufficient balance. Have: {balance_lamports/1e9:.6f} SOL, Need: {(lamports + estimated_fee)/1e9:.6f} SOL"
-                }
-            
-            # Get recent blockhash
-            recent_blockhash_resp = await client.get_latest_blockhash()
-            recent_blockhash = recent_blockhash_resp.value.blockhash
-            
-            # Create transfer instruction
-            transfer_ix = transfer(
-                TransferParams(
-                    from_pubkey=sender_pubkey,
-                    to_pubkey=to_pubkey,
-                    lamports=lamports
-                )
-            )
-            
-            # Create UNSIGNED message with blockhash
-            message = Message.new_with_blockhash(
-                [transfer_ix],
-                sender_pubkey,
-                recent_blockhash
-            )
-            
-            return {
-                "success": True,
-                "message": message,
-                "blockhash": recent_blockhash,
-                "sender_pubkey": sender_pubkey,
-                "receiver": receiver_address,
-                "amount_lamports": lamports
-            }
+        last_error = None
+        for rpc in RPC_ENDPOINTS:
+            try:
+                async with AsyncClient(rpc) as client:
+                    balance_resp = await client.get_balance(sender_pubkey, commitment=Confirmed)
+                    if balance_resp.value is None:
+                        continue
+                    
+                    balance_lamports = balance_resp.value
+                    estimated_fee = 20000
+                    
+                    if balance_lamports < lamports + estimated_fee:
+                        return {
+                            "success": False, 
+                            "error": f"Insufficient balance. Have: {balance_lamports/1e9:.6f} SOL, Need: {(lamports + estimated_fee)/1e9:.6f} SOL"
+                        }
+                    
+                    recent_blockhash_resp = await client.get_latest_blockhash()
+                    recent_blockhash = recent_blockhash_resp.value.blockhash
+                    
+                    transfer_ix = transfer(
+                        TransferParams(
+                            from_pubkey=sender_pubkey,
+                            to_pubkey=to_pubkey,
+                            lamports=lamports
+                        )
+                    )
+                    
+                    message = Message.new_with_blockhash(
+                        [transfer_ix],
+                        sender_pubkey,
+                        recent_blockhash
+                    )
+                    
+                    return {
+                        "success": True,
+                        "message": message,
+                        "blockhash": recent_blockhash,
+                        "sender_pubkey": sender_pubkey,
+                        "receiver": receiver_address,
+                        "amount_lamports": lamports,
+                        "rpc_used": rpc
+                    }
+            except Exception as e:
+                last_error = e
+                print(f"Build tx RPC error ({rpc[:30]}...): {e}")
+                continue
+        
+        return {"success": False, "error": str(last_error) if last_error else "All RPC endpoints failed"}
             
     except Exception as e:
         print(f"Error building unsigned transaction: {e}")
         import traceback
         traceback.print_exc()
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return {"success": False, "error": str(e)}
 
 
-async def sign_and_send_transaction(message, blockhash, private_key_hex: str) -> Dict:
+async def sign_and_send_transaction(message, blockhash, private_key_hex: str, rpc_url: str = None) -> Dict:
     """
     Sign a transaction message and send it atomically.
-    
-    This function signs the message ONCE and sends immediately.
-    Signing and sending are done atomically to prevent double-signing.
-    
-    Args:
-        message: The unsigned transaction message from build_unsigned_transaction
-        blockhash: The recent blockhash used in the message
-        private_key_hex: The private key in hex format (128 chars)
-    
-    Returns:
-        Dict with 'success', 'signature', 'confirmed' or 'error'
+    Uses RPC_ENDPOINTS for automatic failover.
     """
     try:
-        # Validate private key format
         if not private_key_hex or len(private_key_hex) != 128:
             return {"success": False, "error": "Invalid private key format"}
         
-        # Recreate keypair from private key
         private_key_bytes = bytes.fromhex(private_key_hex)
         keypair = Keypair.from_bytes(private_key_bytes)
-        
-        # Create signed transaction ONCE using correct solders 0.18.x API
         signed_tx = Transaction([keypair], message, blockhash)
         
-        async with AsyncClient(SOLANA_RPC) as client:
-            # Send the transaction
+        rpc_list = [rpc_url] + list(RPC_ENDPOINTS) if rpc_url else list(RPC_ENDPOINTS)
+        
+        last_error = None
+        for rpc in rpc_list:
+            if not rpc:
+                continue
             try:
-                result = await client.send_transaction(signed_tx)
-            except Exception as rpc_error:
-                error_msg = str(rpc_error)
-                if "insufficient funds" in error_msg.lower():
-                    return {"success": False, "error": "Insufficient funds for transaction"}
-                elif "blockhash" in error_msg.lower():
-                    return {"success": False, "error": "Blockhash expired, please retry"}
-                else:
-                    return {"success": False, "error": f"RPC error: {error_msg}"}
-            
-            signature = str(result.value)
-            
-            # Wait for confirmation (up to 30 seconds)
-            confirmed = False
-            for attempt in range(30):
-                await asyncio.sleep(1)
-                try:
-                    status = await client.get_signature_statuses([result.value])
-                    if status.value and status.value[0]:
-                        if status.value[0].confirmation_status:
-                            confirmed = True
-                            break
-                        if status.value[0].err:
-                            return {
-                                "success": False,
-                                "error": f"Transaction failed: {status.value[0].err}",
-                                "signature": signature
-                            }
-                except Exception:
-                    pass
-            
-            return {
-                "success": True,
-                "signature": signature,
-                "confirmed": confirmed
-            }
+                async with AsyncClient(rpc) as client:
+                    try:
+                        result = await client.send_transaction(signed_tx)
+                    except Exception as rpc_error:
+                        error_msg = str(rpc_error)
+                        if "insufficient funds" in error_msg.lower():
+                            return {"success": False, "error": "Insufficient funds for transaction"}
+                        elif "blockhash" in error_msg.lower():
+                            return {"success": False, "error": "Blockhash expired, please retry"}
+                        else:
+                            last_error = error_msg
+                            continue
+                    
+                    signature = str(result.value)
+                    
+                    confirmed = False
+                    for attempt in range(15):
+                        await asyncio.sleep(1)
+                        try:
+                            status = await client.get_signature_statuses([result.value])
+                            if status.value and status.value[0]:
+                                if status.value[0].confirmation_status:
+                                    confirmed = True
+                                    break
+                                if status.value[0].err:
+                                    return {
+                                        "success": False,
+                                        "error": f"Transaction failed: {status.value[0].err}",
+                                        "signature": signature
+                                    }
+                        except Exception:
+                            pass
+                    
+                    return {
+                        "success": True,
+                        "signature": signature,
+                        "confirmed": confirmed
+                    }
+            except Exception as e:
+                last_error = str(e)
+                print(f"Sign/send RPC error ({rpc[:30]}...): {e}")
+                continue
+        
+        return {"success": False, "error": f"All RPC endpoints failed: {last_error}"}
             
     except ValueError as ve:
         return {"success": False, "error": f"Invalid key format: {ve}"}
@@ -944,10 +933,7 @@ async def sign_and_send_transaction(message, blockhash, private_key_hex: str) ->
         print(f"Error signing and sending transaction: {e}")
         import traceback
         traceback.print_exc()
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return {"success": False, "error": str(e)}
 
 
 async def execute_automatic_transfer(sender_private_key_hex: str, receiver_address: str, amount_sol: Decimal) -> Dict:
@@ -991,10 +977,12 @@ async def execute_automatic_transfer(sender_private_key_hex: str, receiver_addre
             return {"success": False, "error": build_result.get("error", "Build failed")}
         
         # Step 2: Sign and send atomically (single signing)
+        # Use the same RPC endpoint that was used to build the transaction
         send_result = await sign_and_send_transaction(
             build_result["message"],
             build_result["blockhash"],
-            sender_private_key_hex
+            sender_private_key_hex,
+            build_result.get("rpc_used")
         )
         if not send_result.get("success"):
             return {"success": False, "error": send_result.get("error", "Send failed")}
