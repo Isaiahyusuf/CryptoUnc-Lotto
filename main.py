@@ -293,6 +293,10 @@ def validate_environment():
     if not os.getenv("SUPPORT_USERNAME"):
         warnings.append("SUPPORT_USERNAME - Telegram username for support contact")
     
+    # Check ANNOUNCEMENTS_GROUP_ID (optional)
+    if not os.getenv("ANNOUNCEMENTS_GROUP_ID"):
+        warnings.append("ANNOUNCEMENTS_GROUP_ID - Telegram group ID for additional round announcements (e.g., -100123456789)")
+    
     # Print warnings for optional secrets
     if warnings:
         print("\n" + "-"*60)
@@ -325,6 +329,7 @@ TEAM_WALLET = os.getenv("TEAM_WALLET")  # Optional - if not set, all goes to own
 SOLANA_RPC = os.getenv("SOLANA_RPC", "https://api.mainnet-beta.solana.com")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 ROUND_CHANNEL = os.getenv("ROUND_CHANNEL_ID", "@cryptounclottoportal")
+ANNOUNCEMENTS_GROUP = os.getenv("ANNOUNCEMENTS_GROUP_ID")  # Optional group for additional announcements
 
 # ==============================================================================
 # LOTTERY CONFIGURATION
@@ -3322,7 +3327,7 @@ async def process_round_end(round_id: int):
 
 
 async def announce_draw_result(round_id: int, result: dict):
-    """Announce the draw results to the channel"""
+    """Announce the draw results to the channel and announcements group"""
     try:
         winning_nums = result['winning_numbers']
         player_count = result['player_count']
@@ -3339,8 +3344,7 @@ async def announce_draw_result(round_id: int, result: dict):
             winner_name = user_row[0] if user_row and user_row[0] else f"User {winner_id}"
             conn.close()
             
-            await bot.send_message(
-                ROUND_CHANNEL,
+            message_text = (
                 f"🎉🎉🎉 <b>JACKPOT WINNER!!!</b> 🎉🎉🎉\n\n"
                 f"🎰 Round: {round_id}\n"
                 f"👥 Players: {player_count}\n\n"
@@ -3349,15 +3353,15 @@ async def announce_draw_result(round_id: int, result: dict):
                 f"💰 JACKPOT: <b>{prize} SOL</b>\n\n"
                 f"Someone matched ALL 5 numbers and won the ENTIRE POT!\n"
                 f"The pot has been reset to 0. A new jackpot starts now!\n\n"
-                f"🍀 Congratulations!!! 🍀",
-                parse_mode="HTML"
+                f"🍀 Congratulations!!! 🍀"
             )
+            
+            await send_to_announcements(message_text)
         else:
             new_pot = result['new_pot']
             team_fee = result['team_fee']
             
-            await bot.send_message(
-                ROUND_CHANNEL,
+            message_text = (
                 f"📊 <b>Round {round_id} Results</b>\n\n"
                 f"👥 Players: {player_count}\n"
                 f"🎲 Winning Numbers: <b>{', '.join(map(str, winning_nums))}</b>\n\n"
@@ -3365,9 +3369,10 @@ async def announce_draw_result(round_id: int, result: dict):
                 f"💼 Team fee (20%): {team_fee} SOL\n"
                 f"💰 Carryover (80%): Added to pot\n\n"
                 f"🏆 <b>Current Jackpot: {new_pot} SOL</b>\n\n"
-                f"The pot keeps growing! Join the next round for a chance to win it all!",
-                parse_mode="HTML"
+                f"The pot keeps growing! Join the next round for a chance to win it all!"
             )
+            
+            await send_to_announcements(message_text)
     except Exception as e:
         print(f"❌ Draw result announcement error: {e}")
 
@@ -3429,21 +3434,37 @@ async def pay_team_fee(result: dict):
         print(f"❌ Team fee payment error: {e}")
 
 
+async def send_to_announcements(message_text: str, keyboard=None):
+    """Helper function to send announcements to both channel and group"""
+    targets = [ROUND_CHANNEL]
+    if ANNOUNCEMENTS_GROUP:
+        targets.append(ANNOUNCEMENTS_GROUP)
+    
+    for target in targets:
+        try:
+            if keyboard:
+                await bot.send_message(target, message_text, reply_markup=keyboard, parse_mode="HTML")
+            else:
+                await bot.send_message(target, message_text, parse_mode="HTML")
+        except Exception as e:
+            print(f"❌ Failed to send announcement to {target}: {e}")
+
+
 async def announce_round_cancelled(round_id: int, player_count: int, refund_count: int):
     """Announce when a round is cancelled due to insufficient players"""
     try:
         current_pot = get_current_pot()
         
-        await bot.send_message(
-            ROUND_CHANNEL,
+        message_text = (
             f"⚠️ <b>Round {round_id} Cancelled</b>\n\n"
             f"👥 Players: {player_count}/{MIN_PLAYERS_TO_DRAW}\n"
             f"❌ Not enough players to start the draw.\n"
             f"✅ All {refund_count} participants have been refunded.\n\n"
             f"💰 <b>Current Jackpot: {current_pot} SOL</b>\n\n"
-            f"Join the next round for a chance to win!",
-            parse_mode="HTML"
+            f"Join the next round for a chance to win!"
         )
+        
+        await send_to_announcements(message_text)
     except Exception as e:
         print(f"❌ Round cancelled announcement error: {e}")
 
@@ -3470,8 +3491,7 @@ async def announce_round_opened(round_id: int):
             [InlineKeyboardButton(text="🔄 Refresh", callback_data=f"check_round_{round_id}")]
         ])
         
-        await bot.send_message(
-            ROUND_CHANNEL,
+        message_text = (
             f"🎰 <b>Round {round_id} is NOW OPEN!</b>\n\n"
             f"🏆 <b>Current Jackpot: {current_pot} SOL</b>\n\n"
             f"📋 <b>Rules:</b>\n"
@@ -3481,10 +3501,10 @@ async def announce_round_opened(round_id: int):
             f"💰 <b>Stakes:</b> {STAKE_MIN} - {STAKE_MAX} SOL\n"
             f"👥 <b>Min players:</b> {MIN_PLAYERS_TO_DRAW}\n"
             f"⏰ <b>Timeout:</b> {JOIN_TIMEOUT_MINUTES} minutes\n\n"
-            f"Join now for a chance to win the jackpot!",
-            reply_markup=keyboard,
-            parse_mode="HTML"
+            f"Join now for a chance to win the jackpot!"
         )
+        
+        await send_to_announcements(message_text, keyboard)
     except Exception as e:
         print(f"❌ Announcement error: {e}")
 
@@ -3503,8 +3523,7 @@ async def announce_winner(round_id: int, stake_amount: float, result: dict):
         winner_name = user_row[0] if user_row and user_row[0] else f"User {winner_id}"
         conn.close()
         
-        await bot.send_message(
-            ROUND_CHANNEL,
+        message_text = (
             f"🏆 <b>WINNER ANNOUNCEMENT!</b>\n\n"
             f"🎰 Round: {round_id}\n"
             f"💰 Stake: {stake_amount} SOL\n"
@@ -3512,9 +3531,10 @@ async def announce_winner(round_id: int, stake_amount: float, result: dict):
             f"🎲 Winning Numbers: {', '.join(map(str, winning_nums))}\n\n"
             f"🥇 Winner: @{winner_name}\n"
             f"💵 Prize: <b>{prize} SOL</b>\n\n"
-            f"Congratulations! 🎉",
-            parse_mode="HTML"
+            f"Congratulations! 🎉"
         )
+        
+        await send_to_announcements(message_text)
     except Exception as e:
         print(f"❌ Winner announcement error: {e}")
 
@@ -3522,16 +3542,16 @@ async def announce_winner(round_id: int, stake_amount: float, result: dict):
 async def announce_refunds(round_id: int, stake_amount: float, refund_count: int):
     try:
         if refund_count > 0:
-            await bot.send_message(
-                ROUND_CHANNEL,
+            message_text = (
                 f"💸 <b>Refund Processed</b>\n\n"
                 f"🎰 Round: {round_id}\n"
                 f"💰 Stake: {stake_amount} SOL\n"
                 f"👥 Participants: {refund_count}\n\n"
                 f"❌ Minimum players not met ({MIN_PLAYERS_PER_STAKE} required)\n"
-                f"✅ All participants refunded (minus {float(NETWORK_FEE_PERCENTAGE * 100)}% network fee)",
-                parse_mode="HTML"
+                f"✅ All participants refunded (minus {float(NETWORK_FEE_PERCENTAGE * 100)}% network fee)"
             )
+            
+            await send_to_announcements(message_text)
     except Exception as e:
         print(f"❌ Refund announcement error: {e}")
 
@@ -3603,7 +3623,8 @@ def audit_configuration():
     
     optional_secrets = {
         'TEAM_WALLET': 'Team Wallet Address (defaults to OWNER_WALLET)',
-        'SUPPORT_USERNAME': 'Support Contact Username'
+        'SUPPORT_USERNAME': 'Support Contact Username',
+        'ANNOUNCEMENTS_GROUP_ID': 'Additional Telegram Group ID for round announcements'
     }
     
     missing_required = []
