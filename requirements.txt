@@ -8,3 +8,13 @@ aiohttp==3.9.1
 python-dotenv==1.0.0
 cryptography==41.0.7
 pytz
+aiogram
+aiohttp
+base58
+construct
+cryptography
+python-dotenv
+pytz
+requests
+solana
+solders
