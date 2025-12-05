@@ -219,7 +219,27 @@ Preferred communication style: Simple, everyday language.
 
 ### Recent Changes (December 5, 2025)
 
-**Announcements Group Feature (NEW):**
+**Railway-Only Execution Restriction (NEW):**
+- Bot now verifies it's running on Railway platform before starting
+- Checks for RAILWAY_ENVIRONMENT and RAILWAY_PROJECT_ID environment variables
+- Optional RAILWAY_DEPLOY_SECRET / EXPECTED_DEPLOY_SECRET for additional verification
+- Exits with clear error message if not running on authorized Railway instance
+- Security model documented in main.py header comments
+
+**Helius RPC with Automatic Fallback (NEW):**
+- Added HELIUS_RPC environment variable for primary Helius RPC endpoint
+- Automatic fallback to public mainnet RPC (https://api.mainnet-beta.solana.com)
+- RPC_ENDPOINTS list built with deduplication for reliable failover
+- All wallet functions (get_real_balance, estimate_transaction_fee, send_sol) use consistent failover
+- Enhanced logging for RPC endpoint usage and balance checking
+
+**Enhanced Transaction Processing:**
+- Balance check before every transaction includes network fee buffer (~0.00002 SOL)
+- Latest blockhash fetched right before creating each transaction
+- Comprehensive logging: wallet address, balance, amount, RPC endpoint used
+- Transaction signature logged on success
+
+**Announcements Group Feature:**
 - Added optional `ANNOUNCEMENTS_GROUP_ID` environment variable to post round updates to a Telegram group
 - All announcements (round opened, round cancelled, draw results, winner announcements, refunds) now post to both the main channel AND the announcements group
 - Helper function `send_to_announcements()` handles dual-channel broadcasting
