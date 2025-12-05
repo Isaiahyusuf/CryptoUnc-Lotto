@@ -219,6 +219,13 @@ Preferred communication style: Simple, everyday language.
 
 ### Recent Changes (December 5, 2025)
 
+**Announcements Group Feature (NEW):**
+- Added optional `ANNOUNCEMENTS_GROUP_ID` environment variable to post round updates to a Telegram group
+- All announcements (round opened, round cancelled, draw results, winner announcements, refunds) now post to both the main channel AND the announcements group
+- Helper function `send_to_announcements()` handles dual-channel broadcasting
+- The group ID should be a numeric ID (e.g., -100123456789) - you can get this by forwarding a message from the group to @userinfobot
+- If not set, announcements only go to ROUND_CHANNEL_ID as before
+
 **Migration & Bug Fixes:**
 - Migrated from deprecated `Transaction.new()` to correct `Transaction([keypair], message, blockhash)` API for solders 0.18.x
 - Fixed wallet duplication bug - wallets are now checked BEFORE insert, first wallet set as active
