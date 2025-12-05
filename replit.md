@@ -217,6 +217,14 @@ Preferred communication style: Simple, everyday language.
 - Session-based verification using server-generated challenges
 - Public key extraction without exposing private keys
 
+### Recent Changes (December 5, 2025)
+
+**Migration & Bug Fixes:**
+- Migrated from deprecated `Transaction.new()` to correct `Transaction([keypair], message, blockhash)` API for solders 0.18.x
+- Fixed wallet duplication bug - wallets are now checked BEFORE insert, first wallet set as active
+- Added real-time transaction functions: `build_unsigned_transaction()`, `sign_and_send_transaction()`, `execute_automatic_transfer()`
+- Added balance validation and RPC error classification to transaction helpers
+
 ### Recent Changes (December 4, 2025)
 
 **Import Wallet Feature (MAJOR UPDATE):**
