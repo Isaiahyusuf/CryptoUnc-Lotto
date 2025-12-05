@@ -442,6 +442,7 @@ else:
 # Players select their own stake amount between MIN and MAX
 # All players enter the SAME round (not grouped by stake amount)
 # The pot accumulates all stakes from all players
+# Each ticket purchase counts as one player - users can buy multiple tickets
 
 STAKE_MIN = Decimal("0.025")  # Minimum stake: 0.025 SOL
 STAKE_MAX = Decimal("5.0")    # Maximum stake: 5 SOL
@@ -450,13 +451,16 @@ STAKE_MAX = Decimal("5.0")    # Maximum stake: 5 SOL
 ROUNDS_PER_DAY = 4
 ROUND_TIMES_UTC = ["00:00", "06:00", "12:00", "18:00"]
 
-# Player requirements
-MIN_PLAYERS_TO_DRAW = 10     # Minimum 10 players needed to run a draw
-JOIN_TIMEOUT_MINUTES = 30    # If <10 players after 30 min, cancel and refund
+# Player requirements (each ticket counts as 1 player)
+MIN_PLAYERS_TO_DRAW = 10     # Minimum 10 tickets needed to run a draw
+DRAW_WAIT_MINUTES = 15       # Wait 15 minutes after 10+ players before drawing
+REFUND_TIMEOUT_MINUTES = 30  # If <10 players after 30 min, cancel and refund
+JOIN_TIMEOUT_MINUTES = 30    # Alias for refund timeout
 ROUND_DURATION_MINUTES = 30  # Alias for timeout
 
 # Fee structure
-TEAM_FEE_PERCENTAGE = Decimal("0.20")  # 20% to team when no winner
+TEAM_FEE_PERCENTAGE = Decimal("0.20")  # 20% to team (always deducted first)
+WINNER_SHARE_PERCENTAGE = Decimal("0.80")  # 80% to winners (handles network fees)
 NETWORK_FEE_PERCENTAGE = Decimal("0.02")  # 2% network fee for refunds
 
 # Legacy compatibility aliases
@@ -902,11 +906,16 @@ def get_round_stakes_with_counts(round_id: int):
 
 
 def add_round_participant(round_stake_id: int, user_id: int, numbers: list, tx_signature: str):
+    """
+    Add a participant to a round stake.
+    ALLOWS MULTIPLE TICKETS: Users can buy as many tickets as they want.
+    Each ticket counts as 1 player for the minimum player requirement.
+    """
     conn = get_db_conn()
     c = conn.cursor()
     
     c.execute("""
-        SELECT rs.status, rs.round_id, sr.status as round_status, sr.end_time
+        SELECT rs.status, rs.round_id, sr.status as round_status, sr.end_time, rs.stake_amount
         FROM round_stakes rs
         JOIN scheduled_rounds sr ON rs.round_id = sr.round_id
         WHERE rs.id = ?
@@ -917,7 +926,7 @@ def add_round_participant(round_stake_id: int, user_id: int, numbers: list, tx_s
         conn.close()
         return {"success": False, "error": "Round stake not found"}
     
-    stake_status, round_id, round_status, end_time = stake_info
+    stake_status, round_id, round_status, end_time, stake_amount = stake_info
     
     if stake_status != 'open' or round_status != 'open':
         conn.close()
@@ -925,20 +934,11 @@ def add_round_participant(round_stake_id: int, user_id: int, numbers: list, tx_s
     
     if end_time:
         end_datetime = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
-        # Ensure end_datetime is timezone-aware
         if end_datetime.tzinfo is None:
             end_datetime = end_datetime.replace(tzinfo=pytz.UTC)
         if datetime.now(pytz.UTC) > end_datetime:
             conn.close()
             return {"success": False, "error": "Round has ended"}
-    
-    c.execute("""
-        SELECT id FROM round_participants
-        WHERE round_stake_id = ? AND user_id = ?
-    """, (round_stake_id, user_id))
-    if c.fetchone():
-        conn.close()
-        return {"success": False, "error": "Already joined this stake round"}
     
     try:
         c.execute("""
@@ -947,7 +947,6 @@ def add_round_participant(round_stake_id: int, user_id: int, numbers: list, tx_s
         """, (round_stake_id, user_id, numbers_to_str(numbers), tx_signature))
         participant_id = c.lastrowid
         
-        # Update first_stake_time if this is the first non-refunded participant for this stake
         c.execute("""
             SELECT first_stake_time, COUNT(rp.id) as count
             FROM round_stakes rs
@@ -956,7 +955,7 @@ def add_round_participant(round_stake_id: int, user_id: int, numbers: list, tx_s
         """, (round_stake_id,))
         first_time, count = c.fetchone()
         
-        if not first_time and count == 1:  # First non-refunded participant
+        if not first_time and count == 1:
             now_utc = datetime.now(pytz.UTC).isoformat()
             c.execute("""
                 UPDATE round_stakes
@@ -966,7 +965,7 @@ def add_round_participant(round_stake_id: int, user_id: int, numbers: list, tx_s
         
         conn.commit()
         conn.close()
-        return {"success": True, "participant_id": participant_id}
+        return {"success": True, "participant_id": participant_id, "round_id": round_id, "stake_amount": stake_amount, "ticket_count": count}
     except Exception as e:
         conn.rollback()
         conn.close()
@@ -1883,6 +1882,10 @@ async def inline_handler(query: types.CallbackQuery):
                     f"This PIN will be required to:\n"
                     f"• View private key\n"
                     f"• Send SOL from this wallet\n\n"
+                    f"⚠️ <b>PRIVATE KEY SAFETY:</b>\n"
+                    f"• NEVER share your private key with ANYONE\n"
+                    f"• CryptoUnc team will NEVER ask for your key\n"
+                    f"• Anyone with your key can steal all funds\n\n"
                     f"Please send your 4-digit PIN now:",
                     parse_mode="HTML"
                 )
@@ -1891,8 +1894,11 @@ async def inline_handler(query: types.CallbackQuery):
                     f"✅ <b>Wallet created successfully!</b>\n\n"
                     f"Name: {wallet['name']}\n"
                     f"Address: <code>{wallet['address']}</code>\n\n"
-                    f"⚠️ <b>Important:</b> This is a bot-managed wallet. "
-                    f"Save your address to deposit funds from exchanges or other wallets.\n\n"
+                    f"⚠️ <b>PRIVATE KEY SAFETY:</b>\n"
+                    f"• NEVER share your private key with ANYONE\n"
+                    f"• CryptoUnc team will NEVER ask for your key\n"
+                    f"• Anyone with your key can steal all funds\n\n"
+                    f"Save your address to deposit funds from exchanges or other wallets.\n"
                     f"You can now deposit SOL and play!",
                     parse_mode="HTML"
                 )
@@ -2441,14 +2447,21 @@ async def inline_handler(query: types.CallbackQuery):
         add_result = add_round_participant(stake_id, uid, lottery_numbers, tx_signature)
         
         if add_result["success"]:
+            participant_id = add_result["participant_id"]
+            round_id = add_result.get("round_id", 0)
+            ticket_count = add_result.get("ticket_count", 1)
+            
             await bot.send_message(uid,
                 f"✅ <b>Successfully Joined!</b>\n\n"
+                f"🎫 Ticket #{participant_id}\n"
                 f"🎰 Stake: {stake_amount} SOL\n"
                 f"🎲 Your Numbers: {numbers_to_str(lottery_numbers)}\n"
                 f"📝 TX: <code>{tx_signature[:20]}...</code>\n\n"
                 f"🍀 Good luck! Winners announced after the round ends.",
                 parse_mode="HTML"
             )
+            
+            await announce_new_ticket(uid, participant_id, stake_amount, lottery_numbers, round_id, ticket_count)
         else:
             await bot.send_message(uid,
                 f"❌ <b>Failed to join round</b>\n\n"
@@ -2563,6 +2576,10 @@ async def generic_message_handler(message: types.Message):
                     f"🔐 Your private key message was deleted for security.\n\n"
                     f"📍 <b>Wallet Address:</b>\n<code>{wallet_address}</code>\n\n"
                     f"💰 <b>Balance:</b> {balance} SOL\n\n"
+                    f"⚠️ <b>PRIVATE KEY SAFETY:</b>\n"
+                    f"• NEVER share your private key with ANYONE\n"
+                    f"• CryptoUnc team will NEVER ask for your key\n"
+                    f"• Anyone with your key can steal all funds\n\n"
                     f"⚠️ <b>This message will auto-delete in 30 seconds.</b>",
                     reply_markup=keyboard,
                     parse_mode="HTML"
@@ -2815,6 +2832,7 @@ async def generic_message_handler(message: types.Message):
                     return
                 
                 participant_id = add_result["participant_id"]
+                ticket_count = add_result.get("ticket_count", 1)
                 
                 # Also add to entries table for legacy/backup tracking
                 add_entry(uid, get_current_round(), lottery_numbers, float(amount), tx_signature, paid=1)
@@ -2832,6 +2850,9 @@ async def generic_message_handler(message: types.Message):
                     f"🍀 <b>Good luck!</b> Winner will be announced in the channel.",
                     parse_mode="HTML"
                 )
+                
+                # Announce the new ticket to channel
+                await announce_new_ticket(uid, participant_id, amount, lottery_numbers, round_id, ticket_count)
                 
             except (ValueError, decimal.InvalidOperation):
                 await message.answer(
@@ -2917,6 +2938,7 @@ async def generic_message_handler(message: types.Message):
                 return
             
             participant_id = add_result["participant_id"]
+            ticket_count = add_result.get("ticket_count", 1)
             
             # Also add to entries table for legacy/backup tracking
             add_entry(uid, get_current_round(), lottery_numbers, float(stake_amount), tx_signature, paid=1)
@@ -2934,6 +2956,9 @@ async def generic_message_handler(message: types.Message):
                 f"🍀 <b>Good luck!</b> Winner will be announced in the channel.",
                 parse_mode="HTML"
             )
+            
+            # Announce the new ticket to channel
+            await announce_new_ticket(uid, participant_id, stake_amount, lottery_numbers, round_id, ticket_count)
             return
 
     # Check if it's a Solana wallet address (32-44 chars, alphanumeric)
@@ -3280,11 +3305,19 @@ async def schedule_daily_rounds():
 async def manage_rounds():
     """
     Round manager loop that opens rounds and closes them after duration
-    Enhanced with detailed logging for testing and debugging
+    
+    TIMING RULES:
+    - If 10+ tickets: wait 15 minutes (DRAW_WAIT_MINUTES) then draw
+    - If <10 tickets after 30 minutes (REFUND_TIMEOUT_MINUTES): refund all players
+    - Each ticket counts as 1 player (users can buy multiple tickets)
     """
     print(f"[Round Manager] Starting round manager...")
-    print(f"[Round Manager] Round duration: {ROUND_DURATION_MINUTES} minutes")
-    print(f"[Round Manager] Min players per stake: {MIN_PLAYERS_PER_STAKE}")
+    print(f"[Round Manager] Min tickets for draw: {MIN_PLAYERS_TO_DRAW}")
+    print(f"[Round Manager] Draw wait time: {DRAW_WAIT_MINUTES} minutes (after 10+ tickets)")
+    print(f"[Round Manager] Refund timeout: {REFUND_TIMEOUT_MINUTES} minutes (if <10 tickets)")
+    
+    # Track when stakes reached 10 players: {stake_id: timestamp}
+    stakes_ready_for_draw = {}
     
     while True:
         try:
@@ -3294,7 +3327,6 @@ async def manage_rounds():
             
             conn = get_db_conn()
             c = conn.cursor()
-            # Convert timezone-aware datetime to ISO string for SQLite comparison
             now_str = now.isoformat()
             c.execute("""
                 SELECT round_id, scheduled_time FROM scheduled_rounds
@@ -3320,22 +3352,18 @@ async def manage_rounds():
                 print(f"[Round Manager] Monitoring {len(open_rounds)} open rounds")
             
             for round_id, start_time in open_rounds:
-                # Ensure start_dt is timezone-aware
                 start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
                 if start_dt.tzinfo is None:
                     start_dt = start_dt.replace(tzinfo=pytz.UTC)
                 
-                # Both now and start_dt are now timezone-aware
-                print(f"[Round Manager] Now: {now} (tz: {now.tzinfo}) | Start: {start_dt} (tz: {start_dt.tzinfo})")
                 elapsed = (now - start_dt).total_seconds() / 60
                 
-                print(f"[Round Manager] Round {round_id}: {elapsed:.1f}/{ROUND_DURATION_MINUTES} minutes elapsed")
+                print(f"[Round Manager] Round {round_id}: {elapsed:.1f} minutes elapsed")
                 
-                # Check if we should trigger automatic draw based on player count or time
                 should_draw = False
+                should_refund = False
                 draw_reason = ""
                 
-                # Check each stake in this round for automatic draw conditions
                 c.execute("""
                     SELECT rs.id, rs.stake_amount, rs.first_stake_time, COUNT(rp.id) as player_count
                     FROM round_stakes rs
@@ -3345,34 +3373,49 @@ async def manage_rounds():
                 """, (round_id,))
                 stakes_data = c.fetchall()
                 
+                total_tickets = sum(player_count for _, _, _, player_count in stakes_data)
+                
                 for stake_id, stake_amount, first_stake_time, player_count in stakes_data:
-                    # Condition 1: 10 players reached
-                    if player_count >= MIN_PLAYERS_PER_STAKE:
-                        print(f"[Round Manager] 🎯 Stake {stake_id} ({stake_amount} SOL) reached {player_count} players - triggering automatic draw!")
-                        should_draw = True
-                        draw_reason = f"minimum {MIN_PLAYERS_PER_STAKE} players reached"
-                        break
+                    if player_count >= MIN_PLAYERS_TO_DRAW:
+                        if stake_id not in stakes_ready_for_draw:
+                            stakes_ready_for_draw[stake_id] = now
+                            print(f"[Round Manager] 🎯 Stake {stake_id} reached {player_count} tickets! Starting {DRAW_WAIT_MINUTES} minute countdown...")
+                        
+                        ready_time = stakes_ready_for_draw[stake_id]
+                        wait_elapsed = (now - ready_time).total_seconds() / 60
+                        
+                        if wait_elapsed >= DRAW_WAIT_MINUTES:
+                            print(f"[Round Manager] ⏰ {DRAW_WAIT_MINUTES} min wait complete for stake {stake_id} ({player_count} tickets) - DRAWING!")
+                            should_draw = True
+                            draw_reason = f"{player_count} tickets + {DRAW_WAIT_MINUTES} min wait complete"
+                            break
+                        else:
+                            remaining = DRAW_WAIT_MINUTES - wait_elapsed
+                            print(f"[Round Manager] ⏳ Stake {stake_id}: {remaining:.1f} min until draw ({player_count} tickets)")
                     
-                    # Condition 2: 30 minutes since first stake (and at least 1 player)
-                    if first_stake_time and player_count > 0:
+                    if first_stake_time and player_count > 0 and player_count < MIN_PLAYERS_TO_DRAW:
                         first_stake_dt = datetime.fromisoformat(first_stake_time.replace('Z', '+00:00'))
                         if first_stake_dt.tzinfo is None:
                             first_stake_dt = first_stake_dt.replace(tzinfo=pytz.UTC)
                         
                         time_since_first = (now - first_stake_dt).total_seconds() / 60
                         
-                        if time_since_first >= 30:  # 30 minutes
-                            print(f"[Round Manager] ⏰ Stake {stake_id} ({stake_amount} SOL) has been active for {time_since_first:.1f} minutes - triggering automatic draw!")
-                            should_draw = True
-                            draw_reason = "30 minutes elapsed since first participant"
+                        if time_since_first >= REFUND_TIMEOUT_MINUTES:
+                            print(f"[Round Manager] ⏰ Stake {stake_id} ({player_count} tickets) - {REFUND_TIMEOUT_MINUTES} min timeout, not enough players - REFUNDING!")
+                            should_refund = True
                             break
                 
-                # If automatic draw condition met OR round duration reached, process end
                 if should_draw:
-                    print(f"[Round Manager] 🎲 Automatic draw triggered for Round {round_id}: {draw_reason}")
+                    print(f"[Round Manager] 🎲 Drawing Round {round_id}: {draw_reason}")
+                    for sid in list(stakes_ready_for_draw.keys()):
+                        if sid in [s[0] for s in stakes_data]:
+                            del stakes_ready_for_draw[sid]
+                    await process_round_end(round_id)
+                elif should_refund:
+                    print(f"[Round Manager] 💸 Refunding Round {round_id}: timeout with <{MIN_PLAYERS_TO_DRAW} tickets")
                     await process_round_end(round_id)
                 elif elapsed >= ROUND_DURATION_MINUTES:
-                    print(f"[Round Manager] ⏰ Round {round_id} duration reached, processing end...")
+                    print(f"[Round Manager] ⏰ Round {round_id} max duration reached, processing end...")
                     await process_round_end(round_id)
             
             conn.close()
@@ -3540,7 +3583,16 @@ async def pay_team_fee(result: dict):
 
 
 async def send_to_announcements(message_text: str, keyboard=None):
-    """Helper function to send announcements to both channel and group"""
+    """
+    Helper function to send announcements to both channel and group.
+    All announcements include a bot redirect link for forwarded messages.
+    """
+    bot_info = await bot.get_me()
+    bot_username = bot_info.username
+    
+    redirect_text = f"\n\n🤖 <a href='https://t.me/{bot_username}'>Start playing now!</a>"
+    full_message = message_text + redirect_text
+    
     targets = [ROUND_CHANNEL]
     if ANNOUNCEMENTS_GROUP:
         targets.append(ANNOUNCEMENTS_GROUP)
@@ -3548,11 +3600,44 @@ async def send_to_announcements(message_text: str, keyboard=None):
     for target in targets:
         try:
             if keyboard:
-                await bot.send_message(target, message_text, reply_markup=keyboard, parse_mode="HTML")
+                await bot.send_message(target, full_message, reply_markup=keyboard, parse_mode="HTML", disable_web_page_preview=True)
             else:
-                await bot.send_message(target, message_text, parse_mode="HTML")
+                await bot.send_message(target, full_message, parse_mode="HTML", disable_web_page_preview=True)
         except Exception as e:
             print(f"❌ Failed to send announcement to {target}: {e}")
+
+
+async def announce_new_ticket(user_id: int, ticket_id: int, stake_amount, numbers: list, round_id: int, ticket_count: int):
+    """
+    Announce a new ticket purchase to the announcements channel.
+    Includes the player's Telegram ID for transparency.
+    """
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("SELECT username FROM users WHERE user_id = ?", (user_id,))
+        user_row = c.fetchone()
+        username = user_row[0] if user_row and user_row[0] else None
+        conn.close()
+        
+        player_display = f"@{username}" if username else f"Player ID: {user_id}"
+        
+        current_pot = get_current_pot()
+        
+        message_text = (
+            f"🎫 <b>New Ticket Purchased!</b>\n\n"
+            f"👤 {player_display}\n"
+            f"🆔 Telegram ID: <code>{user_id}</code>\n"
+            f"🎟️ Ticket #{ticket_id}\n"
+            f"🎲 Numbers: <b>{', '.join(map(str, numbers))}</b>\n"
+            f"💰 Stake: {stake_amount} SOL\n\n"
+            f"📊 Round {round_id}: {ticket_count}/{MIN_PLAYERS_TO_DRAW} tickets\n"
+            f"🏆 Current Jackpot: <b>{current_pot} SOL</b>"
+        )
+        
+        await send_to_announcements(message_text)
+    except Exception as e:
+        print(f"❌ Ticket announcement error: {e}")
 
 
 async def announce_round_cancelled(round_id: int, player_count: int, refund_count: int):

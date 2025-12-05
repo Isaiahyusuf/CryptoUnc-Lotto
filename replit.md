@@ -217,7 +217,27 @@ Preferred communication style: Simple, everyday language.
 - Session-based verification using server-generated challenges
 - Public key extraction without exposing private keys
 
-### Recent Changes (December 5, 2025)
+### Recent Changes (December 5, 2025 - Latest)
+
+**Multiple Tickets & Announcements Update:**
+- Multiple tickets per user: Removed duplicate check in add_round_participant() - users can now buy as many tickets as they want
+- Each ticket counts as 1 player toward the minimum 10-player requirement
+- Added `announce_new_ticket()` function to post ticket purchases to announcements channel
+- Ticket announcements include: Player username/Telegram ID, ticket number, lottery numbers, stake amount, current player count
+- Updated `send_to_announcements()` to include bot redirect link for forwarded messages
+- All three stake joining flows now call announce_new_ticket after successful purchase
+
+**Private Key Safety Reminders:**
+- Added prominent safety warnings when creating new wallets
+- Added safety warnings when importing wallets with private key
+- Warnings include: NEVER share key, CryptoUnc team will NEVER ask for key, anyone with key can steal funds
+
+**Lottery Timing Configuration:**
+- 15-minute wait before drawing when 10+ players join a stake level
+- 30-minute refund timeout for rounds that don't reach minimum players
+- Each ticket = 1 player (so one user buying 10 tickets = 10 players)
+
+### Previous Changes (December 5, 2025)
 
 **Platform Authorization (UPDATED):**
 - Bot now verifies it's running on Railway OR Replit platform before starting
