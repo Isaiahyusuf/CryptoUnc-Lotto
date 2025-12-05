@@ -219,12 +219,19 @@ Preferred communication style: Simple, everyday language.
 
 ### Recent Changes (December 5, 2025)
 
-**Railway-Only Execution Restriction (NEW):**
-- Bot now verifies it's running on Railway platform before starting
-- Checks for RAILWAY_ENVIRONMENT and RAILWAY_PROJECT_ID environment variables
+**Platform Authorization (UPDATED):**
+- Bot now verifies it's running on Railway OR Replit platform before starting
+- Checks for RAILWAY_ENVIRONMENT and RAILWAY_PROJECT_ID environment variables (Railway)
+- Also accepts REPL_ID or REPLIT_DEPLOYMENT (Replit)
 - Optional RAILWAY_DEPLOY_SECRET / EXPECTED_DEPLOY_SECRET for additional verification
-- Exits with clear error message if not running on authorized Railway instance
+- Exits with clear error message if not running on authorized instance
 - Security model documented in main.py header comments
+
+**Transaction Fix (CRITICAL):**
+- Fixed "'solders.transaction.Transaction' object has no attribute 'recent_blockhash'" error
+- Changed from `client.send_transaction(transaction)` to `client.send_raw_transaction(bytes(transaction))`
+- The solders Transaction object is immutable - must serialize to bytes before sending
+- Updated both `send_sol()` and `sign_and_send_transaction()` functions
 
 **Helius RPC with Automatic Fallback (NEW):**
 - Added HELIUS_RPC environment variable for primary Helius RPC endpoint
