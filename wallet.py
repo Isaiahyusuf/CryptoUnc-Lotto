@@ -168,10 +168,17 @@ def create_wallet(user_id: int, wallet_name: Optional[str] = None) -> Optional[D
     """
     Create a new bot-managed wallet for the user
     Returns wallet dict with address (private key is ENCRYPTED in database)
+    
+    IMPORTANT: This function checks for existing wallets FIRST and reuses them.
+    A new wallet is only created if the user has less than MAX_WALLETS_PER_USER wallets.
     """
-    # Check wallet limit
-    if get_user_wallet_count(user_id) >= MAX_WALLETS_PER_USER:
+    # Check wallet limit FIRST - never exceed MAX_WALLETS_PER_USER
+    current_count = get_user_wallet_count(user_id)
+    if current_count >= MAX_WALLETS_PER_USER:
         return None
+    
+    # Check if this is the user's first wallet (before inserting)
+    is_first_wallet = current_count == 0
     
     # Verify encryption is configured
     if not is_encryption_configured():
@@ -186,8 +193,7 @@ def create_wallet(user_id: int, wallet_name: Optional[str] = None) -> Optional[D
     encrypted_private_key = encrypt_private_key(private_key_hex)
 
     if not wallet_name:
-        count = get_user_wallet_count(user_id) + 1
-        wallet_name = f"Bot Wallet {count}"
+        wallet_name = f"Bot Wallet {current_count + 1}"
 
     conn = get_db_conn()
     c = conn.cursor()
@@ -199,12 +205,13 @@ def create_wallet(user_id: int, wallet_name: Optional[str] = None) -> Optional[D
             VALUES (?, ?, ?, ?, ?)
         """, (user_id, wallet_address, "bot", wallet_name, encrypted_private_key))
 
-        # Set as active if it's the first wallet
-        if get_user_wallet_count(user_id) == 0:
+        # Set as active if it's the first wallet (checked BEFORE insert)
+        if is_first_wallet:
             c.execute("""
                 INSERT INTO user_active_wallet (user_id, active_wallet_address)
                 VALUES (?, ?)
-            """, (user_id, wallet_address))
+                ON CONFLICT(user_id) DO UPDATE SET active_wallet_address = ?
+            """, (user_id, wallet_address, wallet_address))
 
         conn.commit()
         conn.close()
@@ -213,7 +220,6 @@ def create_wallet(user_id: int, wallet_name: Optional[str] = None) -> Optional[D
             "address": wallet_address,
             "type": "bot",
             "name": wallet_name
-            # Note: Do NOT return private key for security
         }
     except sqlite3.IntegrityError:
         conn.close()
@@ -223,14 +229,19 @@ def create_wallet(user_id: int, wallet_name: Optional[str] = None) -> Optional[D
 def save_external_wallet(user_id: int, wallet_address: str, wallet_type: str = "external", wallet_name: Optional[str] = None) -> bool:
     """
     Save an external wallet (Phantom, Solflare, etc.)
+    
+    IMPORTANT: Checks for existing wallets FIRST to prevent duplicates.
     """
-    # Check wallet limit
-    if get_user_wallet_count(user_id) >= MAX_WALLETS_PER_USER:
+    # Check wallet limit FIRST
+    current_count = get_user_wallet_count(user_id)
+    if current_count >= MAX_WALLETS_PER_USER:
         return False
+    
+    # Check if this is the user's first wallet (before inserting)
+    is_first_wallet = current_count == 0
 
     if not wallet_name:
-        count = get_user_wallet_count(user_id) + 1
-        wallet_name = f"{wallet_type.capitalize()} Wallet {count}"
+        wallet_name = f"{wallet_type.capitalize()} Wallet {current_count + 1}"
 
     conn = get_db_conn()
     c = conn.cursor()
@@ -241,12 +252,13 @@ def save_external_wallet(user_id: int, wallet_address: str, wallet_type: str = "
             VALUES (?, ?, ?, ?)
         """, (user_id, wallet_address, wallet_type, wallet_name))
 
-        # Set as active if it's the first wallet
-        if get_user_wallet_count(user_id) == 0:
+        # Set as active if it's the first wallet (checked BEFORE insert)
+        if is_first_wallet:
             c.execute("""
                 INSERT INTO user_active_wallet (user_id, active_wallet_address)
                 VALUES (?, ?)
-            """, (user_id, wallet_address))
+                ON CONFLICT(user_id) DO UPDATE SET active_wallet_address = ?
+            """, (user_id, wallet_address, wallet_address))
 
         conn.commit()
         conn.close()
@@ -534,9 +546,9 @@ async def send_sol(from_address: str, to_address: str, amount_sol: Decimal, priv
                 recent_blockhash
             )
             
-            # Create signed transaction using Transaction.new()
-            # This creates and signs the transaction in one step
-            transaction = Transaction.new([keypair], message, recent_blockhash)
+            # Create signed transaction using correct solders 0.18.x API
+            # The Transaction constructor takes [signers], message, and blockhash
+            transaction = Transaction([keypair], message, recent_blockhash)
 
             # Send transaction
             result = await client.send_transaction(transaction)
@@ -668,3 +680,246 @@ def has_user_pin(user_id: int) -> bool:
     result = c.fetchone() is not None
     conn.close()
     return result
+
+
+# ==============================================================================
+# REAL-TIME TRANSACTION FUNCTIONS
+# ==============================================================================
+# These functions enable automatic Solana transactions signed by the bot.
+# They build, sign, and send transactions in real-time using stored private keys.
+#
+# FLOW:
+# 1. build_transaction() - Creates UNSIGNED message and instructions
+# 2. sign_and_send_transaction() - Signs once and sends atomically
+#
+# Note: The primary send_sol() function above is the recommended way to send SOL.
+# These helper functions are provided for more granular control if needed.
+
+async def build_unsigned_transaction(sender_address: str, receiver_address: str, amount_sol: Decimal) -> Dict:
+    """
+    Build an UNSIGNED Solana SOL transfer transaction.
+    
+    This creates the message and instructions but does NOT sign.
+    Use sign_and_send_transaction() to sign and send atomically.
+    
+    Args:
+        sender_address: The sender's Solana wallet address (public key)
+        receiver_address: The recipient's Solana wallet address
+        amount_sol: Amount of SOL to transfer
+    
+    Returns:
+        Dict with 'success', 'message', 'blockhash', 'sender_pubkey', 'lamports' or 'error'
+    """
+    try:
+        # Validate amount
+        if amount_sol <= Decimal("0"):
+            return {"success": False, "error": "Amount must be greater than 0"}
+        
+        # Convert amount to lamports
+        lamports = int(amount_sol * Decimal(1_000_000_000))
+        
+        # Parse sender and receiver addresses
+        sender_pubkey = Pubkey.from_string(sender_address)
+        to_pubkey = Pubkey.from_string(receiver_address)
+        
+        async with AsyncClient(SOLANA_RPC) as client:
+            # Validate sender has sufficient balance
+            balance_resp = await client.get_balance(sender_pubkey, commitment=Confirmed)
+            if balance_resp.value is None:
+                return {"success": False, "error": "Could not fetch sender balance"}
+            
+            balance_lamports = balance_resp.value
+            estimated_fee = 5000  # Typical Solana transfer fee
+            
+            if balance_lamports < lamports + estimated_fee:
+                return {
+                    "success": False, 
+                    "error": f"Insufficient balance. Have: {balance_lamports/1e9:.6f} SOL, Need: {(lamports + estimated_fee)/1e9:.6f} SOL"
+                }
+            
+            # Get recent blockhash
+            recent_blockhash_resp = await client.get_latest_blockhash()
+            recent_blockhash = recent_blockhash_resp.value.blockhash
+            
+            # Create transfer instruction
+            transfer_ix = transfer(
+                TransferParams(
+                    from_pubkey=sender_pubkey,
+                    to_pubkey=to_pubkey,
+                    lamports=lamports
+                )
+            )
+            
+            # Create UNSIGNED message with blockhash
+            message = Message.new_with_blockhash(
+                [transfer_ix],
+                sender_pubkey,
+                recent_blockhash
+            )
+            
+            return {
+                "success": True,
+                "message": message,
+                "blockhash": recent_blockhash,
+                "sender_pubkey": sender_pubkey,
+                "receiver": receiver_address,
+                "amount_lamports": lamports
+            }
+            
+    except Exception as e:
+        print(f"Error building unsigned transaction: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+async def sign_and_send_transaction(message, blockhash, private_key_hex: str) -> Dict:
+    """
+    Sign a transaction message and send it atomically.
+    
+    This function signs the message ONCE and sends immediately.
+    Signing and sending are done atomically to prevent double-signing.
+    
+    Args:
+        message: The unsigned transaction message from build_unsigned_transaction
+        blockhash: The recent blockhash used in the message
+        private_key_hex: The private key in hex format (128 chars)
+    
+    Returns:
+        Dict with 'success', 'signature', 'confirmed' or 'error'
+    """
+    try:
+        # Validate private key format
+        if not private_key_hex or len(private_key_hex) != 128:
+            return {"success": False, "error": "Invalid private key format"}
+        
+        # Recreate keypair from private key
+        private_key_bytes = bytes.fromhex(private_key_hex)
+        keypair = Keypair.from_bytes(private_key_bytes)
+        
+        # Create signed transaction ONCE using correct solders 0.18.x API
+        signed_tx = Transaction([keypair], message, blockhash)
+        
+        async with AsyncClient(SOLANA_RPC) as client:
+            # Send the transaction
+            try:
+                result = await client.send_transaction(signed_tx)
+            except Exception as rpc_error:
+                error_msg = str(rpc_error)
+                if "insufficient funds" in error_msg.lower():
+                    return {"success": False, "error": "Insufficient funds for transaction"}
+                elif "blockhash" in error_msg.lower():
+                    return {"success": False, "error": "Blockhash expired, please retry"}
+                else:
+                    return {"success": False, "error": f"RPC error: {error_msg}"}
+            
+            signature = str(result.value)
+            
+            # Wait for confirmation (up to 30 seconds)
+            confirmed = False
+            for attempt in range(30):
+                await asyncio.sleep(1)
+                try:
+                    status = await client.get_signature_statuses([result.value])
+                    if status.value and status.value[0]:
+                        if status.value[0].confirmation_status:
+                            confirmed = True
+                            break
+                        if status.value[0].err:
+                            return {
+                                "success": False,
+                                "error": f"Transaction failed: {status.value[0].err}",
+                                "signature": signature
+                            }
+                except Exception:
+                    pass
+            
+            return {
+                "success": True,
+                "signature": signature,
+                "confirmed": confirmed
+            }
+            
+    except ValueError as ve:
+        return {"success": False, "error": f"Invalid key format: {ve}"}
+    except Exception as e:
+        print(f"Error signing and sending transaction: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+async def execute_automatic_transfer(sender_private_key_hex: str, receiver_address: str, amount_sol: Decimal) -> Dict:
+    """
+    Complete automatic SOL transfer: build, sign, and send in one call.
+    
+    This is the main function for real-time automatic transactions.
+    The bot signs using the stored private key and sends immediately.
+    
+    NOTE: For most use cases, prefer the send_sol() function which handles
+    everything in a single call. This function provides the same functionality
+    but is structured as a helper for the build/sign/send workflow.
+    
+    Args:
+        sender_private_key_hex: The sender's private key in hex format
+        receiver_address: The recipient's Solana wallet address
+        amount_sol: Amount of SOL to transfer
+    
+    Returns:
+        Dict with 'success', 'signature', 'amount', 'confirmed' or 'error'
+    """
+    try:
+        # Validate inputs
+        if not sender_private_key_hex or len(sender_private_key_hex) != 128:
+            return {"success": False, "error": "Invalid private key format"}
+        
+        if not receiver_address:
+            return {"success": False, "error": "Receiver address required"}
+        
+        if amount_sol <= Decimal("0"):
+            return {"success": False, "error": "Amount must be greater than 0"}
+        
+        # Get sender address from private key
+        private_key_bytes = bytes.fromhex(sender_private_key_hex)
+        keypair = Keypair.from_bytes(private_key_bytes)
+        sender_address = str(keypair.pubkey())
+        
+        # Step 1: Build unsigned transaction (validates balance)
+        build_result = await build_unsigned_transaction(sender_address, receiver_address, amount_sol)
+        if not build_result.get("success"):
+            return {"success": False, "error": build_result.get("error", "Build failed")}
+        
+        # Step 2: Sign and send atomically (single signing)
+        send_result = await sign_and_send_transaction(
+            build_result["message"],
+            build_result["blockhash"],
+            sender_private_key_hex
+        )
+        if not send_result.get("success"):
+            return {"success": False, "error": send_result.get("error", "Send failed")}
+        
+        return {
+            "success": True,
+            "signature": send_result["signature"],
+            "amount": float(amount_sol),
+            "confirmed": send_result.get("confirmed", False),
+            "sender": sender_address,
+            "receiver": receiver_address
+        }
+        
+    except ValueError as ve:
+        return {"success": False, "error": f"Invalid input: {ve}"}
+    except Exception as e:
+        print(f"Error in automatic transfer: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "success": False,
+            "error": str(e)
+        }

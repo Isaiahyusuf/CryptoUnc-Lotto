@@ -2,6 +2,123 @@ CryptoUnc Lotto Telegram Bot 🎲
 
 CryptoUnc Lotto is a decentralized-style lottery bot for Telegram, designed to allow users to play lottery games directly inside Telegram. Players can connect wallets, deposit funds, and receive lottery numbers, all while keeping wallet addresses private and maintaining transparency for draws and winners.
 
+---
+
+## 🔐 WALLET STORAGE RULES
+
+### Wallet Management
+- **Maximum wallets per user:** 3 wallets
+- **Wallet types:** Bot-managed, Imported, External
+- **Private key storage:** Encrypted using Fernet (AES-128-CBC)
+
+### Wallet Creation Flow
+1. User taps "Play" → Bot checks for existing wallets
+2. If wallet exists → Reuse existing wallet (NO new wallet created)
+3. If no wallet exists → Prompt user to create or import
+4. First wallet automatically set as active wallet
+5. Wallet limit enforced (max 3 wallets per user)
+
+### Database Schema - Wallets Table
+```sql
+CREATE TABLE wallets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,          -- Telegram user ID
+    wallet_address TEXT NOT NULL,
+    wallet_type TEXT NOT NULL,          -- 'bot', 'imported', 'external'
+    wallet_name TEXT,
+    private_key TEXT,                   -- Encrypted, only for bot-managed wallets
+    is_active INTEGER DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, wallet_address)
+);
+```
+
+### Wallet Reuse Logic
+
+**Application Level (main.py):**
+When a user taps "Play", the `start_private_play()` function:
+1. Calls `get_active_wallet(user_id)` to check for existing wallet
+2. If wallet exists → Uses it immediately (no new wallet created)
+3. If no wallet exists → Shows create/import options
+
+**Function Level (wallet.py):**
+- `create_wallet()` - Creates new wallet ONLY if under MAX_WALLETS_PER_USER limit (3)
+- `save_external_wallet()` - Same limit enforcement
+- `get_active_wallet()` - Returns existing active wallet (reuse mechanism)
+- `get_user_wallets()` - Lists all user wallets for selection
+
+**Important:** Wallet reuse is enforced at the APPLICATION level via `start_private_play()`.
+The `create_wallet()` function is only called when the user explicitly requests a new wallet.
+
+---
+
+## 💸 TRANSACTION FLOW
+
+### Real-Time Automatic Transactions
+The bot automatically signs and sends Solana transactions using stored private keys:
+
+```
+1. build_unsigned_transaction(sender_address, receiver, amount)
+   → Validates sender balance (includes fee check)
+   → Fetches recent blockhash
+   → Creates UNSIGNED message (no private key needed)
+
+2. sign_and_send_transaction(message, blockhash, private_key_hex)
+   → Signs ONCE using Keypair.from_bytes()
+   → Sends immediately (atomic operation)
+   → Waits for confirmation (up to 30 seconds)
+   → Returns success/failure with signature
+```
+
+### Transaction Functions (wallet.py)
+- `send_sol()` - Primary function for SOL transfers (recommended)
+- `build_unsigned_transaction()` - Creates unsigned message with balance validation
+- `sign_and_send_transaction()` - Signs once and sends atomically
+- `execute_automatic_transfer()` - All-in-one wrapper using build/sign_and_send
+
+---
+
+## 🔑 REQUIRED ENVIRONMENT VARIABLES
+
+```env
+# REQUIRED - Bot cannot start without these
+BOT_TOKEN=your_telegram_bot_token
+OWNER_WALLET=your_solana_public_address
+OWNER_WALLET_PRIVATE_KEY=your_private_key_hex_or_json
+SOLANA_RPC=https://api.mainnet-beta.solana.com
+ENCRYPTION_KEY=your_32_char_encryption_key
+ADMIN_ID=your_telegram_user_id
+ROUND_CHANNEL_ID=@yourchannel
+
+# OPTIONAL
+TEAM_WALLET=separate_team_wallet_address
+SUPPORT_USERNAME=support_telegram_username
+```
+
+### Encryption Key
+- Used to encrypt private keys in database
+- Must be at least 32 characters
+- Uses PBKDF2 with SHA256 for key derivation
+- Salt: Fixed stable salt for consistency across restarts
+
+---
+
+## 🔒 PRIVATE KEY ENCRYPTION
+
+### Encryption Process
+1. User creates/imports wallet with private key
+2. Private key encrypted using Fernet cipher
+3. Encrypted key stored in database
+4. Decryption only when transaction needed
+5. PIN verification for sensitive operations
+
+### Security Features
+- Private keys never logged or displayed in plain text
+- Auto-delete messages containing private keys (30 seconds)
+- PIN required for viewing private key
+- PIN required for sending SOL
+
+---
 
 Table of Contents
         1.      Features￼
@@ -440,9 +557,9 @@ Optional but recommended:
 Purpose
 
 This guide instructs the Replit agent to:
-	1.	Fix the TypeError: can't subtract offset-naive and offset-aware datetimes issue in the bot.
-	2.	Properly load environment variables from a .env file.
-	3.	Ensure the bot stays running on Replit.
+        1.      Fix the TypeError: can't subtract offset-naive and offset-aware datetimes issue in the bot.
+        2.      Properly load environment variables from a .env file.
+        3.      Ensure the bot stays running on Replit.
 
 ⸻
 
@@ -456,9 +573,9 @@ Step 2: Fix the Datetime Subtraction
 You need to make both datetimes either naive or aware. The recommended approach for bots dealing with multiple time zones is to convert everything to UTC.
         
 Action for Agent:
-	•	Search the code for any subtraction of datetime objects.
-	•	Ensure all datetime objects are timezone-aware (use datetime.now(timezone.utc) or replace(tzinfo=timezone.utc)).
-	•	Replace all naive datetimes used in bot rounds, timers, or schedulers.
+        •       Search the code for any subtraction of datetime objects.
+        •       Ensure all datetime objects are timezone-aware (use datetime.now(timezone.utc) or replace(tzinfo=timezone.utc)).
+        •       Replace all naive datetimes used in bot rounds, timers, or schedulers.
 check if the lottery is using  Chainlink VRF Integration if use okay if not make it use Replace pseudo-random number generation with verifiable randomness for lottery draws.
 ⸻
 
@@ -467,24 +584,24 @@ Step 3: Load Environment Variables from .env File
 Replit requires using the Secrets tab to securely store environment variables.
 
 Action for Agent:
-	•	Install python-dotenv if not already installed:
+        •       Install python-dotenv if not already installed:
 
 name and ask for all eviroment variables
 Step 5: Deployment Checklist for Agent
-	1.	Ensure all datetime operations are UTC-aware.
-	2.	Load .env variables using python-dotenv.
-	3.	Add BOT_TOKEN and other secrets to Replit Secrets tab.
-	4.	Ensure bot’s main loop is async and starts at Replit runtime.
-	5.	Optionally add keep-alive endpoint or external uptime ping.
+        1.      Ensure all datetime operations are UTC-aware.
+        2.      Load .env variables using python-dotenv.
+        3.      Add BOT_TOKEN and other secrets to Replit Secrets tab.
+        4.      Ensure bot’s main loop is async and starts at Replit runtime.
+        5.      Optionally add keep-alive endpoint or external uptime ping.
 
 ⸻
 
 Step 6: Testing
-	•	Run bot locally or in Replit console:
+        •       Run bot locally or in Replit console:
 
 Confirm no offset-naive errors appear.
-	•	Verify bot responds to Telegram messages.
-	•	Check that all environment variables are loaded correctly (print(BOT_TOKEN) for debug).
+        •       Verify bot responds to Telegram messages.
+        •       Check that all environment variables are loaded correctly (print(BOT_TOKEN) for debug).
 
 
 README: Fix Scheduler and Round Manager Timing Errors
@@ -493,28 +610,28 @@ Objective:
 The bot’s scheduler and round manager are not functioning correctly. Each time a new round is supposed to start, it triggers the error “name ‘datetime’ is not defined” or fails to handle the round timing properly. The goal is to fix all timing, scheduling, and round management issues and make the system stable.
 
 Tasks for Replit Agent:
-	1.	Fix Import and Datetime Errors
+        1.      Fix Import and Datetime Errors
 Check all files that handle round creation or scheduling, such as main.py, scheduler.py, and round_manager.py.
 Make sure the datetime module is correctly imported at the top of each file:
 from datetime import datetime, timedelta
 import pytz
 Ensure that all datetime operations use timezone-aware values like datetime.now(pytz.utc) instead of datetime.now().
-	2.	Debug the Round Timing Logic
+        2.      Debug the Round Timing Logic
 Verify that rounds are created, scheduled, and executed at the right time.
 Fix any logic preventing automatic round starts.
 Make sure the round manager checks correctly whether a round’s time has arrived, if it has ended, and when to start the next round.
 Test this by simulating time changes or forcing manual round starts to confirm the logic works.
-	3.	Add Logging for Testing
+        3.      Add Logging for Testing
 Add print or logging lines in key parts of the scheduler and round manager to see real-time updates.
 Examples:
 print(”[Scheduler] Checking round timing:”, datetime.now(pytz.utc))
 print(”[Round Manager] Current round status:”, status)
 This will help track exactly what happens when the bot reaches a new round time.
-	4.	Test the Scheduler
+        4.      Test the Scheduler
 Run the bot continuously to ensure it completes at least two or three full round cycles automatically without manual triggers.
 Confirm that new rounds start, end, and transition properly without any datetime errors or crashes.
 Make sure the timing intervals are correct and consistent.
-	5.	Environment Variables
+        5.      Environment Variables
 Ask the developer to provide all necessary environment variables inside Replit Secrets.
 Do not use hardcoded values anywhere.
 Confirm the following are properly set and working:
@@ -523,7 +640,7 @@ RPC_URL (Solana mainnet endpoint)
 DB_PATH or database connection details
 Any other variables for wallet operations, admin settings, or payment verification.
 The bot must be fully functional only through these secret variables.
-	6.	Final Verification
+        6.      Final Verification
 After all fixes, confirm that:
 The scheduler starts rounds automatically based on the timing interval.
 Rounds end and restart correctly.
@@ -531,7 +648,7 @@ No datetime or timezone errors appear.
 The bot keeps running continuously without interruption.
 
 Expected Result:
-The scheduler and round manager should operate automatically and reliably, handle all time-based round transitions without errors, and maintain full functionality over multiple cycles.		
+The scheduler and round manager should operate automatically and reliably, handle all time-based round transitions without errors, and maintain full functionality over multiple cycles.                
 
 
 
