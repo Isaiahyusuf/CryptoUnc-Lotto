@@ -1,0 +1,44 @@
+INSTRUCTIONS FOR REPLIT AGENT (TEXT ONLY, EXACTLY WHAT THE OWNER WANTS)
+	1.	Remove the player limit of 10.
+– The lottery must allow unlimited players each round.
+	2.	Remove the stake range (0.025 to 5 SOL).
+– Replace it with one fixed ticket price: 0.025 SOL per ticket.
+– Players can buy multiple tickets (no limit).
+	3.	Add a “Show Ticket” button.
+– When a player taps it, the bot should show all the tickets they bought for the current round.
+	4.	Add a “Show Prize Pool” button before playing.
+– Before the player decides to buy a ticket, the bot must show the current prize pool amount.
+– Prize pool displays the total amount they can win.
+– It should check the owner’s wallet to know the current pool size.
+	5.	Remove refund system completely.
+– Since there’s no more player limit, no refunds.
+– When a player buys and picks numbers, the ticket is final.
+	6.	Number picking must follow this rule:
+– Players must pick 5 numbers.
+– The numbers must be between 1 and 40.
+– Once they pay, the bot must display numbers 1 to 40 so the player taps to pick their 5 choices.
+	7.	Round mechanics:
+– Each round must last 30 minutes exactly.
+– At the START of every round, the bot secretly picks 5 winning numbers (1–40).
+– The bot’s winning numbers must remain hidden until the round ends.
+	8.	Winning logic:
+– Any player who picks the exact same 5 numbers the bot picked wins the round.
+– If no player wins the round, the prize pool must roll over to the next round and keep increasing forever until someone wins.
+	9.	After a player picks numbers:
+– If the numbers don’t match the bot’s winning numbers, the bot should tell them:
+“Better luck next round.”
+– The bot should ONLY reveal the real winning numbers after the round expires, not immediately.
+	10.	At the end of every 30-minute round:
+– The bot must post the winning numbers publicly in the group.
+– The bot must also send the winning numbers privately to every player who played in that round.
+	11.	Prize pool handling:
+– The 20% fee still goes to the separate wallet, always.
+– This must remain unchanged.
+– The rest stays as the main prize pool, which continues growing if nobody wins.
+	12.	Add a “Show Tickets” feature:
+– Players can view all their purchased tickets for the current round any time.
+– They must see the numbers they picked and the ticket count they bought.
+	13.	Real-time transaction requirement:
+– The bot must properly save and remember wallets players create or import.
+– The bot must not try to create new wallets every time they tap play.
+– It must support real-time transactions for tickets.
