@@ -439,35 +439,40 @@ else:
 # ==============================================================================
 # LOTTERY CONFIGURATION
 # ==============================================================================
-# Players select their own stake amount between MIN and MAX
-# All players enter the SAME round (not grouped by stake amount)
-# The pot accumulates all stakes from all players
-# Each ticket purchase counts as one player - users can buy multiple tickets
+# Fixed ticket price: 0.025 SOL per ticket
+# Players can buy unlimited tickets
+# Each round lasts exactly 30 minutes
+# Winning numbers picked at start of round and revealed at end
 
-STAKE_MIN = Decimal("0.025")  # Minimum stake: 0.025 SOL
-STAKE_MAX = Decimal("5.0")    # Maximum stake: 5 SOL
+TICKET_PRICE = Decimal("0.025")  # Fixed ticket price: 0.025 SOL
 
-# Round schedule - 4 rounds per day at fixed times
-ROUNDS_PER_DAY = 4
-ROUND_TIMES_UTC = ["00:00", "06:00", "12:00", "18:00"]
+# Legacy aliases for compatibility
+STAKE_MIN = TICKET_PRICE  # Legacy alias
+STAKE_MAX = TICKET_PRICE  # Legacy alias (same as min since fixed price)
 
-# Player requirements (each ticket counts as 1 player)
-MIN_PLAYERS_TO_DRAW = 10     # Minimum 10 tickets needed to run a draw
-DRAW_WAIT_MINUTES = 15       # Wait 15 minutes after 10+ players before drawing
-REFUND_TIMEOUT_MINUTES = 30  # If <10 players after 30 min, cancel and refund
-JOIN_TIMEOUT_MINUTES = 30    # Alias for refund timeout
-ROUND_DURATION_MINUTES = 30  # Alias for timeout
+# Round schedule - continuous rounds every 30 minutes
+ROUNDS_PER_DAY = 48  # One round every 30 minutes
+ROUND_TIMES_UTC = [f"{h:02d}:{m:02d}" for h in range(24) for m in (0, 30)]  # Every 30 min
+
+# Round duration - exactly 30 minutes per round
+ROUND_DURATION_MINUTES = 30  # Each round lasts 30 minutes exactly
+
+# No player limits - unlimited players per round
+MIN_PLAYERS_TO_DRAW = 0       # No minimum players required
+DRAW_WAIT_MINUTES = 0         # No waiting, draw happens at round end
+REFUND_TIMEOUT_MINUTES = 0    # No refunds - all ticket sales are final
+JOIN_TIMEOUT_MINUTES = 30     # Legacy alias
 
 # Fee structure
 TEAM_FEE_PERCENTAGE = Decimal("0.20")  # 20% to team (always deducted first)
-WINNER_SHARE_PERCENTAGE = Decimal("0.80")  # 80% to winners (handles network fees)
-NETWORK_FEE_PERCENTAGE = Decimal("0.02")  # 2% network fee for refunds
+WINNER_SHARE_PERCENTAGE = Decimal("0.80")  # 80% to prize pool
+NETWORK_FEE_PERCENTAGE = Decimal("0.00")  # No refund fees since no refunds
 
 # Legacy compatibility aliases
 MIN_PLAYERS_PER_STAKE = MIN_PLAYERS_TO_DRAW  # Alias for legacy code
 
-# Legacy: Keep STAKE_PACKAGES for database compatibility but use single pool
-STAKE_PACKAGES = [STAKE_MIN]  # Single stake pool
+# Legacy: Keep STAKE_PACKAGES for database compatibility
+STAKE_PACKAGES = [TICKET_PRICE]  # Single fixed price
 
 DB_PATH = "cryptounc_lotto.db"
 
@@ -847,11 +852,53 @@ def save_draw(round_num: int, winning_numbers):
     conn.close()
 
 
+def generate_round_winning_numbers(round_id: int) -> List[int]:
+    """Generate winning numbers for a round at its start (hidden until round ends)"""
+    seed = generate_provable_seed(round_id, "round_winning_numbers", datetime.now(pytz.UTC).isoformat())
+    return generate_lottery_numbers(seed, count=5, min_val=1, max_val=40)
+
+
+def set_round_winning_numbers(round_id: int, winning_numbers: List[int]):
+    """Store winning numbers for a round (generated at round start, revealed at end)"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("""
+        UPDATE scheduled_rounds SET winning_numbers = ? WHERE round_id = ?
+    """, (numbers_to_str(winning_numbers), round_id))
+    conn.commit()
+    conn.close()
+
+
+def get_round_winning_numbers(round_id: int) -> Optional[List[int]]:
+    """Get winning numbers for a round (only if they exist)"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("SELECT winning_numbers FROM scheduled_rounds WHERE round_id = ?", (round_id,))
+    row = c.fetchone()
+    conn.close()
+    if row and row[0]:
+        return str_to_numbers(row[0])
+    return None
+
+
+def migrate_add_winning_numbers_column():
+    """Add winning_numbers column to scheduled_rounds if it doesn't exist"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    try:
+        c.execute("ALTER TABLE scheduled_rounds ADD COLUMN winning_numbers TEXT")
+        conn.commit()
+        print("✅ Added winning_numbers column to scheduled_rounds")
+    except sqlite3.OperationalError:
+        pass
+    finally:
+        conn.close()
+
+
 def create_scheduled_round(round_number: int, scheduled_time: datetime):
     conn = get_db_conn()
     c = conn.cursor()
     try:
-        # Convert datetime to ISO string for SQLite storage
         scheduled_time_str = scheduled_time.isoformat() if hasattr(scheduled_time, 'isoformat') else scheduled_time
         c.execute("""
             INSERT INTO scheduled_rounds (round_number, scheduled_time, status)
@@ -866,6 +913,11 @@ def create_scheduled_round(round_number: int, scheduled_time: datetime):
             """, (round_id, float(stake)))
         
         conn.commit()
+        
+        winning_nums = generate_round_winning_numbers(round_id)
+        set_round_winning_numbers(round_id, winning_nums)
+        print(f"🎲 Round {round_id} created with hidden winning numbers")
+        
         return round_id
     except sqlite3.IntegrityError:
         conn.rollback()
@@ -1793,8 +1845,35 @@ async def show_wallet_menu(user_id: int):
     await bot.send_message(user_id, text, reply_markup=keyboard, parse_mode="HTML")
 
 
+def get_user_tickets_for_current_round(user_id: int) -> List[Dict]:
+    """Get all tickets purchased by a user for the current open round"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("""
+        SELECT rp.id, rp.numbers, rp.created_at, rs.stake_amount, sr.round_id
+        FROM round_participants rp
+        JOIN round_stakes rs ON rp.round_stake_id = rs.id
+        JOIN scheduled_rounds sr ON rs.round_id = sr.round_id
+        WHERE rp.user_id = ? AND sr.status = 'open' AND rp.refunded = 0
+        ORDER BY rp.created_at DESC
+    """, (user_id,))
+    rows = c.fetchall()
+    conn.close()
+    return [{"id": r[0], "numbers": r[1], "created_at": r[2], "stake": r[3], "round_id": r[4]} for r in rows]
+
+
+def get_current_open_round() -> Optional[int]:
+    """Get the current open round ID"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("SELECT round_id FROM scheduled_rounds WHERE status = 'open' ORDER BY scheduled_time ASC LIMIT 1")
+    row = c.fetchone()
+    conn.close()
+    return row[0] if row else None
+
+
 async def start_private_play(user_id: int):
-    """Start lottery play session"""
+    """Start lottery play session with new menu options"""
     wallet = get_active_wallet(user_id)
 
     if not wallet:
@@ -1804,27 +1883,71 @@ async def start_private_play(user_id: int):
             [InlineKeyboardButton(text="ℹ️ How to Play", callback_data="rules")]
         ])
         await bot.send_message(user_id,
-            "🎮 <b>Private Lotto Session</b>\n\n"
+            "🎮 <b>CryptoUnc Lotto</b>\n\n"
             "You need a wallet to play. Create a new wallet or import your existing one.",
             reply_markup=keyboard,
             parse_mode="HTML"
         )
         return
 
-    # Get balance
     balance = await get_real_balance(wallet)
+    current_pot = get_current_pot()
+    user_tickets = get_user_tickets_for_current_round(user_id)
 
     keyboard = create_keyboard_with_nav([
-        [InlineKeyboardButton(text="💵 Choose Stake", callback_data="choose_stake")],
+        [InlineKeyboardButton(text=f"🎫 Buy Ticket ({TICKET_PRICE} SOL)", callback_data="buy_ticket")],
+        [InlineKeyboardButton(text="💰 Show Prize Pool", callback_data="show_prize_pool")],
+        [InlineKeyboardButton(text=f"🎟️ My Tickets ({len(user_tickets)})", callback_data="show_my_tickets")],
         [InlineKeyboardButton(text="💼 Switch Wallet", callback_data="my_wallets")],
         [InlineKeyboardButton(text="ℹ️ How to Play", callback_data="rules")]
     ])
 
     await bot.send_message(user_id,
-        f"🎮 <b>Private Lotto Session</b>\n\n"
-        f"Active Wallet: <code>{wallet[:8]}...{wallet[-8:]}</code>\n"
-        f"Balance: <b>{balance} SOL</b>\n\n"
-        f"Choose your next action:",
+        f"🎮 <b>CryptoUnc Lotto</b>\n\n"
+        f"💳 Wallet: <code>{wallet[:8]}...{wallet[-8:]}</code>\n"
+        f"💵 Balance: <b>{balance} SOL</b>\n\n"
+        f"🎫 Ticket Price: <b>{TICKET_PRICE} SOL</b>\n"
+        f"🏆 Current Prize Pool: <b>{current_pot} SOL</b>\n"
+        f"🎟️ Your Tickets This Round: <b>{len(user_tickets)}</b>\n\n"
+        f"Buy a ticket and pick 5 numbers (1-40) to win!",
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+
+async def show_number_picker(user_id: int, selected_numbers: List[int]):
+    """Display the number picker grid for players to select 5 numbers from 1-40"""
+    buttons = []
+    row = []
+    
+    for num in range(1, 41):
+        if num in selected_numbers:
+            btn_text = f"✅ {num}"
+        else:
+            btn_text = str(num)
+        row.append(InlineKeyboardButton(text=btn_text, callback_data=f"pick_num_{num}"))
+        
+        if len(row) == 8:
+            buttons.append(row)
+            row = []
+    
+    if row:
+        buttons.append(row)
+    
+    if len(selected_numbers) == 5:
+        buttons.append([InlineKeyboardButton(text="✅ Confirm Numbers", callback_data="confirm_numbers")])
+    
+    buttons.append([InlineKeyboardButton(text="❌ Cancel", callback_data="cancel_number_pick")])
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    
+    selected_str = ", ".join(map(str, sorted(selected_numbers))) if selected_numbers else "None"
+    
+    await bot.send_message(user_id,
+        f"🎲 <b>Pick Your Numbers!</b>\n\n"
+        f"Select <b>5 numbers</b> from 1 to 40.\n"
+        f"Tap a number to select/deselect it.\n\n"
+        f"Selected ({len(selected_numbers)}/5): <b>{selected_str}</b>",
         reply_markup=keyboard,
         parse_mode="HTML"
     )
@@ -1837,6 +1960,201 @@ async def inline_handler(query: types.CallbackQuery):
 
     if data == "play_now":
         await query.answer()
+        await start_private_play(uid)
+
+    elif data == "show_prize_pool":
+        await query.answer()
+        current_pot = get_current_pot()
+        try:
+            owner_balance = await get_real_balance(OWNER_WALLET)
+        except:
+            owner_balance = Decimal("0")
+        
+        keyboard = create_keyboard_with_nav([
+            [InlineKeyboardButton(text=f"🎫 Buy Ticket ({TICKET_PRICE} SOL)", callback_data="buy_ticket")]
+        ], "play_now")
+        
+        await bot.send_message(uid,
+            f"💰 <b>Prize Pool</b>\n\n"
+            f"🏆 <b>Current Jackpot: {current_pot} SOL</b>\n\n"
+            f"The prize pool grows with every ticket purchase!\n"
+            f"Match all 5 winning numbers to win the entire jackpot!\n\n"
+            f"🎫 Ticket Price: <b>{TICKET_PRICE} SOL</b>\n"
+            f"💵 20% goes to team, 80% goes to prize pool\n\n"
+            f"If no winner, 80% of round stakes roll over to next round!",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+
+    elif data == "show_my_tickets":
+        await query.answer()
+        tickets = get_user_tickets_for_current_round(uid)
+        
+        if not tickets:
+            keyboard = create_keyboard_with_nav([
+                [InlineKeyboardButton(text=f"🎫 Buy Ticket ({TICKET_PRICE} SOL)", callback_data="buy_ticket")]
+            ], "play_now")
+            await bot.send_message(uid,
+                "🎟️ <b>My Tickets</b>\n\n"
+                "You haven't bought any tickets for the current round yet.\n"
+                "Buy a ticket to join the lottery!",
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+        else:
+            text = f"🎟️ <b>My Tickets ({len(tickets)} total)</b>\n\n"
+            for i, ticket in enumerate(tickets, 1):
+                text += f"<b>Ticket #{ticket['id']}</b>\n"
+                text += f"   Numbers: <code>{ticket['numbers']}</code>\n"
+                text += f"   Stake: {ticket['stake']} SOL\n\n"
+            
+            keyboard = create_keyboard_with_nav([
+                [InlineKeyboardButton(text=f"🎫 Buy Another Ticket", callback_data="buy_ticket")]
+            ], "play_now")
+            await bot.send_message(uid, text, reply_markup=keyboard, parse_mode="HTML")
+
+    elif data == "buy_ticket":
+        await query.answer()
+        wallet = get_active_wallet(uid)
+        if not wallet:
+            await bot.send_message(uid, "❌ Please create or connect a wallet first.")
+            return
+        
+        balance = await get_real_balance(wallet)
+        if balance < TICKET_PRICE:
+            await bot.send_message(uid,
+                f"⚠️ <b>Insufficient Balance</b>\n\n"
+                f"Your balance: {balance} SOL\n"
+                f"Ticket price: {TICKET_PRICE} SOL\n\n"
+                f"Please deposit more SOL to your wallet:\n"
+                f"<code>{wallet}</code>",
+                parse_mode="HTML"
+            )
+            return
+        
+        private_key = get_wallet_private_key(uid, wallet)
+        if not private_key:
+            await bot.send_message(uid,
+                f"⚠️ This is an external wallet.\n\n"
+                f"Please send <b>{TICKET_PRICE} SOL</b> to:\n"
+                f"<code>{OWNER_WALLET}</code>\n\n"
+                f"Then reply with your transaction signature.",
+                parse_mode="HTML"
+            )
+            return
+        
+        await bot.send_message(uid, "⏳ Processing payment...")
+        
+        result = await send_sol(wallet, OWNER_WALLET, TICKET_PRICE, private_key)
+        
+        if not result["success"]:
+            await bot.send_message(uid,
+                f"❌ <b>Transaction failed!</b>\n\n"
+                f"Error: {result.get('error', 'Unknown error')}\n\n"
+                f"Please try again or contact support.",
+                parse_mode="HTML"
+            )
+            return
+        
+        tx_signature = result["signature"]
+        
+        user_states[uid] = {
+            "action": "picking_numbers",
+            "tx_signature": tx_signature,
+            "selected_numbers": [],
+            "stake_amount": float(TICKET_PRICE)
+        }
+        
+        await show_number_picker(uid, [])
+
+    elif data.startswith("pick_num_"):
+        await query.answer()
+        num = int(data.split("_")[2])
+        
+        if uid not in user_states or user_states[uid].get("action") != "picking_numbers":
+            await bot.send_message(uid, "❌ Session expired. Please buy a new ticket.")
+            return
+        
+        selected = user_states[uid].get("selected_numbers", [])
+        
+        if num in selected:
+            selected.remove(num)
+        elif len(selected) < 5:
+            selected.append(num)
+        
+        user_states[uid]["selected_numbers"] = selected
+        await show_number_picker(uid, selected)
+
+    elif data == "confirm_numbers":
+        await query.answer()
+        
+        if uid not in user_states or user_states[uid].get("action") != "picking_numbers":
+            await bot.send_message(uid, "❌ Session expired. Please buy a new ticket.")
+            return
+        
+        state = user_states[uid]
+        selected = state.get("selected_numbers", [])
+        
+        if len(selected) != 5:
+            await bot.send_message(uid, f"❌ Please select exactly 5 numbers. You have selected {len(selected)}.")
+            return
+        
+        tx_signature = state.get("tx_signature")
+        stake_amount = state.get("stake_amount", float(TICKET_PRICE))
+        
+        round_stake_id, round_id = get_or_create_active_round_stake(Decimal(str(stake_amount)))
+        
+        if not round_stake_id:
+            await bot.send_message(uid, "❌ No active round. Please try again later.")
+            del user_states[uid]
+            return
+        
+        add_result = add_round_participant(round_stake_id, uid, sorted(selected), tx_signature)
+        
+        del user_states[uid]
+        
+        if add_result["success"]:
+            participant_id = add_result["participant_id"]
+            ticket_count = add_result.get("ticket_count", 1)
+            
+            round_winning_numbers = get_round_winning_numbers(round_id)
+            player_matched = set(selected) == set(round_winning_numbers) if round_winning_numbers else False
+            
+            if player_matched:
+                response_msg = "🎉 <b>Numbers Locked In!</b>\n\nGood luck! Results will be revealed when the round ends."
+            else:
+                response_msg = "📝 <b>Ticket Confirmed!</b>\n\nBetter luck next round! Results revealed when round ends."
+            
+            await bot.send_message(uid,
+                f"✅ <b>Ticket Purchased Successfully!</b>\n\n"
+                f"🎫 Ticket #{participant_id}\n"
+                f"🎲 Your Numbers: <b>{', '.join(map(str, sorted(selected)))}</b>\n"
+                f"💰 Stake: {stake_amount} SOL\n"
+                f"📝 TX: <code>{tx_signature[:20]}...</code>\n\n"
+                f"{response_msg}",
+                parse_mode="HTML"
+            )
+            
+            await announce_new_ticket(uid, participant_id, Decimal(str(stake_amount)), sorted(selected), round_id, ticket_count)
+        else:
+            await bot.send_message(uid,
+                f"❌ <b>Failed to register ticket</b>\n\n"
+                f"Error: {add_result.get('error')}\n\n"
+                f"Payment was processed. Contact support with TX:\n"
+                f"<code>{tx_signature}</code>",
+                parse_mode="HTML"
+            )
+
+    elif data == "cancel_number_pick":
+        await query.answer()
+        if uid in user_states:
+            del user_states[uid]
+        await bot.send_message(uid,
+            "❌ <b>Number selection cancelled</b>\n\n"
+            "Note: Your payment was already processed.\n"
+            "Please contact support if you need assistance.",
+            parse_mode="HTML"
+        )
         await start_private_play(uid)
 
     elif data == "my_wallets":
