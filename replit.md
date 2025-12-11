@@ -168,3 +168,9 @@ Preferred communication style: Simple, everyday language.
 - **PostgreSQL Connection Pooling:** 2-10 pooled connections for faster queries
 - **New Tables:** `security_questions` for PIN recovery
 - **Answer Hashing:** Security question answers are hashed with SHA256
+
+### Button Response Speed Fix (December 11, 2025)
+- **Balance Caching:** Jackpot balance is now cached for 30 seconds to speed up Start/Back button responses
+- **Faster UI:** No more waiting for Solana RPC on every button press
+- **Referral Query Fix:** All referral functions now use q() wrapper for PostgreSQL compatibility
+- **Fixed IndexError:** Resolved "tuple index out of range" error in referral code lookup

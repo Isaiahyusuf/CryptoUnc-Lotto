@@ -1,6 +1,7 @@
 # Wallet.py - Real Solana Mainnet Wallet Management
 import os
 import sqlite3
+import time
 from db import get_db_conn, q, USE_POSTGRES
 
 if USE_POSTGRES:
@@ -11,6 +12,10 @@ else:
 from decimal import Decimal
 from typing import Optional, List, Dict
 import asyncio
+
+# Balance cache for faster responses (especially for jackpot display)
+_balance_cache = {}
+BALANCE_CACHE_TTL = 30  # Cache balance for 30 seconds
 
 from encryption import encrypt_private_key, decrypt_private_key, is_encryption_configured
 
@@ -99,12 +104,24 @@ def init_wallet_db():
     pass
 
 
-async def get_real_balance(wallet_address: str) -> Decimal:
+async def get_real_balance(wallet_address: str, use_cache: bool = True) -> Decimal:
     """
     Fetch real balance from Solana mainnet using lamports conversion.
     Uses all configured RPC endpoints with automatic failover.
     Returns balance in SOL.
+    
+    Args:
+        wallet_address: Solana wallet address
+        use_cache: If True, uses cached balance if available (default: True)
     """
+    global _balance_cache
+    
+    # Check cache first (for faster button responses)
+    if use_cache and wallet_address in _balance_cache:
+        cached_time, cached_balance = _balance_cache[wallet_address]
+        if time.time() - cached_time < BALANCE_CACHE_TTL:
+            return cached_balance
+    
     last_error = None
     for rpc in RPC_ENDPOINTS:
         try:
@@ -117,7 +134,10 @@ async def get_real_balance(wallet_address: str) -> Decimal:
                     lamports = response.value
                     sol_balance = Decimal(lamports) / Decimal(1_000_000_000)
                     print(f"Balance: {sol_balance} SOL ({lamports} lamports)")
+                    # Cache the result
+                    _balance_cache[wallet_address] = (time.time(), sol_balance)
                     return sol_balance
+                _balance_cache[wallet_address] = (time.time(), Decimal("0"))
                 return Decimal("0")
         except Exception as e:
             last_error = e
@@ -125,6 +145,9 @@ async def get_real_balance(wallet_address: str) -> Decimal:
             continue
     
     print(f"Error fetching balance for {wallet_address}: {last_error}")
+    # Return cached value if available, even if expired (better than 0)
+    if wallet_address in _balance_cache:
+        return _balance_cache[wallet_address][1]
     return Decimal("0")
 
 
