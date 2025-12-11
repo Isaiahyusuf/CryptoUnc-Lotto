@@ -51,28 +51,28 @@ Preferred communication style: Simple, everyday language.
 
 ### Lottery System Design
 
-**Stake-Based Rounds:**
-- Multiple concurrent lottery rounds with different stake levels (0.025 SOL to 5 SOL)
-- Each stake level maintains separate participant pools
-- Minimum 10 players required per stake level to trigger a draw
+**Hourly Rounds (24 per day):**
+- Fixed ticket price: 0.025 SOL per ticket
+- 24 hourly rounds (one every hour, 60-minute duration each)
+- Unlimited players can join each round
+- Each ticket = 5 random numbers (1-40)
 
-**Draw Triggers:**
-- Automatic draw when 10 players join a stake level
-- Time-based draw trigger (30 minutes after first participant joins)
-- Draws process asynchronously via background scheduler
+**Draw & Winner Selection:**
+- Draw triggers automatically at the end of each round
+- Bot generates 5 winning numbers (1-40) at round creation time
+- Player must match ALL 5 numbers to win the ENTIRE jackpot
+- If no winner, jackpot carries forward to next round
 
-**Prize Distribution:**
-- 80% of total pool goes to winner
-- 20% goes to team wallet
-- Transaction fees deducted from winner's portion
-- Automatic SOL transfers using owner wallet private key
+**Fee & Prize Distribution:**
+- 20% of each ticket goes to TEAM_WALLET immediately on purchase
+- 80% of each ticket goes to OWNER_WALLET (the jackpot)
+- Winner receives the ENTIRE owner wallet balance when they match all 5
 - Transaction signatures stored and announced publicly
 
-**Refund System:**
-- Automatic refunds if minimum players not reached
-- Refund amount = stake minus 2% network fee
-- Retry logic with up to 3 attempts per refund
-- All participants notified via Telegram
+**Jackpot Display:**
+- Real-time owner wallet balance shown as jackpot everywhere
+- Jackpot grows with each ticket purchase until someone wins
+- No database pot tracking - uses on-chain balance directly
 
 ### Cryptographic Randomness
 

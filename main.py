@@ -1424,16 +1424,13 @@ def process_round_draw(round_id: int):
         if matches == 5:  # JACKPOT - All 5 numbers match!
             jackpot_winners.append((participant_id, user_id, stake_amount))
     
-    # Get current pot amount (includes carryover from previous rounds)
-    current_pot = get_current_pot()
-    total_pot = current_pot + round_total
+    # Note: Jackpot is now the owner wallet balance (on-chain)
+    # The prize_amount will be fetched from owner wallet when paying winner
     
     result = {
         "winning_numbers": winning_numbers,
         "player_count": len(participants),
         "round_total": round_total,
-        "pot_before": current_pot,
-        "total_pot": total_pot,
         "round_id": round_id
     }
     
@@ -1443,6 +1440,8 @@ def process_round_draw(round_id: int):
             winner = jackpot_winners[0]
         else:
             # Multiple winners - split equally or select one deterministically
+            tx_signatures_ordered = [str(p[3]) for p in participants]
+            seed = generate_provable_seed(round_id, "draw", *tx_signatures_ordered)
             winner_seed = generate_provable_seed(seed, "tiebreaker", len(jackpot_winners))
             winner_idx = select_winner_deterministically(winner_seed, len(jackpot_winners))
             winner = jackpot_winners[winner_idx]
@@ -1450,36 +1449,21 @@ def process_round_draw(round_id: int):
         result["has_winner"] = True
         result["winner_user_id"] = winner[1]
         result["winner_participant_id"] = winner[0]
-        result["prize_amount"] = total_pot
         result["jackpot_winners_count"] = len(jackpot_winners)
-        
-        # Reset pot to zero after jackpot win
-        reset_pot()
         
         # Update database
         c.execute("""
             UPDATE round_stakes
-            SET status = 'drawn', winner_user_id = ?, prize_amount = ?
+            SET status = 'drawn', winner_user_id = ?
             WHERE round_id = ?
-        """, (winner[1], float(total_pot), round_id))
+        """, (winner[1], round_id))
         conn.commit()
         
         print(f"🎉 JACKPOT WINNER! User {winner[1]} matched all 5 numbers!")
-        print(f"   Prize: {total_pot} SOL")
     else:
-        # No winner - take 20% team fee, carry 80% forward
-        team_fee = round_total * TEAM_FEE_PERCENTAGE
-        carryover = round_total * (Decimal("1") - TEAM_FEE_PERCENTAGE)
-        new_pot = current_pot + carryover
-        
-        # Update pot with carryover
-        set_current_pot(new_pot)
-        
+        # No winner - jackpot carries forward (already in owner wallet)
         result["has_winner"] = False
         result["winner_user_id"] = None
-        result["team_fee"] = team_fee
-        result["carryover"] = carryover
-        result["new_pot"] = new_pot
         
         # Update database
         c.execute("""
@@ -1490,10 +1474,8 @@ def process_round_draw(round_id: int):
         conn.commit()
         
         print(f"📊 No jackpot winner this round.")
+        print(f"   Round participants: {len(participants)}")
         print(f"   Round stakes: {round_total} SOL")
-        print(f"   Team fee (20%): {team_fee} SOL")
-        print(f"   Carryover (80%): {carryover} SOL")
-        print(f"   New pot total: {new_pot} SOL")
     
     conn.close()
     return result
@@ -3554,10 +3536,12 @@ async def cmd_force_draw(message: types.Message):
         result = process_round_stake_draw(stake_id)
         
         if result:
+            winner = result.get('winner_user_id', 'None')
+            prize = result.get('prize_amount', 'TBD')
             await message.reply(
                 f"✅ Draw completed!\n\n"
-                f"Winner: {result['winner_user_id']}\n"
-                f"Prize: {result['prize_amount']} SOL\n"
+                f"Winner: {winner}\n"
+                f"Prize: {prize} SOL\n"
                 f"Winning numbers: {', '.join(map(str, result['winning_numbers']))}\n"
                 f"Players: {result['player_count']}"
             )
@@ -3745,11 +3729,16 @@ async def announce_draw_result(round_id: int, result: dict):
     try:
         winning_nums = result['winning_numbers']
         player_count = result['player_count']
-        total_pot = result['total_pot']
+        
+        # Get current jackpot from owner wallet
+        try:
+            jackpot = await get_real_balance(OWNER_WALLET)
+        except:
+            jackpot = Decimal("0")
         
         if result.get("has_winner"):
             winner_id = result['winner_user_id']
-            prize = result['prize_amount']
+            prize = result.get('prize_amount', jackpot)
             
             conn = get_db_conn()
             c = conn.cursor()
@@ -3765,25 +3754,20 @@ async def announce_draw_result(round_id: int, result: dict):
                 f"🎲 Winning Numbers: <b>{', '.join(map(str, winning_nums))}</b>\n\n"
                 f"🏆 Winner: @{winner_name}\n"
                 f"💰 JACKPOT: <b>{prize} SOL</b>\n\n"
-                f"Someone matched ALL 5 numbers and won the ENTIRE POT!\n"
-                f"The pot has been reset to 0. A new jackpot starts now!\n\n"
+                f"Someone matched ALL 5 numbers and won the ENTIRE JACKPOT!\n"
+                f"A new jackpot starts now!\n\n"
                 f"🍀 Congratulations!!! 🍀"
             )
             
             await send_to_announcements(message_text)
         else:
-            new_pot = result['new_pot']
-            team_fee = result['team_fee']
-            
             message_text = (
                 f"📊 <b>Round {round_id} Results</b>\n\n"
                 f"👥 Players: {player_count}\n"
                 f"🎲 Winning Numbers: <b>{', '.join(map(str, winning_nums))}</b>\n\n"
                 f"❌ No one matched all 5 numbers this round.\n\n"
-                f"💼 Team fee (20%): {team_fee} SOL\n"
-                f"💰 Carryover (80%): Added to pot\n\n"
-                f"🏆 <b>Current Jackpot: {new_pot} SOL</b>\n\n"
-                f"The pot keeps growing! Join the next round for a chance to win it all!"
+                f"🏆 <b>Current Jackpot: {jackpot} SOL</b>\n\n"
+                f"The jackpot keeps growing! Join the next round for a chance to win it all!"
             )
             
             await send_to_announcements(message_text)
@@ -3850,22 +3834,38 @@ async def dm_round_results_to_players(round_id: int, result: dict):
 
 
 async def pay_jackpot_winner(result: dict):
-    """Pay the entire jackpot pot to the winner"""
+    """Pay the entire jackpot (owner wallet balance) to the winner"""
     try:
         winner_id = result['winner_user_id']
-        prize_amount = result['prize_amount']
         
         winner_wallet = get_active_wallet(winner_id)
         if not winner_wallet:
             print(f"❌ Winner {winner_id} has no active wallet!")
             return
         
+        # Get current owner wallet balance as jackpot prize
+        try:
+            jackpot_balance = await get_real_balance(OWNER_WALLET)
+        except:
+            print(f"❌ Could not fetch owner wallet balance!")
+            return
+        
+        if jackpot_balance <= Decimal("0.001"):
+            print(f"❌ Owner wallet balance too low: {jackpot_balance} SOL")
+            return
+        
+        # Reserve some for transaction fees
+        prize_amount = jackpot_balance - Decimal("0.001")
+        
         print(f"💰 Sending JACKPOT {prize_amount} SOL to winner {winner_id} at {winner_wallet[:8]}...")
         
-        prize_result = await send_sol(OWNER_WALLET, winner_wallet, Decimal(str(prize_amount)), OWNER_WALLET_PRIVATE_KEY)
+        prize_result = await send_sol(OWNER_WALLET, winner_wallet, prize_amount, OWNER_WALLET_PRIVATE_KEY)
         
         if prize_result and prize_result.get("success"):
             print(f"✅ Jackpot paid! TX: {prize_result['signature'][:16]}...")
+            
+            # Update result with actual prize amount for announcements
+            result['prize_amount'] = prize_amount
             
             # Notify winner
             await bot.send_message(
@@ -3885,25 +3885,13 @@ async def pay_jackpot_winner(result: dict):
 
 
 async def pay_team_fee(result: dict):
-    """Pay team their 20% fee when there's no winner"""
-    try:
-        team_fee = result.get('team_fee')
-        if not team_fee or team_fee <= 0:
-            return
-        
-        if TEAM_WALLET and TEAM_WALLET != OWNER_WALLET:
-            print(f"💼 Sending team fee {team_fee} SOL to team wallet...")
-            
-            team_result = await send_sol(OWNER_WALLET, TEAM_WALLET, Decimal(str(team_fee)), OWNER_WALLET_PRIVATE_KEY)
-            
-            if team_result and team_result.get("success"):
-                print(f"✅ Team fee paid! TX: {team_result['signature'][:16]}...")
-            else:
-                print(f"⚠️ Team fee payment failed: {team_result.get('error')}")
-        else:
-            print(f"ℹ️ Team fee ({team_fee} SOL) kept in owner wallet")
-    except Exception as e:
-        print(f"❌ Team fee payment error: {e}")
+    """
+    Team fee is already paid on each ticket purchase (20% goes to TEAM_WALLET).
+    This function is kept for logging purposes but no longer sends additional payments.
+    """
+    # Team already received 20% on each ticket purchase
+    # No additional payment needed at round end
+    print(f"ℹ️ Team fee already collected on ticket purchases (20% per ticket)")
 
 
 async def send_to_announcements(message_text: str, keyboard=None):
@@ -4034,7 +4022,12 @@ async def announce_round_opened(round_id: int):
 async def announce_winner(round_id: int, stake_amount: float, result: dict):
     try:
         winner_id = result['winner_user_id']
-        prize = result['prize_amount']
+        prize = result.get('prize_amount')
+        if not prize:
+            try:
+                prize = await get_real_balance(OWNER_WALLET)
+            except:
+                prize = "Unknown"
         players = result['player_count']
         winning_nums = result['winning_numbers']
         
@@ -4079,30 +4072,31 @@ async def announce_refunds(round_id: int, stake_amount: float, refund_count: int
 
 
 async def distribute_prize(stake_id: int, result: dict):
+    """Legacy function for force_draw admin command - now uses pay_jackpot_winner logic"""
     try:
         winner_id = result['winner_user_id']
-        prize_amount = result['prize_amount']
         
         winner_wallet = get_active_wallet(winner_id)
         if not winner_wallet:
             print(f"❌ Winner {winner_id} has no active wallet!")
             return
         
-        team_amount = Decimal(str(prize_amount)) * Decimal("0.2") / Decimal("0.8")
+        # Get owner wallet balance as prize (team already received 20% on purchase)
+        try:
+            jackpot_balance = await get_real_balance(OWNER_WALLET)
+        except:
+            print(f"❌ Could not fetch owner wallet balance!")
+            return
         
-        if TEAM_WALLET and TEAM_WALLET != OWNER_WALLET:
-            try:
-                team_result = await send_sol(OWNER_WALLET, TEAM_WALLET, team_amount, OWNER_WALLET_PRIVATE_KEY)
-                if team_result and team_result.get("success"):
-                    print(f"💼 Team payment sent: {team_amount} SOL - TX: {team_result.get('signature', '')[:16]}...")
-                else:
-                    print(f"⚠️ Team payment failed: {team_result.get('error', 'Unknown error')}")
-            except Exception as e:
-                print(f"⚠️ Team payment exception: {e}")
+        if jackpot_balance <= Decimal("0.001"):
+            print(f"❌ Owner wallet balance too low: {jackpot_balance} SOL")
+            return
+        
+        prize_amount = jackpot_balance - Decimal("0.001")  # Reserve for tx fee
         
         try:
             print(f"💰 Sending prize to winner {winner_id}: {prize_amount} SOL to {winner_wallet[:8]}...{winner_wallet[-8:]}")
-            prize_result = await send_sol(OWNER_WALLET, winner_wallet, Decimal(str(prize_amount)), OWNER_WALLET_PRIVATE_KEY)
+            prize_result = await send_sol(OWNER_WALLET, winner_wallet, prize_amount, OWNER_WALLET_PRIVATE_KEY)
             
             if prize_result and prize_result.get("success"):
                 conn = get_db_conn()
