@@ -2279,7 +2279,7 @@ async def cmd_start(message: types.Message):
         f"• <b>Pick your 5 lucky numbers (1-40)</b>\n"
         f"• Match ALL 5 to win the ENTIRE jackpot!\n"
         f"• No winner? Prize rolls over to next round!\n\n"
-        f"💰 Ticket Price: {TICKET_PRICE} SOL\n"
+        f"💰 Ticket Price: {TICKET_PRICE} SOL (Unlimited tickets!)\n"
         f"⏰ 24 Hourly Rounds (one per hour)\n\n"
         f"🎁 Referral rewards coming soon!",
         reply_markup=keyboard,
@@ -3084,7 +3084,7 @@ async def inline_handler(query: types.CallbackQuery):
             f"1. Create or import a Solana wallet\n"
             f"2. Deposit SOL to your wallet\n"
             f"3. Tap 'Play Now' and join a round\n"
-            f"4. Ticket price: <b>{TICKET_PRICE} SOL</b>\n"
+            f"4. Ticket price: <b>{TICKET_PRICE} SOL</b> (Unlimited tickets!)\n"
             f"5. <b>Pick your 5 lucky numbers (1-40)</b>\n"
             f"6. Wait for the round to end\n\n"
             f"<b>🎯 Round Schedule:</b>\n"
@@ -5286,7 +5286,7 @@ async def announce_round_opened(round_id: int):
             f"• Pick 5 numbers (1-40)\n"
             f"• Match ALL 5 to win the ENTIRE jackpot!\n"
             f"• If no winner, jackpot carries forward\n\n"
-            f"💰 <b>Ticket Price:</b> {TICKET_PRICE} SOL\n"
+            f"💰 <b>Ticket Price:</b> {TICKET_PRICE} SOL (Unlimited tickets!)\n"
             f"⏰ <b>Round Duration:</b> {ROUND_DURATION_MINUTES} minutes\n\n"
             f"Join now for a chance to win the jackpot!"
         )
