@@ -766,6 +766,69 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_round_participants_stake ON round_participants(round_stake_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_round_participants_user ON round_participants(user_id)")
     
+    # Referrals table - tracks referral relationships
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS referrals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            referrer_id INTEGER NOT NULL,
+            referred_id INTEGER NOT NULL UNIQUE,
+            referral_code TEXT NOT NULL,
+            bonus_earned REAL DEFAULT 0,
+            tickets_from_referral INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (referrer_id) REFERENCES users(user_id),
+            FOREIGN KEY (referred_id) REFERENCES users(user_id)
+        )
+    """)
+    c.execute("CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_referrals_code ON referrals(referral_code)")
+    
+    # User stats table - tracks player statistics
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS user_stats (
+            user_id INTEGER PRIMARY KEY,
+            total_tickets INTEGER DEFAULT 0,
+            total_spent REAL DEFAULT 0,
+            total_won REAL DEFAULT 0,
+            wins INTEGER DEFAULT 0,
+            biggest_win REAL DEFAULT 0,
+            referral_earnings REAL DEFAULT 0,
+            vip_tier INTEGER DEFAULT 0,
+            notification_enabled INTEGER DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(user_id)
+        )
+    """)
+    
+    # Draw history table - for provably fair verification
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS draw_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            round_id INTEGER NOT NULL,
+            winning_numbers TEXT NOT NULL,
+            seed_data TEXT,
+            player_count INTEGER,
+            total_pot REAL,
+            winner_id INTEGER,
+            prize_amount REAL,
+            tx_signature TEXT,
+            drawn_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (round_id) REFERENCES scheduled_rounds(round_id)
+        )
+    """)
+    c.execute("CREATE INDEX IF NOT EXISTS idx_draw_history_round ON draw_history(round_id)")
+    
+    # Jackpot seeds table - admin additions to jackpot
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS jackpot_seeds (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            admin_id INTEGER NOT NULL,
+            amount REAL NOT NULL,
+            tx_signature TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
     conn.commit()
     conn.close()
 
@@ -805,8 +868,441 @@ def save_user(user_id: int, username: str):
     conn = get_db_conn()
     c = conn.cursor()
     c.execute("INSERT OR IGNORE INTO users(user_id, username) VALUES (?, ?)", (user_id, username))
+    # Also initialize user stats
+    c.execute("INSERT OR IGNORE INTO user_stats(user_id) VALUES (?)", (user_id,))
     conn.commit()
     conn.close()
+
+
+# ==============================================================================
+# REFERRAL SYSTEM
+# ==============================================================================
+
+def generate_referral_code(user_id: int) -> str:
+    """Generate unique referral code for a user"""
+    import base64
+    code_data = f"{user_id}_{secrets.token_hex(4)}"
+    return base64.urlsafe_b64encode(code_data.encode()).decode()[:10].upper()
+
+
+def get_user_referral_code(user_id: int) -> str:
+    """Get or create referral code for user"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("SELECT referral_code FROM referrals WHERE referrer_id = ? LIMIT 1", (user_id,))
+    row = c.fetchone()
+    if row:
+        conn.close()
+        return row[0]
+    
+    # Create new code
+    code = generate_referral_code(user_id)
+    # Store in meta table for lookup
+    c.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", 
+              (f"ref_code_{user_id}", code))
+    conn.commit()
+    conn.close()
+    return code
+
+
+def get_referrer_by_code(code: str) -> Optional[int]:
+    """Get referrer user_id from referral code"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("SELECT value FROM meta WHERE key LIKE 'ref_code_%' AND value = ?", (code.upper(),))
+    row = c.fetchone()
+    conn.close()
+    if row:
+        # Extract user_id from key
+        c2 = get_db_conn()
+        cursor = c2.cursor()
+        cursor.execute("SELECT key FROM meta WHERE value = ?", (code.upper(),))
+        key_row = cursor.fetchone()
+        c2.close()
+        if key_row:
+            return int(key_row[0].replace("ref_code_", ""))
+    return None
+
+
+def register_referral(referrer_id: int, referred_id: int, code: str) -> bool:
+    """Register a new referral relationship"""
+    if referrer_id == referred_id:
+        return False
+    
+    conn = get_db_conn()
+    c = conn.cursor()
+    try:
+        c.execute("""
+            INSERT INTO referrals (referrer_id, referred_id, referral_code)
+            VALUES (?, ?, ?)
+        """, (referrer_id, referred_id, code))
+        conn.commit()
+        conn.close()
+        return True
+    except:
+        conn.close()
+        return False
+
+
+def apply_referral_bonus(referred_id: int, ticket_amount: Decimal) -> Optional[Dict]:
+    """Apply referral bonus when referred user buys ticket. Returns bonus info or None."""
+    REFERRAL_BONUS_PERCENT = Decimal("0.05")  # 5% of ticket goes to referrer
+    
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("SELECT referrer_id FROM referrals WHERE referred_id = ?", (referred_id,))
+    row = c.fetchone()
+    
+    if not row:
+        conn.close()
+        return None
+    
+    referrer_id = row[0]
+    bonus_amount = ticket_amount * REFERRAL_BONUS_PERCENT
+    
+    # Update referral stats
+    c.execute("""
+        UPDATE referrals 
+        SET bonus_earned = bonus_earned + ?, tickets_from_referral = tickets_from_referral + 1
+        WHERE referred_id = ?
+    """, (float(bonus_amount), referred_id))
+    
+    # Update referrer's stats
+    c.execute("""
+        UPDATE user_stats SET referral_earnings = referral_earnings + ?
+        WHERE user_id = ?
+    """, (float(bonus_amount), referrer_id))
+    
+    conn.commit()
+    conn.close()
+    
+    return {"referrer_id": referrer_id, "bonus": bonus_amount}
+
+
+def get_referral_stats(user_id: int) -> Dict:
+    """Get referral statistics for a user"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    
+    c.execute("""
+        SELECT COUNT(*), SUM(bonus_earned), SUM(tickets_from_referral)
+        FROM referrals WHERE referrer_id = ?
+    """, (user_id,))
+    row = c.fetchone()
+    
+    conn.close()
+    return {
+        "total_referrals": row[0] or 0,
+        "total_bonus": Decimal(str(row[1] or 0)),
+        "total_tickets": row[2] or 0
+    }
+
+
+# ==============================================================================
+# USER STATS & VIP TIERS
+# ==============================================================================
+
+VIP_TIERS = {
+    0: {"name": "Bronze", "min_tickets": 0, "bonus_multiplier": Decimal("1.0")},
+    1: {"name": "Silver", "min_tickets": 10, "bonus_multiplier": Decimal("1.1")},
+    2: {"name": "Gold", "min_tickets": 50, "bonus_multiplier": Decimal("1.2")},
+    3: {"name": "Platinum", "min_tickets": 100, "bonus_multiplier": Decimal("1.3")},
+    4: {"name": "Diamond", "min_tickets": 500, "bonus_multiplier": Decimal("1.5")},
+}
+
+
+def compute_vip_tier(total_tickets: int) -> int:
+    """Compute VIP tier based on total tickets purchased"""
+    tier = 0
+    for t, info in VIP_TIERS.items():
+        if total_tickets >= info["min_tickets"]:
+            tier = t
+    return tier
+
+
+def update_user_stats(user_id: int, tickets: int = 0, spent: Decimal = Decimal("0"), 
+                      won: Decimal = Decimal("0"), is_win: bool = False):
+    """Update user statistics after purchase or win"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    
+    # Ensure user stats exist
+    c.execute("INSERT OR IGNORE INTO user_stats(user_id) VALUES (?)", (user_id,))
+    
+    # Get current stats
+    c.execute("SELECT total_tickets, biggest_win FROM user_stats WHERE user_id = ?", (user_id,))
+    row = c.fetchone()
+    current_tickets = row[0] if row else 0
+    biggest_win = Decimal(str(row[1])) if row and row[1] else Decimal("0")
+    
+    # Update stats
+    new_tickets = current_tickets + tickets
+    new_tier = compute_vip_tier(new_tickets)
+    new_biggest = max(biggest_win, won)
+    
+    c.execute("""
+        UPDATE user_stats SET 
+            total_tickets = total_tickets + ?,
+            total_spent = total_spent + ?,
+            total_won = total_won + ?,
+            wins = wins + ?,
+            biggest_win = ?,
+            vip_tier = ?
+        WHERE user_id = ?
+    """, (tickets, float(spent), float(won), 1 if is_win else 0, float(new_biggest), new_tier, user_id))
+    
+    conn.commit()
+    conn.close()
+    return new_tier
+
+
+def get_user_stats(user_id: int) -> Dict:
+    """Get user statistics"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    
+    c.execute("INSERT OR IGNORE INTO user_stats(user_id) VALUES (?)", (user_id,))
+    c.execute("SELECT * FROM user_stats WHERE user_id = ?", (user_id,))
+    row = c.fetchone()
+    conn.close()
+    
+    if row:
+        tier = row[7] if len(row) > 7 else 0
+        return {
+            "user_id": row[0],
+            "total_tickets": row[1] or 0,
+            "total_spent": Decimal(str(row[2] or 0)),
+            "total_won": Decimal(str(row[3] or 0)),
+            "wins": row[4] or 0,
+            "biggest_win": Decimal(str(row[5] or 0)),
+            "referral_earnings": Decimal(str(row[6] or 0)),
+            "vip_tier": tier,
+            "vip_name": VIP_TIERS.get(tier, VIP_TIERS[0])["name"],
+            "notification_enabled": row[8] if len(row) > 8 else 1
+        }
+    return {"total_tickets": 0, "vip_tier": 0, "vip_name": "Bronze"}
+
+
+# ==============================================================================
+# LEADERBOARD
+# ==============================================================================
+
+def get_top_winners(limit: int = 10) -> List[Dict]:
+    """Get top winners by total amount won"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("""
+        SELECT us.user_id, u.username, us.total_won, us.wins, us.vip_tier
+        FROM user_stats us
+        LEFT JOIN users u ON us.user_id = u.user_id
+        WHERE us.total_won > 0
+        ORDER BY us.total_won DESC
+        LIMIT ?
+    """, (limit,))
+    rows = c.fetchall()
+    conn.close()
+    
+    return [{
+        "user_id": r[0],
+        "username": r[1] or f"User{r[0]}",
+        "total_won": Decimal(str(r[2])),
+        "wins": r[3],
+        "vip_tier": r[4]
+    } for r in rows]
+
+
+def get_top_players(limit: int = 10) -> List[Dict]:
+    """Get top players by total tickets purchased"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("""
+        SELECT us.user_id, u.username, us.total_tickets, us.total_spent, us.vip_tier
+        FROM user_stats us
+        LEFT JOIN users u ON us.user_id = u.user_id
+        WHERE us.total_tickets > 0
+        ORDER BY us.total_tickets DESC
+        LIMIT ?
+    """, (limit,))
+    rows = c.fetchall()
+    conn.close()
+    
+    return [{
+        "user_id": r[0],
+        "username": r[1] or f"User{r[0]}",
+        "total_tickets": r[2],
+        "total_spent": Decimal(str(r[3])),
+        "vip_tier": r[4]
+    } for r in rows]
+
+
+# ==============================================================================
+# PARTIAL MATCH PRIZES
+# ==============================================================================
+
+PARTIAL_PRIZES = {
+    4: Decimal("0.1"),   # Match 4 = 0.1 SOL
+    3: Decimal("0.02"),  # Match 3 = 0.02 SOL
+}
+
+
+def count_matching_numbers(player_nums: List[int], winning_nums: List[int]) -> int:
+    """Count how many numbers match"""
+    return len(set(player_nums) & set(winning_nums))
+
+
+def calculate_partial_prizes(participants: List, winning_numbers: List[int]) -> List[Dict]:
+    """Calculate partial prizes for participants who matched 3 or 4 numbers"""
+    partial_winners = []
+    
+    for participant_id, user_id, numbers_str, tx_sig, stake_amount in participants:
+        user_numbers = str_to_numbers(numbers_str)
+        matches = count_matching_numbers(user_numbers, winning_numbers)
+        
+        if matches in PARTIAL_PRIZES:
+            partial_winners.append({
+                "participant_id": participant_id,
+                "user_id": user_id,
+                "matches": matches,
+                "prize": PARTIAL_PRIZES[matches],
+                "numbers": user_numbers
+            })
+    
+    return partial_winners
+
+
+# ==============================================================================
+# DRAW HISTORY & PROVABLY FAIR
+# ==============================================================================
+
+def save_draw_history(round_id: int, winning_numbers: List[int], seed_data: str, 
+                      player_count: int, total_pot: Decimal, winner_id: int = None,
+                      prize_amount: Decimal = None, tx_signature: str = None):
+    """Save draw to history for provably fair verification"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO draw_history 
+        (round_id, winning_numbers, seed_data, player_count, total_pot, winner_id, prize_amount, tx_signature)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (round_id, numbers_to_str(winning_numbers), seed_data, player_count, 
+          float(total_pot), winner_id, float(prize_amount) if prize_amount else None, tx_signature))
+    conn.commit()
+    conn.close()
+
+
+def get_draw_history(limit: int = 20) -> List[Dict]:
+    """Get recent draw history"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("""
+        SELECT round_id, winning_numbers, player_count, total_pot, winner_id, prize_amount, drawn_at
+        FROM draw_history
+        ORDER BY drawn_at DESC
+        LIMIT ?
+    """, (limit,))
+    rows = c.fetchall()
+    conn.close()
+    
+    return [{
+        "round_id": r[0],
+        "winning_numbers": str_to_numbers(r[1]),
+        "player_count": r[2],
+        "total_pot": Decimal(str(r[3] or 0)),
+        "winner_id": r[4],
+        "prize_amount": Decimal(str(r[5] or 0)),
+        "drawn_at": r[6]
+    } for r in rows]
+
+
+def get_overall_stats() -> Dict:
+    """Get overall lottery statistics"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    
+    # Total draws
+    c.execute("SELECT COUNT(*) FROM draw_history")
+    total_draws = c.fetchone()[0] or 0
+    
+    # Total prizes paid
+    c.execute("SELECT SUM(prize_amount) FROM draw_history WHERE winner_id IS NOT NULL")
+    total_paid = Decimal(str(c.fetchone()[0] or 0))
+    
+    # Total players
+    c.execute("SELECT COUNT(*) FROM user_stats WHERE total_tickets > 0")
+    total_players = c.fetchone()[0] or 0
+    
+    # Total tickets sold
+    c.execute("SELECT SUM(total_tickets) FROM user_stats")
+    total_tickets = c.fetchone()[0] or 0
+    
+    # Biggest jackpot
+    c.execute("SELECT MAX(prize_amount) FROM draw_history")
+    biggest_jackpot = Decimal(str(c.fetchone()[0] or 0))
+    
+    conn.close()
+    
+    return {
+        "total_draws": total_draws,
+        "total_paid": total_paid,
+        "total_players": total_players,
+        "total_tickets": total_tickets,
+        "biggest_jackpot": biggest_jackpot
+    }
+
+
+# ==============================================================================
+# JACKPOT SEEDING (Admin)
+# ==============================================================================
+
+def record_jackpot_seed(admin_id: int, amount: Decimal, tx_signature: str = None):
+    """Record admin jackpot seed contribution"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO jackpot_seeds (admin_id, amount, tx_signature)
+        VALUES (?, ?, ?)
+    """, (admin_id, float(amount), tx_signature))
+    conn.commit()
+    conn.close()
+
+
+def get_total_seeded() -> Decimal:
+    """Get total amount seeded into jackpot by admins"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("SELECT SUM(amount) FROM jackpot_seeds")
+    row = c.fetchone()
+    conn.close()
+    return Decimal(str(row[0] or 0))
+
+
+# ==============================================================================
+# NOTIFICATIONS
+# ==============================================================================
+
+def toggle_notifications(user_id: int) -> bool:
+    """Toggle notification preference for user. Returns new state."""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("INSERT OR IGNORE INTO user_stats(user_id) VALUES (?)", (user_id,))
+    c.execute("SELECT notification_enabled FROM user_stats WHERE user_id = ?", (user_id,))
+    row = c.fetchone()
+    current = row[0] if row else 1
+    new_state = 0 if current else 1
+    c.execute("UPDATE user_stats SET notification_enabled = ? WHERE user_id = ?", (new_state, user_id))
+    conn.commit()
+    conn.close()
+    return bool(new_state)
+
+
+def get_users_with_notifications() -> List[int]:
+    """Get list of user IDs with notifications enabled"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("SELECT user_id FROM user_stats WHERE notification_enabled = 1")
+    rows = c.fetchall()
+    conn.close()
+    return [r[0] for r in rows]
 
 
 def add_entry(user_id: int, round_num: int, numbers, stake_amount: float, tx_signature: str = "", paid=0):
@@ -1019,6 +1515,13 @@ def add_round_participant(round_stake_id: int, user_id: int, numbers: list, tx_s
         
         conn.commit()
         conn.close()
+        
+        # Update user stats (tickets purchased + amount spent)
+        update_user_stats(user_id, tickets=1, spent=Decimal(str(stake_amount)))
+        
+        # Apply referral bonus if applicable (tracked but not paid immediately)
+        apply_referral_bonus(user_id, Decimal(str(stake_amount)))
+        
         return {"success": True, "participant_id": participant_id, "round_id": round_id, "stake_amount": stake_amount, "ticket_count": count}
     except Exception as e:
         conn.rollback()
@@ -1431,7 +1934,8 @@ def process_round_draw(round_id: int):
         "winning_numbers": winning_numbers,
         "player_count": len(participants),
         "round_total": round_total,
-        "round_id": round_id
+        "round_id": round_id,
+        "participants": participants  # For partial prize distribution
     }
     
     if jackpot_winners:
@@ -1749,24 +2253,41 @@ async def cmd_start(message: types.Message):
     except:
         jackpot = Decimal("0")
     
+    # Check for referral code in start command
+    args = message.text.split()
+    if len(args) > 1:
+        ref_code = args[1].upper()
+        referrer_id = get_referrer_by_code(ref_code)
+        if referrer_id and referrer_id != message.from_user.id:
+            if register_referral(referrer_id, message.from_user.id, ref_code):
+                await message.answer("🎁 You joined via referral! Your friend will earn bonuses when you play.")
+    
+    # Get user stats for VIP tier display
+    stats = get_user_stats(message.from_user.id)
+    vip_badge = f"🎖️ {stats['vip_name']}" if stats.get('vip_name') else ""
+    
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎲 Play Now", callback_data="play_now")],
-        [InlineKeyboardButton(text="🎰 Check Active Rounds", callback_data="check_active_rounds")],
-        [InlineKeyboardButton(text="💼 My Wallets", callback_data="my_wallets")],
-        [InlineKeyboardButton(text="📊 View Results", callback_data="view_results")],
-        [InlineKeyboardButton(text="📘 Rules", callback_data="rules")],
-        [InlineKeyboardButton(text="🛠 Support", callback_data="support")]
+        [InlineKeyboardButton(text="🎰 Active Rounds", callback_data="check_active_rounds"),
+         InlineKeyboardButton(text="💼 Wallets", callback_data="my_wallets")],
+        [InlineKeyboardButton(text="🏆 Leaderboard", callback_data="leaderboard"),
+         InlineKeyboardButton(text="📈 My Stats", callback_data="my_stats")],
+        [InlineKeyboardButton(text="🎁 Invite Friends", callback_data="referral"),
+         InlineKeyboardButton(text="📊 Results", callback_data="view_results")],
+        [InlineKeyboardButton(text="📘 Rules", callback_data="rules"),
+         InlineKeyboardButton(text="🛠 Support", callback_data="support")]
     ])
     await message.answer(
-        f"🎟️ <b>Welcome to CryptoUnc Lotto!</b>\n\n"
+        f"🎟️ <b>Welcome to CryptoUnc Lotto!</b> {vip_badge}\n\n"
         f"🏆 <b>Current Jackpot: {jackpot} SOL</b>\n\n"
         f"📋 <b>How It Works:</b>\n"
         f"• Pick 5 numbers (1-40)\n"
         f"• Match ALL 5 to win the ENTIRE jackpot!\n"
+        f"• Match 4 = 0.1 SOL | Match 3 = 0.02 SOL\n"
         f"• No winner? Jackpot grows each round!\n\n"
         f"💰 Ticket Price: {TICKET_PRICE} SOL\n"
         f"⏰ 24 Hourly Rounds (one per hour)\n\n"
-        f"Join now and win the jackpot!",
+        f"🎁 Invite friends & earn 5% on their tickets!",
         reply_markup=keyboard,
         parse_mode="HTML"
     )
@@ -2536,7 +3057,9 @@ async def inline_handler(query: types.CallbackQuery):
             f"• Each round lasts {ROUND_DURATION_MINUTES} minutes\n"
             f"• Draw happens automatically when round ends\n\n"
             f"<b>🏆 How to Win:</b>\n"
-            f"• Match ALL 5 numbers to win the ENTIRE jackpot!\n"
+            f"• Match ALL 5 numbers = WIN THE JACKPOT!\n"
+            f"• Match 4 numbers = <b>0.1 SOL</b> prize\n"
+            f"• Match 3 numbers = <b>0.02 SOL</b> prize\n"
             f"• Winning numbers shown after each round\n"
             f"• You get a private message with your results\n"
             f"• Winners announced in the public channel\n\n"
@@ -2545,6 +3068,12 @@ async def inline_handler(query: types.CallbackQuery):
             f"• 80% goes to jackpot (owner wallet)\n"
             f"• Winner takes the ENTIRE jackpot!\n"
             f"• No winner? Jackpot grows for next round!\n\n"
+            f"<b>🎁 Referral Program:</b>\n"
+            f"• Invite friends using your unique link\n"
+            f"• Earn 5% of every ticket they buy\n\n"
+            f"<b>🎖️ VIP Tiers:</b>\n"
+            f"• Bronze (0+ tickets) → Silver (10+) → Gold (50+)\n"
+            f"• Platinum (100+) → Diamond (500+ tickets)\n\n"
             f"<b>🔐 Security:</b>\n"
             f"• Provably fair random numbers\n"
             f"• All transactions on Solana blockchain\n"
@@ -2569,6 +3098,123 @@ async def inline_handler(query: types.CallbackQuery):
         
         keyboard = create_keyboard_with_nav([])
         await query.message.answer(support_text, reply_markup=keyboard, parse_mode="HTML")
+
+    elif data == "leaderboard":
+        await query.answer()
+        keyboard = create_keyboard_with_nav([
+            [InlineKeyboardButton(text="🏆 Top Winners", callback_data="leaderboard_winners"),
+             InlineKeyboardButton(text="🎫 Top Players", callback_data="leaderboard_players")]
+        ])
+        await query.message.answer(
+            "🏆 <b>Leaderboard</b>\n\n"
+            "Choose a leaderboard to view:",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+
+    elif data == "leaderboard_winners":
+        await query.answer()
+        winners = get_top_winners(10)
+        
+        if not winners:
+            text = "🏆 <b>Top Winners</b>\n\nNo winners yet! Be the first to win the jackpot!"
+        else:
+            text = "🏆 <b>Top Winners</b>\n\n"
+            for i, w in enumerate(winners, 1):
+                tier_emoji = ["🥉", "🥈", "🥇", "💎", "👑"][min(w['vip_tier'], 4)]
+                text += f"{i}. {tier_emoji} @{w['username']}\n"
+                text += f"   Won: <b>{w['total_won']} SOL</b> ({w['wins']} wins)\n\n"
+        
+        keyboard = create_keyboard_with_nav([
+            [InlineKeyboardButton(text="🎫 Top Players", callback_data="leaderboard_players")]
+        ])
+        await query.message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+
+    elif data == "leaderboard_players":
+        await query.answer()
+        players = get_top_players(10)
+        
+        if not players:
+            text = "🎫 <b>Top Players</b>\n\nNo players yet! Be the first to buy a ticket!"
+        else:
+            text = "🎫 <b>Top Players</b>\n\n"
+            for i, p in enumerate(players, 1):
+                tier_emoji = ["🥉", "🥈", "🥇", "💎", "👑"][min(p['vip_tier'], 4)]
+                text += f"{i}. {tier_emoji} @{p['username']}\n"
+                text += f"   Tickets: <b>{p['total_tickets']}</b> | Spent: {p['total_spent']} SOL\n\n"
+        
+        keyboard = create_keyboard_with_nav([
+            [InlineKeyboardButton(text="🏆 Top Winners", callback_data="leaderboard_winners")]
+        ])
+        await query.message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+
+    elif data == "my_stats":
+        await query.answer()
+        stats = get_user_stats(uid)
+        ref_stats = get_referral_stats(uid)
+        tier = stats.get('vip_tier', 0)
+        tier_info = VIP_TIERS.get(tier, VIP_TIERS[0])
+        next_tier = VIP_TIERS.get(tier + 1)
+        
+        text = f"📈 <b>Your Statistics</b>\n\n"
+        text += f"🎖️ <b>VIP Tier:</b> {tier_info['name']}\n"
+        if next_tier:
+            tickets_needed = next_tier['min_tickets'] - stats.get('total_tickets', 0)
+            text += f"   Next tier: {next_tier['name']} ({tickets_needed} more tickets)\n\n"
+        else:
+            text += f"   You're at the highest tier!\n\n"
+        
+        text += f"🎫 <b>Tickets Bought:</b> {stats.get('total_tickets', 0)}\n"
+        text += f"💰 <b>Total Spent:</b> {stats.get('total_spent', 0)} SOL\n"
+        text += f"🏆 <b>Total Won:</b> {stats.get('total_won', 0)} SOL\n"
+        text += f"🎯 <b>Wins:</b> {stats.get('wins', 0)}\n"
+        text += f"🌟 <b>Biggest Win:</b> {stats.get('biggest_win', 0)} SOL\n\n"
+        
+        text += f"🎁 <b>Referrals:</b>\n"
+        text += f"   Friends invited: {ref_stats['total_referrals']}\n"
+        text += f"   Bonus earned: {ref_stats['total_bonus']} SOL\n"
+        text += f"   Tickets from referrals: {ref_stats['total_tickets']}\n"
+        
+        keyboard = create_keyboard_with_nav([
+            [InlineKeyboardButton(text="🎁 Invite Friends", callback_data="referral")],
+            [InlineKeyboardButton(text="🔔 Notifications", callback_data="toggle_notifications")]
+        ])
+        await query.message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+
+    elif data == "referral":
+        await query.answer()
+        ref_code = get_user_referral_code(uid)
+        ref_stats = get_referral_stats(uid)
+        
+        bot_info = await bot.get_me()
+        ref_link = f"https://t.me/{bot_info.username}?start={ref_code}"
+        
+        text = f"🎁 <b>Invite Friends & Earn!</b>\n\n"
+        text += f"Share your referral link:\n"
+        text += f"<code>{ref_link}</code>\n\n"
+        text += f"<b>How it works:</b>\n"
+        text += f"• Share your link with friends\n"
+        text += f"• When they buy tickets, you earn <b>5%</b>\n"
+        text += f"• Bonuses are tracked automatically\n\n"
+        text += f"<b>Your Stats:</b>\n"
+        text += f"👥 Friends invited: {ref_stats['total_referrals']}\n"
+        text += f"💰 Total earned: {ref_stats['total_bonus']} SOL\n"
+        text += f"🎫 Tickets from referrals: {ref_stats['total_tickets']}\n"
+        
+        keyboard = create_keyboard_with_nav([
+            [InlineKeyboardButton(text="📈 My Stats", callback_data="my_stats")]
+        ])
+        await query.message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+
+    elif data == "toggle_notifications":
+        await query.answer()
+        new_state = toggle_notifications(uid)
+        status = "enabled ✅" if new_state else "disabled ❌"
+        await query.message.answer(
+            f"🔔 Notifications are now <b>{status}</b>\n\n"
+            f"You will {'receive' if new_state else 'not receive'} reminders when rounds are ending.",
+            parse_mode="HTML"
+        )
 
     elif data == "view_results":
         await query.answer()
@@ -3566,6 +4212,69 @@ async def cmd_force_draw(message: types.Message):
         await message.reply(f"❌ Error: {str(e)}")
 
 
+@dp.message(Command("seedjackpot"))
+async def cmd_seed_jackpot(message: types.Message):
+    """Admin command to seed the jackpot with additional SOL"""
+    if not is_admin(message.from_user.id):
+        await message.reply("⛔ Not authorized.")
+        return
+    
+    try:
+        args = message.text.split()
+        if len(args) < 2:
+            await message.reply(
+                "Usage: /seedjackpot <amount>\n\n"
+                "Add SOL to the jackpot (owner wallet).\n"
+                "Example: /seedjackpot 1.5\n\n"
+                "Note: This will transfer SOL from the team wallet to the owner wallet."
+            )
+            return
+        
+        amount = Decimal(args[1])
+        if amount <= 0:
+            await message.reply("❌ Amount must be greater than 0.")
+            return
+        
+        # Transfer from team wallet to owner wallet
+        team_wallet = os.getenv("TEAM_WALLET")
+        if not team_wallet:
+            await message.reply("❌ Team wallet not configured.")
+            return
+        
+        await message.reply(f"⏳ Seeding jackpot with {amount} SOL...")
+        
+        result = await send_sol(team_wallet, OWNER_WALLET, float(amount))
+        
+        if result.get("success"):
+            tx_sig = result.get("signature", "N/A")
+            record_jackpot_seed(message.from_user.id, amount, tx_sig)
+            
+            new_jackpot = await get_real_balance(OWNER_WALLET)
+            
+            await message.reply(
+                f"✅ <b>Jackpot Seeded!</b>\n\n"
+                f"Amount: {amount} SOL\n"
+                f"New Jackpot: {new_jackpot} SOL\n"
+                f"TX: <code>{tx_sig[:30]}...</code>",
+                parse_mode="HTML"
+            )
+            
+            # Announce in channel
+            await send_to_announcements(
+                f"🌱 <b>Jackpot Seeded!</b>\n\n"
+                f"An admin has added <b>{amount} SOL</b> to the jackpot!\n\n"
+                f"🏆 <b>Current Jackpot: {new_jackpot} SOL</b>\n\n"
+                f"Play now for a chance to win it all!"
+            )
+        else:
+            await message.reply(f"❌ Failed to seed jackpot: {result.get('error', 'Unknown error')}")
+    
+    except ValueError:
+        await message.reply("❌ Invalid amount. Enter a valid number.")
+    except Exception as e:
+        await message.reply(f"❌ Error: {str(e)}")
+
+
 @dp.message(Command("announce"))
 async def cmd_announce(message: types.Message):
     if not is_admin(message.from_user.id):
@@ -4073,55 +4782,96 @@ async def announce_refunds(round_id: int, stake_amount: float, refund_count: int
 
 
 async def distribute_prize(stake_id: int, result: dict):
-    """Legacy function for force_draw admin command - now uses pay_jackpot_winner logic"""
+    """Distribute jackpot and partial prizes. Updates winner stats."""
     try:
-        winner_id = result['winner_user_id']
+        winner_id = result.get('winner_user_id')
+        winning_numbers = result.get('winning_numbers', [])
+        participants = result.get('participants', [])
         
-        winner_wallet = get_active_wallet(winner_id)
-        if not winner_wallet:
-            print(f"❌ Winner {winner_id} has no active wallet!")
-            return
-        
-        # Get owner wallet balance as prize (team already received 20% on purchase)
-        try:
-            jackpot_balance = await get_real_balance(OWNER_WALLET)
-        except:
-            print(f"❌ Could not fetch owner wallet balance!")
-            return
-        
-        if jackpot_balance <= Decimal("0.001"):
-            print(f"❌ Owner wallet balance too low: {jackpot_balance} SOL")
-            return
-        
-        prize_amount = jackpot_balance - Decimal("0.001")  # Reserve for tx fee
-        
-        try:
-            print(f"💰 Sending prize to winner {winner_id}: {prize_amount} SOL to {winner_wallet[:8]}...{winner_wallet[-8:]}")
-            prize_result = await send_sol(OWNER_WALLET, winner_wallet, prize_amount, OWNER_WALLET_PRIVATE_KEY)
+        # First: Always try to distribute partial prizes (3 or 4 matches)
+        # This runs regardless of whether there's a jackpot winner
+        if participants and winning_numbers:
+            partial_winners = calculate_partial_prizes(participants, winning_numbers)
             
-            if prize_result and prize_result.get("success"):
-                conn = get_db_conn()
-                c = conn.cursor()
-                c.execute("""
-                    UPDATE round_stakes
-                    SET tx_signature = ?
-                    WHERE id = ?
-                """, (prize_result["signature"], stake_id))
-                conn.commit()
-                conn.close()
+            for pw in partial_winners:
+                user_id = pw['user_id']
+                prize = pw['prize']
+                matches = pw['matches']
                 
-                await bot.send_message(
-                    winner_id,
-                    f"🎉 <b>Congratulations! You WON!</b>\n\n"
-                    f"💰 Prize: {prize_amount} SOL\n"
-                    f"📝 TX: <code>{prize_result['signature'][:20]}...</code>\n\n"
-                    f"The prize has been sent to your wallet!",
-                    parse_mode="HTML"
-                )
-        except Exception as e:
-            print(f"❌ Prize distribution error: {e}")
+                user_wallet = get_active_wallet(user_id)
+                if not user_wallet:
+                    print(f"⚠️ Partial winner {user_id} has no wallet, skipping")
+                    continue
+                
+                team_wallet = os.getenv("TEAM_WALLET", OWNER_WALLET)
+                try:
+                    print(f"💰 Sending partial prize to {user_id}: {prize} SOL ({matches} matches)")
+                    partial_result = await send_sol(team_wallet, user_wallet, float(prize))
+                    
+                    if partial_result and partial_result.get("success"):
+                        # Update winner stats
+                        update_user_stats(user_id, won=prize, is_win=True)
+                        
+                        try:
+                            await bot.send_message(
+                                user_id,
+                                f"🎯 <b>Partial Match Prize!</b>\n\n"
+                                f"You matched <b>{matches} out of 5</b> numbers!\n"
+                                f"💰 Prize: <b>{prize} SOL</b>\n"
+                                f"📝 TX: <code>{partial_result['signature'][:20]}...</code>\n\n"
+                                f"Keep playing for the jackpot!",
+                                parse_mode="HTML"
+                            )
+                        except Exception as e:
+                            print(f"⚠️ Could not notify partial winner {user_id}: {e}")
+                    else:
+                        print(f"⚠️ Partial prize transfer failed for {user_id}: {partial_result.get('error', 'Unknown')}")
+                except Exception as e:
+                    print(f"⚠️ Partial prize failed for {user_id}: {e}")
+        
+        # Second: Distribute jackpot to winner (if any)
+        if winner_id:
+            winner_wallet = get_active_wallet(winner_id)
+            if not winner_wallet:
+                print(f"❌ Winner {winner_id} has no active wallet!")
+            else:
+                try:
+                    jackpot_balance = await get_real_balance(OWNER_WALLET)
+                except:
+                    print(f"❌ Could not fetch owner wallet balance!")
+                    jackpot_balance = Decimal("0")
+                
+                if jackpot_balance > Decimal("0.001"):
+                    prize_amount = jackpot_balance - Decimal("0.001")  # Reserve for tx fee
+                    
+                    print(f"💰 Sending prize to winner {winner_id}: {prize_amount} SOL")
+                    prize_result = await send_sol(OWNER_WALLET, winner_wallet, prize_amount, OWNER_WALLET_PRIVATE_KEY)
+                    
+                    if prize_result and prize_result.get("success"):
+                        conn = get_db_conn()
+                        c = conn.cursor()
+                        c.execute("""
+                            UPDATE round_stakes SET tx_signature = ? WHERE id = ?
+                        """, (prize_result["signature"], stake_id))
+                        conn.commit()
+                        conn.close()
+                        
+                        # Update winner stats
+                        update_user_stats(winner_id, won=prize_amount, is_win=True)
+                        
+                        await bot.send_message(
+                            winner_id,
+                            f"🎉 <b>JACKPOT WINNER!</b>\n\n"
+                            f"💰 Prize: <b>{prize_amount} SOL</b>\n"
+                            f"📝 TX: <code>{prize_result['signature'][:20]}...</code>\n\n"
+                            f"The jackpot has been sent to your wallet!",
+                            parse_mode="HTML"
+                        )
+        
     except Exception as e:
         print(f"❌ Distribute prize error: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 def audit_configuration():

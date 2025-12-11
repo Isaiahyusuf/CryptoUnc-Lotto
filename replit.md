@@ -2,9 +2,7 @@
 
 ## Overview
 
-CryptoUnc Lotto is a decentralized lottery bot for Telegram that enables users to play lottery games with real Solana (SOL) cryptocurrency. The bot integrates directly with the Solana blockchain mainnet, allowing users to create wallets, deposit SOL, participate in lottery rounds with various stake levels, and receive automatic prize distributions. The system uses cryptographic randomness based on blockchain data for verifiable fairness.
-
-**Current Status:** Production-ready and live on Replit (as of November 9, 2025)
+CryptoUnc Lotto is a decentralized Telegram lottery bot operating on the Solana blockchain. Its primary purpose is to allow users to participate in lottery games using real Solana (SOL) cryptocurrency. The bot supports wallet creation, SOL deposits, participation in hourly lottery rounds with varying stake levels, and automatic prize distribution. A key feature is its use of blockchain-based cryptographic randomness to ensure verifiable fairness in draw results. The project aims to provide an engaging and transparent lottery experience within Telegram, with features like referral systems, VIP tiers, leaderboards, and personal statistics to enhance user engagement and retention.
 
 ## User Preferences
 
@@ -14,297 +12,93 @@ Preferred communication style: Simple, everyday language.
 
 ### Core Technology Stack
 
-**Language & Framework:**
-- Python 3.11 as the runtime environment
-- Aiogram 3.4.1 for Telegram Bot API integration
-- Asynchronous programming model using asyncio for concurrent operations
+- **Language & Framework:** Python 3.11, Aiogram 3.4.1 (asynchronous programming with asyncio).
+- **Blockchain Integration:** Solana mainnet via `solana-py` and `solders` for direct RPC communication, supporting bot-managed and external wallets.
+- **Data Persistence:** SQLite (`cryptounc_lotto.db`) for user, wallet, lottery entry, and transaction data.
+- **Security:** Fernet encryption for private keys, PBKDF2 for key derivation, 4-digit PIN for sensitive operations, and private keys are never transmitted or logged.
 
-**Blockchain Integration:**
-- Solana mainnet integration via solana-py 0.30.2 and solders 0.18.1
-- Direct RPC communication with Solana blockchain for transaction verification
-- Support for both bot-managed wallets and external wallet connections (Phantom, Solflare)
+### Wallet Management
 
-**Data Persistence:**
-- SQLite database (cryptounc_lotto.db) for local file-based storage
-- Tables for users, wallets, lottery entries, rounds, stakes, draws, and transaction records
-- Transaction signatures and blockchain data stored for audit trail and verification
-
-**Security:**
-- Fernet encryption (cryptography 41.0.7) for storing wallet private keys
-- PBKDF2 key derivation with 100,000 iterations from master ENCRYPTION_KEY
-- 4-digit PIN system for sensitive wallet operations
-- Private keys never transmitted or logged
-
-### Wallet Management Architecture
-
-**Multi-Wallet Support:**
-- Users can create up to 3 wallets per account
-- Support for bot-managed wallets (with encrypted private key storage)
-- Support for external wallet connections via signature verification
-- Active wallet selection system for transaction operations
-
-**Wallet Operations:**
-- Real-time balance checking from Solana blockchain
-- SOL transfers between wallets with transaction signing
-- Private key viewing (PIN-protected)
-- Wallet deletion with security confirmations
+- **Multi-Wallet Support:** Users can create up to 3 bot-managed wallets or connect external wallets.
+- **Operations:** Real-time SOL balance checks, transfers, PIN-protected private key viewing, and secure wallet deletion.
 
 ### Lottery System Design
 
-**Hourly Rounds (24 per day):**
-- Fixed ticket price: 0.025 SOL per ticket
-- 24 hourly rounds (one every hour, 60-minute duration each)
-- Unlimited players can join each round
-- Each ticket = 5 random numbers (1-40)
-
-**Draw & Winner Selection:**
-- Draw triggers automatically at the end of each round
-- Bot generates 5 winning numbers (1-40) at round creation time
-- Player must match ALL 5 numbers to win the ENTIRE jackpot
-- If no winner, jackpot carries forward to next round
-
-**Fee & Prize Distribution:**
-- 20% of each ticket goes to TEAM_WALLET immediately on purchase
-- 80% of each ticket goes to OWNER_WALLET (the jackpot)
-- Winner receives the ENTIRE owner wallet balance when they match all 5
-- Transaction signatures stored and announced publicly
-
-**Jackpot Display:**
-- Real-time owner wallet balance shown as jackpot everywhere
-- Jackpot grows with each ticket purchase until someone wins
-- No database pot tracking - uses on-chain balance directly
+- **Hourly Rounds:** 24 rounds daily, each 60 minutes.
+- **Ticket Price:** 0.025 SOL per ticket.
+- **Gameplay:** Each ticket contains 5 random numbers (1-40).
+- **Winning Condition:** Match all 5 numbers to win the entire jackpot.
+- **Jackpot:** 80% of ticket price contributes to the jackpot (Owner Wallet), 20% to the Team Wallet. Jackpot balance is displayed in real-time from the blockchain.
+- **Partial Prizes:** Match 4 numbers for 0.1 SOL, Match 3 numbers for 0.02 SOL (paid from team wallet).
+- **Draws:** Automated at round end. Winning numbers are generated at round creation using cryptographic randomness.
+- **Engagement Features:**
+    - **Referral System:** Unique codes/links, 5% bonus for referred ticket purchases.
+    - **VIP Tier System:** 5 tiers (Bronze to Diamond) based on tickets purchased, with badges and future perks.
+    - **Leaderboard:** Ranks top winners and players by tickets purchased, including VIP badges.
+    - **Personal Statistics:** Dashboard for total tickets, spending, winnings, VIP tier, and referral earnings.
+    - **Notification System:** User-toggleable notifications for round reminders.
+    - **Admin Jackpot Seeding:** Admins can manually seed the jackpot.
 
 ### Cryptographic Randomness
 
-**Seed Generation:**
-- SHA256-based cryptographic hashing
-- Uses blockchain transaction signatures as entropy source
-- Combines multiple entropy sources: blockhashes, transaction data, timestamps
-- All seed inputs stored in database for public verification
-- Results are deterministic and independently verifiable
+- **Seed Generation:** Uses SHA256 hashing with blockchain transaction signatures, blockhashes, and timestamps as entropy sources for verifiable fairness.
+- **Verifiability:** All seed inputs are stored in the database for public verification of draw results.
 
-**Design Rationale:**
-- Chose blockchain-based randomness for transparency and verifiability
-- Alternative considered: Chainlink VRF (deferred to Phase 2 for cost reasons)
-- Current approach allows anyone to verify draw results using stored seed data
+### State Management & Background Processing
 
-### State Management
-
-**FSM (Finite State Machine):**
-- Aiogram FSMContext for managing multi-step user interactions
-- States for PIN creation, wallet operations, SOL transfers
-- Session data persisted across callback queries
-
-**Database Schema:**
-- Users table: Telegram user data and registration timestamps
-- Wallets table: Wallet addresses, types, encrypted private keys
-- Entries table: Lottery tickets with generated numbers
-- Round stakes: Participant tracking, stake amounts, first join timestamps
-- Draws table: Winning numbers, winners, prize amounts, transaction signatures
-
-### Background Processing
-
-**Scheduler:**
-- Continuous background task checking for drawable rounds
-- Monitors both player count and time elapsed conditions
-- Processes refunds for expired rounds
-- Runs independently from main bot polling loop
-
-**Async Architecture:**
-- Web server (port 8080) runs concurrently with bot
-- Health check endpoints for uptime monitoring
-- Non-blocking Solana RPC calls
-- Concurrent handling of multiple user interactions
+- **FSM:** Aiogram `FSMContext` for multi-step user interactions (e.g., PIN creation, wallet operations).
+- **Scheduler:** Continuous background task to manage round progression, trigger draws, and process refunds, running independently.
+- **Async Architecture:** Non-blocking Solana RPC calls and concurrent handling of user interactions.
 
 ### Payment Verification Flow
 
-**Stake Payment Process (Keyboard Input):**
-1. User taps "Stake" button
-2. Bot displays current balance and stake range (0.025 - 5 SOL)
-3. User types desired stake amount via keyboard
-4. Bot validates: minimum (0.025 SOL), maximum (5 SOL), and balance
-5. Bot initiates SOL transfer to OWNER_WALLET (80%) and TEAM_WALLET (20%)
-6. Transaction signature verified and stored
-7. Entry created only after successful payment confirmation
-8. User receives 5 lottery numbers (1-40)
-
-**Transaction Validation:**
-- Every stake requires on-chain transaction signature
-- Balance verification before accepting entries
-- All transactions logged with amounts, addresses, and signatures
+- **Stake Process:** Users input desired SOL stake. Bot validates amount and balance, initiates SOL transfer to Owner and Team Wallets, verifies transaction signature, and creates lottery entry.
+- **Transaction Validation:** On-chain signature required for every stake; balances checked pre-transaction.
 
 ### Administrative Functions
 
-**Admin Commands:**
-- Manual draw triggering (though automated draws are primary)
-- System configuration viewing
-- Round management capabilities
-- Accessible only to configured ADMIN_ID
+- **Admin Commands:** Manual draw triggering, system configuration viewing, round management (accessible via `ADMIN_ID`).
 
-### Web Server for Uptime
+### Web Server
 
-**Purpose:**
-- Keep-alive mechanism for Replit free tier
-- HTTP server on port 8080
-- Health check endpoints: `/`, `/health`, `/ping`
-- Enables 24/7 operation with UptimeRobot monitoring
-
-**Design Decision:**
-- Chose simple HTTP server over more complex solutions
-- Runs concurrently with bot using asyncio
-- Minimal resource overhead
+- **Purpose:** Simple HTTP server on port 8080 for Replit uptime monitoring and health checks (`/`, `/health`, `/ping`).
 
 ## External Dependencies
 
 ### Third-Party Services
 
-**Solana RPC:**
-- Mainnet endpoint for blockchain interactions
-- Default: https://api.mainnet-beta.solana.com
-- Recommended: Premium RPC providers (Helius, QuickNode) for production
-- Used for: balance queries, transaction broadcasting, blockhash fetching
+- **Solana RPC:** Mainnet endpoint (e.g., `https://api.mainnet-beta.solana.com`, with Helius/QuickNode recommended) for all blockchain interactions.
+- **Telegram Bot API:** Core interface for user interaction; polling mode used.
+- **UptimeRobot (Recommended):** External monitoring to keep Replit projects active.
 
-**Telegram Bot API:**
-- Primary user interface through Telegram
-- Webhook mode disabled (polling used instead)
-- Requires BOT_TOKEN from @BotFather
+### Environment Variables
 
-**UptimeRobot (Recommended):**
-- External monitoring service for 24/7 uptime
-- Pings health endpoint every 5 minutes
-- Prevents Replit from sleeping inactive projects
-
-### Environment Variables Required
-
-**Critical Configuration (9 variables):**
-1. `BOT_TOKEN` - Telegram Bot API authentication
-2. `OWNER_WALLET` - Main treasury address (receives 80% of stakes)
-3. `OWNER_WALLET_PRIVATE_KEY` - For automated prize distributions
-4. `TEAM_WALLET` - Receives 20% of prize pools
-5. `ADMIN_ID` - Telegram user ID for administrative access
-6. `ROUND_CHANNEL_ID` - Public announcement channel
-7. `SOLANA_RPC` - Blockchain endpoint URL
-8. `ENCRYPTION_KEY` - Master key for wallet encryption (min 32 chars)
-9. `SUPPORT_USERNAME` - Telegram support contact
+- `BOT_TOKEN`: Telegram Bot API token.
+- `OWNER_WALLET`: Main jackpot wallet address.
+- `OWNER_WALLET_PRIVATE_KEY`: For automated prize distributions.
+- `TEAM_WALLET`: Receives a percentage of stakes.
+- `ADMIN_ID`: Telegram user ID for administrative access.
+- `ROUND_CHANNEL_ID`: Public Telegram channel for announcements.
+- `SOLANA_RPC`: Solana RPC endpoint URL.
+- `ENCRYPTION_KEY`: Master key for private key encryption.
+- `SUPPORT_USERNAME`: Telegram support contact.
+- `HELIUS_RPC` (Optional): Primary Helius RPC endpoint with automatic fallback.
+- `ANNOUNCEMENTS_GROUP_ID` (Optional): Telegram group for additional announcements.
 
 ### Python Package Dependencies
 
-**Core Libraries:**
-- aiogram 3.4.1 - Telegram bot framework
-- solana 0.30.2 - Solana blockchain SDK
-- solders 0.18.1 - Solana data structures
-- cryptography 41.0.7 - Encryption for private keys
-- aiohttp 3.9.1 - Async HTTP client/server
-- python-dotenv 1.0.0 - Environment variable management
-- pytz - Timezone handling for round scheduling
-- base58 2.1.1 - Address encoding/decoding
+- `aiogram`: Telegram bot framework.
+- `solana`, `solders`: Solana blockchain SDK and data structures.
+- `cryptography`: Encryption for private keys.
+- `aiohttp`: Async HTTP client/server.
+- `python-dotenv`: Environment variable management.
+- `pytz`: Timezone handling.
+- `base58`: Address encoding/decoding.
 
 ### Database
 
-**SQLite:**
-- File-based database (cryptounc_lotto.db)
-- No external database server required
-- Simple backup via file copy
-- Suitable for current scale
-- Migration path to PostgreSQL considered for Phase 2 scaling
+- **SQLite:** File-based (`cryptounc_lotto.db`) for local data storage, suitable for current scale.
 
 ### Wallet Connection Flow
 
-**External Wallet Integration:**
-- HTML interface (Index.html) for wallet signature verification
-- Supports Phantom and Solflare mobile/browser wallets
-- Challenge-response authentication pattern
-- Session-based verification using server-generated challenges
-- Public key extraction without exposing private keys
-
-### Recent Changes (December 5, 2025 - Latest)
-
-**Multiple Tickets & Announcements Update:**
-- Multiple tickets per user: Removed duplicate check in add_round_participant() - users can now buy as many tickets as they want
-- Each ticket counts as 1 player toward the minimum 10-player requirement
-- Added `announce_new_ticket()` function to post ticket purchases to announcements channel
-- Ticket announcements include: Player username/Telegram ID, ticket number, lottery numbers, stake amount, current player count
-- Updated `send_to_announcements()` to include bot redirect link for forwarded messages
-- All three stake joining flows now call announce_new_ticket after successful purchase
-
-**Private Key Safety Reminders:**
-- Added prominent safety warnings when creating new wallets
-- Added safety warnings when importing wallets with private key
-- Warnings include: NEVER share key, CryptoUnc team will NEVER ask for key, anyone with key can steal funds
-
-**Lottery Timing Configuration:**
-- 15-minute wait before drawing when 10+ players join a stake level
-- 30-minute refund timeout for rounds that don't reach minimum players
-- Each ticket = 1 player (so one user buying 10 tickets = 10 players)
-
-### Previous Changes (December 5, 2025)
-
-**Platform Authorization (UPDATED):**
-- Bot now verifies it's running on Railway OR Replit platform before starting
-- Checks for RAILWAY_ENVIRONMENT and RAILWAY_PROJECT_ID environment variables (Railway)
-- Also accepts REPL_ID or REPLIT_DEPLOYMENT (Replit)
-- Optional RAILWAY_DEPLOY_SECRET / EXPECTED_DEPLOY_SECRET for additional verification
-- Exits with clear error message if not running on authorized instance
-- Security model documented in main.py header comments
-
-**Transaction Fix (CRITICAL):**
-- Fixed "'solders.transaction.Transaction' object has no attribute 'recent_blockhash'" error
-- Changed from `client.send_transaction(transaction)` to `client.send_raw_transaction(bytes(transaction))`
-- The solders Transaction object is immutable - must serialize to bytes before sending
-- Updated both `send_sol()` and `sign_and_send_transaction()` functions
-
-**Helius RPC with Automatic Fallback (NEW):**
-- Added HELIUS_RPC environment variable for primary Helius RPC endpoint
-- Automatic fallback to public mainnet RPC (https://api.mainnet-beta.solana.com)
-- RPC_ENDPOINTS list built with deduplication for reliable failover
-- All wallet functions (get_real_balance, estimate_transaction_fee, send_sol) use consistent failover
-- Enhanced logging for RPC endpoint usage and balance checking
-
-**Enhanced Transaction Processing:**
-- Balance check before every transaction includes network fee buffer (~0.00002 SOL)
-- Latest blockhash fetched right before creating each transaction
-- Comprehensive logging: wallet address, balance, amount, RPC endpoint used
-- Transaction signature logged on success
-
-**Announcements Group Feature:**
-- Added optional `ANNOUNCEMENTS_GROUP_ID` environment variable to post round updates to a Telegram group
-- All announcements (round opened, round cancelled, draw results, winner announcements, refunds) now post to both the main channel AND the announcements group
-- Helper function `send_to_announcements()` handles dual-channel broadcasting
-- The group ID should be a numeric ID (e.g., -100123456789) - you can get this by forwarding a message from the group to @userinfobot
-- If not set, announcements only go to ROUND_CHANNEL_ID as before
-
-**Migration & Bug Fixes:**
-- Migrated from deprecated `Transaction.new()` to correct `Transaction([keypair], message, blockhash)` API for solders 0.18.x
-- Fixed wallet duplication bug - wallets are now checked BEFORE insert, first wallet set as active
-- Added real-time transaction functions: `build_unsigned_transaction()`, `sign_and_send_transaction()`, `execute_automatic_transfer()`
-- Added balance validation and RPC error classification to transaction helpers
-
-### Recent Changes (December 4, 2025)
-
-**Import Wallet Feature (MAJOR UPDATE):**
-- Replaced "Connect Wallet" with "Import Wallet" for real-time wallet import
-- Users can import existing Solana wallets using private keys
-- Supported formats: Hex (128 chars), Base58 (Phantom), JSON array (Solflare)
-- Function: `import_wallet_from_private_key()` in wallet.py
-- Security measures:
-  - User's private key message is IMMEDIATELY deleted
-  - Private keys are encrypted before database storage
-  - Success confirmation message auto-deletes after 30 seconds
-  - Strong security warnings before import
-
-**Navigation System:**
-- Added Start and Back buttons to all prompts for consistent navigation
-- Helper functions: `get_start_button()`, `get_back_button()`, `create_keyboard_with_nav()`
-- All major screens now include navigation buttons at the bottom
-
-**Security Enhancements:**
-- Auto-delete for private key messages (30 seconds after viewing)
-- Clear warning displayed before deletion countdown
-- Security notice sent after auto-deletion
-- Helper function: `schedule_private_key_deletion()`
-
-**UI/UX Improvements:**
-- Consistent keyboard layouts across all prompts
-- Clear visual hierarchy with emoji indicators
-- Better error messages with navigation options
-- Imported wallets support: View Private Key, Send SOL, Delete
+- **External Wallet Integration:** HTML interface (Index.html) for signature verification with Phantom and Solflare wallets, using a challenge-response authentication pattern to extract public keys securely.
