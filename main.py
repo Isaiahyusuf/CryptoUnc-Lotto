@@ -749,6 +749,40 @@ def migrate_timestamps_to_iso():
 def init_db():
     """Initialize database tables - delegates to db.py"""
     init_all_tables()
+    
+    # Verify database connection and show stats
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        
+        # Count records in key tables
+        c.execute("SELECT COUNT(*) FROM wallets")
+        wallet_count = c.fetchone()[0]
+        
+        c.execute("SELECT COUNT(*) FROM users")
+        user_count = c.fetchone()[0]
+        
+        c.execute("SELECT COUNT(*) FROM scheduled_rounds")
+        round_count = c.fetchone()[0]
+        
+        c.execute("SELECT COUNT(*) FROM user_active_wallet")
+        active_wallet_count = c.fetchone()[0]
+        
+        conn.close()
+        
+        print(f"📊 Database Stats:")
+        print(f"   - Users: {user_count}")
+        print(f"   - Wallets: {wallet_count}")
+        print(f"   - Active wallet entries: {active_wallet_count}")
+        print(f"   - Scheduled rounds: {round_count}")
+        
+        if wallet_count > 0:
+            print(f"✅ Database has existing data - persistence is working!")
+        else:
+            print(f"ℹ️ Database is empty - waiting for first user to create wallet")
+            
+    except Exception as e:
+        print(f"⚠️ Database stats check failed: {e}")
 
 
 def get_current_round() -> int:
