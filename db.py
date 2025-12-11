@@ -223,6 +223,7 @@ def init_all_tables():
                 stake_amount REAL NOT NULL,
                 status TEXT DEFAULT 'open',
                 winner_user_id BIGINT,
+                prize_amount REAL,
                 tx_signature TEXT,
                 first_stake_time TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -387,6 +388,7 @@ def init_all_tables():
                 stake_amount REAL NOT NULL,
                 status TEXT DEFAULT 'open',
                 winner_user_id INTEGER,
+                prize_amount REAL,
                 tx_signature TEXT,
                 first_stake_time TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
