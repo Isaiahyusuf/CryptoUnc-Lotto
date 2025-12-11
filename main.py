@@ -132,7 +132,7 @@ MAX_WALLETS_PER_USER,
 log_wallet_transaction
 )
 
-from db import get_db_conn, init_all_tables, q, USE_POSTGRES, DB_PATH
+from db import get_db_conn, init_all_tables, q, USE_POSTGRES, DB_PATH, save_security_question, get_security_question, verify_security_answer, has_security_question
 
 from wallet_buttons import router as wallet_router
 
@@ -3135,30 +3135,22 @@ async def inline_handler(query: types.CallbackQuery):
 
     elif data == "settings":
         await query.answer()
-        user_email = get_user_email(uid)
         has_pin = has_user_pin(uid)
+        has_sq = has_security_question(uid)
         
         text = "⚙️ <b>Settings</b>\n\n"
         text += "<b>Account Security:</b>\n"
-        
-        if user_email:
-            status = "✅ Verified" if user_email['verified'] else "⚠️ Not verified"
-            text += f"📧 Email: {user_email['email'][:3]}***{user_email['email'][-10:]} ({status})\n"
-        else:
-            text += "📧 Email: Not set\n"
-        
-        text += f"🔐 PIN: {'✅ Set' if has_pin else '❌ Not set'}\n\n"
-        text += "Use email to backup your account and reset your PIN if forgotten."
+        text += f"🔐 PIN: {'✅ Set' if has_pin else '❌ Not set'}\n"
+        text += f"❓ Security Question: {'✅ Set' if has_sq else '❌ Not set'}\n\n"
+        text += "Set up a security question to recover your PIN if you forget it."
         
         buttons = []
-        if user_email and user_email['verified']:
-            buttons.append([InlineKeyboardButton(text="📧 Change Email", callback_data="change_email")])
-            buttons.append([InlineKeyboardButton(text="🔐 Reset PIN", callback_data="reset_pin_email")])
-        elif user_email and not user_email['verified']:
-            buttons.append([InlineKeyboardButton(text="✅ Verify Email", callback_data="verify_email")])
-            buttons.append([InlineKeyboardButton(text="📧 Change Email", callback_data="change_email")])
+        if has_sq:
+            buttons.append([InlineKeyboardButton(text="❓ Change Security Question", callback_data="change_security_question")])
+            if has_pin:
+                buttons.append([InlineKeyboardButton(text="🔐 Reset PIN", callback_data="reset_pin_security")])
         else:
-            buttons.append([InlineKeyboardButton(text="📧 Add Email", callback_data="add_email")])
+            buttons.append([InlineKeyboardButton(text="❓ Set Security Question", callback_data="set_security_question")])
         
         if has_pin:
             buttons.append([InlineKeyboardButton(text="🔑 Change PIN", callback_data="change_pin")])
@@ -3166,104 +3158,80 @@ async def inline_handler(query: types.CallbackQuery):
         keyboard = create_keyboard_with_nav(buttons)
         await query.message.answer(text, reply_markup=keyboard, parse_mode="HTML")
 
-    elif data == "add_email" or data == "change_email":
+    elif data == "set_security_question" or data == "change_security_question":
         await query.answer()
-        if not is_email_configured():
-            await query.message.answer(
-                "⚠️ Email service is not configured yet.\n\n"
-                "Please contact support to enable email features.",
-                reply_markup=create_keyboard_with_nav([])
-            )
-            return
         
-        user_states[uid] = {"action": "enter_email"}
+        questions = [
+            "What is your mother's maiden name?",
+            "What was the name of your first pet?",
+            "What city were you born in?",
+            "What is your favorite movie?",
+            "What was your childhood nickname?"
+        ]
+        
+        buttons = []
+        for i, q_text in enumerate(questions):
+            buttons.append([InlineKeyboardButton(text=q_text, callback_data=f"sq_{i}")])
+        buttons.append([InlineKeyboardButton(text="✏️ Custom Question", callback_data="sq_custom")])
+        
+        keyboard = create_keyboard_with_nav(buttons)
         await query.message.answer(
-            "📧 <b>Add Email Address</b>\n\n"
-            "Please enter your email address:\n\n"
-            "This will be used to:\n"
-            "• Backup your account\n"
-            "• Reset your PIN if forgotten\n"
-            "• Receive important notifications",
+            "❓ <b>Set Security Question</b>\n\n"
+            "Choose a security question or create your own.\n"
+            "You'll use this to reset your PIN if you forget it.",
+            reply_markup=keyboard,
             parse_mode="HTML"
         )
 
-    elif data == "verify_email":
+    elif data.startswith("sq_"):
         await query.answer()
-        user_email = get_user_email(uid)
-        if not user_email:
-            await query.message.answer("❌ No email set. Please add an email first.")
-            return
         
-        if not can_send_code(uid):
+        preset_questions = [
+            "What is your mother's maiden name?",
+            "What was the name of your first pet?",
+            "What city were you born in?",
+            "What is your favorite movie?",
+            "What was your childhood nickname?"
+        ]
+        
+        if data == "sq_custom":
+            user_states[uid] = {"action": "enter_custom_question"}
             await query.message.answer(
-                "⚠️ Too many verification attempts.\n"
-                "Please wait 1 hour before trying again.",
-                reply_markup=create_keyboard_with_nav([])
-            )
-            return
-        
-        code = generate_verification_code()
-        save_verification_code(uid, user_email['email'], code, "verify_email")
-        result = await send_verification_email(user_email['email'], code, "verify")
-        
-        if result['success']:
-            user_states[uid] = {"action": "verify_email_code"}
-            await query.message.answer(
-                f"📧 <b>Verification Code Sent!</b>\n\n"
-                f"We sent a 6-digit code to:\n<code>{user_email['email'][:3]}***{user_email['email'][-10:]}</code>\n\n"
-                f"Please enter the code below:\n"
-                f"(Code expires in 10 minutes)",
+                "✏️ <b>Custom Security Question</b>\n\n"
+                "Please type your own security question:",
                 parse_mode="HTML"
             )
         else:
+            q_index = int(data.split("_")[1])
+            question = preset_questions[q_index]
+            user_states[uid] = {"action": "enter_security_answer", "question": question}
             await query.message.answer(
-                f"❌ Failed to send verification email.\n\n"
-                f"Error: {result.get('error', 'Unknown')}\n"
-                f"Please try again later.",
-                reply_markup=create_keyboard_with_nav([])
+                f"❓ <b>Your Question:</b>\n{question}\n\n"
+                f"Please enter your answer:\n"
+                f"(Remember this answer - you'll need it to reset your PIN!)",
+                parse_mode="HTML"
             )
 
-    elif data == "reset_pin_email":
+    elif data == "reset_pin_security":
         await query.answer()
-        user_email = get_user_email(uid)
-        if not user_email or not user_email['verified']:
+        sq = get_security_question(uid)
+        
+        if not sq['has_question']:
             await query.message.answer(
-                "❌ You need a verified email to reset your PIN.\n\n"
-                "Please add and verify your email first.",
+                "❌ You need to set up a security question first.",
                 reply_markup=create_keyboard_with_nav([
-                    [InlineKeyboardButton(text="📧 Add Email", callback_data="add_email")]
+                    [InlineKeyboardButton(text="❓ Set Security Question", callback_data="set_security_question")]
                 ])
             )
             return
         
-        if not can_send_code(uid):
-            await query.message.answer(
-                "⚠️ Too many reset attempts.\n"
-                "Please wait 1 hour before trying again.",
-                reply_markup=create_keyboard_with_nav([])
-            )
-            return
-        
-        code = generate_verification_code()
-        save_verification_code(uid, user_email['email'], code, "reset_pin")
-        result = await send_verification_email(user_email['email'], code, "reset_pin")
-        
-        if result['success']:
-            user_states[uid] = {"action": "verify_reset_pin_code"}
-            await query.message.answer(
-                f"🔐 <b>PIN Reset Code Sent!</b>\n\n"
-                f"We sent a 6-digit code to:\n<code>{user_email['email'][:3]}***{user_email['email'][-10:]}</code>\n\n"
-                f"Please enter the code below:\n"
-                f"(Code expires in 10 minutes)",
-                parse_mode="HTML"
-            )
-        else:
-            await query.message.answer(
-                f"❌ Failed to send reset email.\n\n"
-                f"Error: {result.get('error', 'Unknown')}\n"
-                f"Please try again later.",
-                reply_markup=create_keyboard_with_nav([])
-            )
+        user_states[uid] = {"action": "verify_security_answer_for_reset"}
+        await query.message.answer(
+            f"🔐 <b>Reset PIN</b>\n\n"
+            f"❓ <b>Security Question:</b>\n{sq['question']}\n\n"
+            f"Please enter your answer:",
+            parse_mode="HTML"
+        )
 
     elif data == "change_pin":
         await query.answer()
@@ -4099,104 +4067,67 @@ async def generic_message_handler(message: types.Message):
                 await message.answer("❌ Invalid amount. Please enter a number (e.g., 0.5):")
             return
         
-        elif action == "enter_email":
-            import re
-            email = text.strip().lower()
-            email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-            
-            if not re.match(email_pattern, email):
-                await message.answer("❌ Invalid email format. Please enter a valid email address:")
+        elif action == "enter_custom_question":
+            question = text.strip()
+            if len(question) < 10:
+                await message.answer("❌ Question is too short. Please enter a longer question:")
+                return
+            if len(question) > 200:
+                await message.answer("❌ Question is too long. Please keep it under 200 characters:")
                 return
             
-            if not is_email_available(email, uid):
-                await message.answer(
-                    "❌ This email is already registered to another account.\n\n"
-                    "Please use a different email address:"
-                )
-                return
-            
-            save_user_email(uid, email, verified=False)
-            
-            if not can_send_code(uid):
-                del user_states[uid]
-                await bot.send_message(uid,
-                    "✅ Email saved but too many verification attempts.\n"
-                    "Please wait 1 hour before verifying.",
-                    reply_markup=create_keyboard_with_nav([])
-                )
-                return
-            
-            code = generate_verification_code()
-            save_verification_code(uid, email, code, "verify_email")
-            result = await send_verification_email(email, code, "verify")
-            
-            if result['success']:
-                user_states[uid] = {"action": "verify_email_code"}
-                await bot.send_message(uid,
-                    f"📧 <b>Verification Code Sent!</b>\n\n"
-                    f"We sent a 6-digit code to:\n<code>{email[:3]}***{email[-10:]}</code>\n\n"
-                    f"Please enter the code below:\n"
-                    f"(Code expires in 10 minutes)",
-                    parse_mode="HTML"
-                )
-            else:
-                del user_states[uid]
-                await bot.send_message(uid,
-                    f"✅ Email saved!\n\n"
-                    f"⚠️ Could not send verification code.\n"
-                    f"You can verify later from Settings.",
-                    reply_markup=create_keyboard_with_nav([])
-                )
+            user_states[uid] = {"action": "enter_security_answer", "question": question}
+            await bot.send_message(uid,
+                f"❓ <b>Your Question:</b>\n{question}\n\n"
+                f"Please enter your answer:\n"
+                f"(Remember this answer - you'll need it to reset your PIN!)",
+                parse_mode="HTML"
+            )
             return
         
-        elif action == "verify_email_code":
-            code = text.strip()
-            if not code.isdigit() or len(code) != 6:
-                await message.answer("❌ Please enter the 6-digit code:")
+        elif action == "enter_security_answer":
+            answer = text.strip()
+            if len(answer) < 2:
+                await message.answer("❌ Answer is too short. Please enter a longer answer:")
                 return
             
-            result = verify_code(uid, code, "verify_email")
-            del user_states[uid]
-            
-            if result['valid']:
-                mark_email_verified(uid)
+            question = state.get("question")
+            if save_security_question(uid, question, answer):
+                del user_states[uid]
                 await bot.send_message(uid,
-                    "✅ <b>Email Verified!</b>\n\n"
-                    "Your email is now linked to your account.\n"
-                    "You can use it to reset your PIN if you forget it.",
+                    "✅ <b>Security Question Saved!</b>\n\n"
+                    "You can now use this to reset your PIN if you forget it.\n\n"
+                    f"❓ Question: {question}\n"
+                    f"💡 Tip: Remember your answer!",
                     reply_markup=create_keyboard_with_nav([]),
                     parse_mode="HTML"
                 )
             else:
+                del user_states[uid]
                 await bot.send_message(uid,
-                    f"❌ {result.get('error', 'Invalid code')}\n\n"
-                    "You can try again from Settings.",
+                    "❌ Failed to save security question. Please try again.",
                     reply_markup=create_keyboard_with_nav([])
                 )
             return
         
-        elif action == "verify_reset_pin_code":
-            code = text.strip()
-            if not code.isdigit() or len(code) != 6:
-                await message.answer("❌ Please enter the 6-digit code:")
-                return
+        elif action == "verify_security_answer_for_reset":
+            answer = text.strip()
             
-            result = verify_code(uid, code, "reset_pin")
-            
-            if result['valid']:
+            if verify_security_answer(uid, answer):
                 delete_user_pin(uid)
                 user_states[uid] = {"action": "set_new_pin_after_reset"}
                 await bot.send_message(uid,
-                    "✅ <b>Code Verified!</b>\n\n"
+                    "✅ <b>Answer Correct!</b>\n\n"
                     "Please enter a new 4-digit PIN:",
                     parse_mode="HTML"
                 )
             else:
                 del user_states[uid]
                 await bot.send_message(uid,
-                    f"❌ {result.get('error', 'Invalid code')}\n\n"
-                    "You can try again from Settings.",
-                    reply_markup=create_keyboard_with_nav([])
+                    "❌ <b>Incorrect Answer</b>\n\n"
+                    "The answer doesn't match. You can try again from Settings.",
+                    reply_markup=create_keyboard_with_nav([]),
+                    parse_mode="HTML"
                 )
             return
         

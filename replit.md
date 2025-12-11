@@ -156,15 +156,15 @@ Preferred communication style: Simple, everyday language.
 - **Persistent PINs:** PINs are now persistent - set once and reuse for all future operations (no more re-entering PIN every time)
 - **user_id Consistency:** All PIN functions use int(user_id) for consistent database lookups
 
-### Email Backup & PIN Reset System (December 11, 2025)
-- **Email Registration:** Users can add email addresses in Settings for account backup
-- **Email Verification:** 6-digit code sent via SendGrid, expires in 10 minutes
-- **PIN Reset via Email:** Forgot PIN? Get reset code via verified email
-- **Rate Limiting:** Max 3 verification attempts per hour to prevent abuse
+### Security Question System (December 11, 2025)
+- **Security Questions:** Users can set up a security question for PIN recovery
+- **5 Preset Questions:** Common options like mother's maiden name, first pet, etc.
+- **Custom Questions:** Users can create their own security question
+- **PIN Reset via Security Question:** Forgot PIN? Answer your security question to reset
 - **Settings Menu:** New ⚙️ Settings button in main menu for security settings
-- **SendGrid Integration:** Uses `SENDGRID_API_KEY` and `FROM_EMAIL` environment variables
+- **Answer Hashing:** Answers are hashed with SHA256 for security (case-insensitive)
 
 ### Database Performance Improvements (December 11, 2025)
 - **PostgreSQL Connection Pooling:** 2-10 pooled connections for faster queries
-- **New Email Tables:** `user_emails` and `email_verification_codes` for email system
-- **Indexed Queries:** Email verification codes indexed by user_id for fast lookups
+- **New Tables:** `security_questions` for PIN recovery
+- **Answer Hashing:** Security question answers are hashed with SHA256

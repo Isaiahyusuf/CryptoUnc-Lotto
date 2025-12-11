@@ -425,6 +425,16 @@ def init_all_tables():
                 )
             """)
         
+        if 'security_questions' not in existing_tables:
+            c.execute("""
+                CREATE TABLE security_questions (
+                    user_id BIGINT PRIMARY KEY,
+                    question TEXT NOT NULL,
+                    answer_hash TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+        
         try:
             c.execute("INSERT INTO meta (key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING", ('current_round', '1'))
         except:
@@ -628,6 +638,15 @@ def init_all_tables():
             )
         """)
         
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS security_questions (
+                user_id INTEGER PRIMARY KEY,
+                question TEXT NOT NULL,
+                answer_hash TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
         c.execute("INSERT OR IGNORE INTO meta (key, value) VALUES ('current_round', '1')")
         
         c.execute("CREATE INDEX IF NOT EXISTS idx_wallets_user ON wallets(user_id)")
@@ -683,3 +702,80 @@ def insert_ignore(table: str, columns: list, values: tuple) -> str:
     else:
         placeholders = ", ".join(["?"] * len(values))
         return f"INSERT OR IGNORE INTO {table} ({cols}) VALUES ({placeholders})"
+
+
+# Security Question Functions
+import hashlib
+
+def hash_answer(answer: str) -> str:
+    """Hash security question answer (case-insensitive, trimmed)"""
+    normalized = answer.strip().lower()
+    return hashlib.sha256(normalized.encode()).hexdigest()
+
+def save_security_question(user_id: int, question: str, answer: str) -> bool:
+    """Save or update user's security question"""
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        answer_hash = hash_answer(answer)
+        
+        if USE_POSTGRES:
+            c.execute("""
+                INSERT INTO security_questions (user_id, question, answer_hash)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (user_id) DO UPDATE SET question = %s, answer_hash = %s
+            """, (int(user_id), question, answer_hash, question, answer_hash))
+        else:
+            c.execute("""
+                INSERT OR REPLACE INTO security_questions (user_id, question, answer_hash)
+                VALUES (?, ?, ?)
+            """, (int(user_id), question, answer_hash))
+        
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"[DB] Error saving security question: {e}")
+        return False
+
+def get_security_question(user_id: int) -> dict:
+    """Get user's security question (not the answer)"""
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute(q("SELECT question FROM security_questions WHERE user_id = ?"), (int(user_id),))
+        row = c.fetchone()
+        conn.close()
+        if row:
+            return {"question": row[0], "has_question": True}
+        return {"has_question": False}
+    except Exception as e:
+        print(f"[DB] Error getting security question: {e}")
+        return {"has_question": False}
+
+def verify_security_answer(user_id: int, answer: str) -> bool:
+    """Verify user's security question answer"""
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute(q("SELECT answer_hash FROM security_questions WHERE user_id = ?"), (int(user_id),))
+        row = c.fetchone()
+        conn.close()
+        if row:
+            return row[0] == hash_answer(answer)
+        return False
+    except Exception as e:
+        print(f"[DB] Error verifying security answer: {e}")
+        return False
+
+def has_security_question(user_id: int) -> bool:
+    """Check if user has a security question set"""
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute(q("SELECT 1 FROM security_questions WHERE user_id = ?"), (int(user_id),))
+        result = c.fetchone() is not None
+        conn.close()
+        return result
+    except:
+        return False
