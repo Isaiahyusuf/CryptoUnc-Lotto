@@ -9,3 +9,4 @@ python-dotenv==1.0.0
 cryptography==41.0.7
 pytz
 psycopg2-binary
+sendgrid

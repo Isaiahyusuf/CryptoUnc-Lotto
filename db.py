@@ -2,7 +2,7 @@
 Database abstraction layer that supports both SQLite (local) and PostgreSQL (Railway).
 
 Usage:
-- If DATABASE_URL is set (Railway PostgreSQL), uses PostgreSQL
+- If DATABASE_URL is set (Railway PostgreSQL), uses PostgreSQL with connection pooling
 - Otherwise falls back to SQLite for local development
 
 All functions return connection objects with a cursor() method that works the same way.
@@ -11,8 +11,13 @@ All functions return connection objects with a cursor() method that works the sa
 import os
 import sqlite3
 from contextlib import contextmanager
+import threading
 
 DATABASE_URL = os.getenv("DATABASE_URL")
+
+# Connection pool for PostgreSQL (reduces connection overhead)
+_pg_pool = None
+_pool_lock = threading.Lock()
 
 # Check if DATABASE_URL is valid (not empty, contains proper connection info)
 def is_valid_database_url(url):
@@ -32,15 +37,34 @@ USE_POSTGRES = is_valid_database_url(DATABASE_URL)
 
 if USE_POSTGRES:
     import psycopg2
+    from psycopg2 import pool
     from psycopg2.extras import RealDictCursor
     # Print connection info (hide password)
     if DATABASE_URL:
         safe_url = DATABASE_URL.split("@")[-1] if "@" in DATABASE_URL else "configured"
-        print(f"[Database] Using PostgreSQL: ...@{safe_url}")
+        print(f"[Database] Using PostgreSQL with pooling: ...@{safe_url}")
 else:
     print(f"[Database] Using SQLite (local)")
     if DATABASE_URL:
         print(f"[Database] Note: DATABASE_URL was set but invalid, falling back to SQLite")
+
+
+def init_pg_pool():
+    """Initialize PostgreSQL connection pool"""
+    global _pg_pool
+    if USE_POSTGRES and _pg_pool is None:
+        with _pool_lock:
+            if _pg_pool is None:
+                try:
+                    _pg_pool = pool.ThreadedConnectionPool(
+                        minconn=2,
+                        maxconn=10,
+                        dsn=DATABASE_URL
+                    )
+                    print("[Database] Connection pool initialized (2-10 connections)")
+                except Exception as e:
+                    print(f"[Database] Failed to create pool: {e}")
+                    _pg_pool = None
 
 DB_PATH = "cryptounc_lotto.db"
 
@@ -132,12 +156,9 @@ class PostgresCursor:
 
 class PostgresConnection:
     """Wrapper for psycopg2 connection with auto-query conversion"""
-    def __init__(self, url):
-        try:
-            self.conn = psycopg2.connect(url)
-        except Exception as e:
-            print(f"[Database] PostgreSQL connection error: {e}")
-            raise
+    def __init__(self, conn, from_pool=False):
+        self.conn = conn
+        self._from_pool = from_pool
     
     def cursor(self):
         return PostgresCursor(self.conn.cursor())
@@ -149,7 +170,14 @@ class PostgresConnection:
         self.conn.rollback()
     
     def close(self):
-        self.conn.close()
+        if self._from_pool and _pg_pool:
+            # Return to pool instead of closing
+            try:
+                _pg_pool.putconn(self.conn)
+            except:
+                self.conn.close()
+        else:
+            self.conn.close()
     
     @property
     def rowcount(self):
@@ -163,15 +191,32 @@ class PostgresConnection:
 
 
 def get_db_conn():
-    """Get database connection - works with both SQLite and PostgreSQL"""
+    """Get database connection - uses pool for PostgreSQL, direct for SQLite"""
     if USE_POSTGRES:
-        return PostgresConnection(DATABASE_URL)
+        # Try to use pool if available
+        if _pg_pool:
+            try:
+                conn = _pg_pool.getconn()
+                return PostgresConnection(conn, from_pool=True)
+            except Exception as e:
+                print(f"[Database] Pool error, using direct connection: {e}")
+        # Fallback to direct connection
+        try:
+            conn = psycopg2.connect(DATABASE_URL)
+            return PostgresConnection(conn, from_pool=False)
+        except Exception as e:
+            print(f"[Database] PostgreSQL connection error: {e}")
+            raise
     else:
         return SQLiteConnection(DB_PATH)
 
 
 def init_all_tables():
     """Initialize all database tables with correct syntax for current DB type"""
+    # Initialize connection pool for PostgreSQL
+    if USE_POSTGRES:
+        init_pg_pool()
+    
     conn = get_db_conn()
     c = conn.cursor()
     
@@ -356,6 +401,30 @@ def init_all_tables():
                 )
             """)
         
+        if 'user_emails' not in existing_tables:
+            c.execute("""
+                CREATE TABLE user_emails (
+                    user_id BIGINT PRIMARY KEY,
+                    email TEXT NOT NULL UNIQUE,
+                    verified INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+        
+        if 'email_verification_codes' not in existing_tables:
+            c.execute("""
+                CREATE TABLE email_verification_codes (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL,
+                    email TEXT NOT NULL,
+                    code TEXT NOT NULL,
+                    purpose TEXT NOT NULL,
+                    expires_at TIMESTAMP NOT NULL,
+                    used INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+        
         try:
             c.execute("INSERT INTO meta (key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING", ('current_round', '1'))
         except:
@@ -370,6 +439,7 @@ def init_all_tables():
             c.execute("CREATE INDEX IF NOT EXISTS idx_participants_stake ON round_participants(round_stake_id)")
             c.execute("CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_id)")
             c.execute("CREATE INDEX IF NOT EXISTS idx_draw_history_round ON draw_history(round_id)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_email_codes_user ON email_verification_codes(user_id)")
         except:
             pass
         
@@ -536,6 +606,28 @@ def init_all_tables():
             )
         """)
         
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS user_emails (
+                user_id INTEGER PRIMARY KEY,
+                email TEXT NOT NULL UNIQUE,
+                verified INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS email_verification_codes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                email TEXT NOT NULL,
+                code TEXT NOT NULL,
+                purpose TEXT NOT NULL,
+                expires_at TIMESTAMP NOT NULL,
+                used INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
         c.execute("INSERT OR IGNORE INTO meta (key, value) VALUES ('current_round', '1')")
         
         c.execute("CREATE INDEX IF NOT EXISTS idx_wallets_user ON wallets(user_id)")
@@ -546,6 +638,7 @@ def init_all_tables():
         c.execute("CREATE INDEX IF NOT EXISTS idx_participants_stake ON round_participants(round_stake_id)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_id)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_draw_history_round ON draw_history(round_id)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_email_codes_user ON email_verification_codes(user_id)")
     
     conn.commit()
     conn.close()

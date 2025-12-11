@@ -155,3 +155,16 @@ Preferred communication style: Simple, everyday language.
 - **Mismatch Handling:** If PINs don't match during setup, user is prompted to start over with new PIN
 - **Persistent PINs:** PINs are now persistent - set once and reuse for all future operations (no more re-entering PIN every time)
 - **user_id Consistency:** All PIN functions use int(user_id) for consistent database lookups
+
+### Email Backup & PIN Reset System (December 11, 2025)
+- **Email Registration:** Users can add email addresses in Settings for account backup
+- **Email Verification:** 6-digit code sent via SendGrid, expires in 10 minutes
+- **PIN Reset via Email:** Forgot PIN? Get reset code via verified email
+- **Rate Limiting:** Max 3 verification attempts per hour to prevent abuse
+- **Settings Menu:** New ⚙️ Settings button in main menu for security settings
+- **SendGrid Integration:** Uses `SENDGRID_API_KEY` and `FROM_EMAIL` environment variables
+
+### Database Performance Improvements (December 11, 2025)
+- **PostgreSQL Connection Pooling:** 2-10 pooled connections for faster queries
+- **New Email Tables:** `user_emails` and `email_verification_codes` for email system
+- **Indexed Queries:** Email verification codes indexed by user_id for fast lookups
