@@ -715,6 +715,7 @@ def hash_answer(answer: str) -> str:
 def save_security_question(user_id: int, question: str, answer: str) -> bool:
     """Save or update user's security question"""
     try:
+        print(f"[SecurityQ] Saving for user {user_id}, question: {question[:30] if question else 'None'}...")
         conn = get_db_conn()
         c = conn.cursor()
         answer_hash = hash_answer(answer)
@@ -723,8 +724,8 @@ def save_security_question(user_id: int, question: str, answer: str) -> bool:
             c.execute("""
                 INSERT INTO security_questions (user_id, question, answer_hash)
                 VALUES (%s, %s, %s)
-                ON CONFLICT (user_id) DO UPDATE SET question = %s, answer_hash = %s
-            """, (int(user_id), question, answer_hash, question, answer_hash))
+                ON CONFLICT (user_id) DO UPDATE SET question = EXCLUDED.question, answer_hash = EXCLUDED.answer_hash
+            """, (int(user_id), question, answer_hash))
         else:
             c.execute("""
                 INSERT OR REPLACE INTO security_questions (user_id, question, answer_hash)
@@ -733,9 +734,12 @@ def save_security_question(user_id: int, question: str, answer: str) -> bool:
         
         conn.commit()
         conn.close()
+        print(f"[SecurityQ] Successfully saved for user {user_id}")
         return True
     except Exception as e:
         print(f"[DB] Error saving security question: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 def get_security_question(user_id: int) -> dict:

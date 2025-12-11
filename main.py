@@ -874,7 +874,11 @@ def get_referrer_by_code(code: str) -> Optional[int]:
     """Get referrer user_id from referral code"""
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute(q("SELECT key, value FROM meta WHERE key LIKE 'ref_code_%' AND value = ?"), (code.upper(),))
+    # Handle PostgreSQL vs SQLite separately due to LIKE pattern with %
+    if USE_POSTGRES:
+        c.execute("SELECT key, value FROM meta WHERE key LIKE 'ref_code_%%' AND value = %s", (code.upper(),))
+    else:
+        c.execute("SELECT key, value FROM meta WHERE key LIKE 'ref_code_%' AND value = ?", (code.upper(),))
     row = c.fetchone()
     conn.close()
     if row:
