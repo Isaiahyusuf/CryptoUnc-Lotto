@@ -135,6 +135,10 @@ def get_user_wallets(user_id: int) -> List[Dict]:
     """
     conn = get_db_conn()
     c = conn.cursor()
+    
+    # Debug: Log the query
+    print(f"[Wallet] Getting wallets for user_id: {user_id} (type: {type(user_id)})")
+    
     c.execute(q("""
         SELECT wallet_address, wallet_type, wallet_name, is_active 
         FROM wallets 
@@ -142,6 +146,10 @@ def get_user_wallets(user_id: int) -> List[Dict]:
         ORDER BY created_at ASC
     """), (user_id,))
     rows = c.fetchall()
+    
+    # Debug: Log the result count
+    print(f"[Wallet] Found {len(rows)} wallets for user {user_id}")
+    
     conn.close()
 
     wallets = []
@@ -267,6 +275,7 @@ def create_wallet(user_id: int, wallet_name: Optional[str] = None) -> Optional[D
 
     try:
         # Store ENCRYPTED private key in database
+        print(f"[Wallet] Creating wallet for user {user_id}: {wallet_address[:8]}...")
         c.execute(q("""
             INSERT INTO wallets (user_id, wallet_address, wallet_type, wallet_name, private_key)
             VALUES (?, ?, ?, ?, ?)
@@ -274,6 +283,7 @@ def create_wallet(user_id: int, wallet_name: Optional[str] = None) -> Optional[D
 
         # Set as active if it's the first wallet (checked BEFORE insert)
         if is_first_wallet:
+            print(f"[Wallet] Setting first wallet as active for user {user_id}")
             c.execute(q("""
                 INSERT INTO user_active_wallet (user_id, active_wallet_address)
                 VALUES (?, ?)
@@ -281,6 +291,7 @@ def create_wallet(user_id: int, wallet_name: Optional[str] = None) -> Optional[D
             """), (user_id, wallet_address, wallet_address))
 
         conn.commit()
+        print(f"[Wallet] Successfully created wallet for user {user_id}")
         conn.close()
 
         return {
@@ -290,6 +301,7 @@ def create_wallet(user_id: int, wallet_name: Optional[str] = None) -> Optional[D
         }
     except (DBIntegrityError, Exception) as e:
         # Handle both SQLite and PostgreSQL integrity errors
+        print(f"[Wallet] Error creating wallet for user {user_id}: {e}")
         if "unique" in str(e).lower() or "duplicate" in str(e).lower() or isinstance(e, DBIntegrityError):
             conn.close()
             return None
