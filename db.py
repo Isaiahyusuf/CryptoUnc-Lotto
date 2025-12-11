@@ -37,6 +37,9 @@ class SQLiteConnection:
     def commit(self):
         self.conn.commit()
     
+    def rollback(self):
+        self.conn.rollback()
+    
     def close(self):
         self.conn.close()
     
@@ -110,13 +113,20 @@ class PostgresCursor:
 class PostgresConnection:
     """Wrapper for psycopg2 connection with auto-query conversion"""
     def __init__(self, url):
-        self.conn = psycopg2.connect(url)
+        try:
+            self.conn = psycopg2.connect(url)
+        except Exception as e:
+            print(f"[Database] PostgreSQL connection error: {e}")
+            raise
     
     def cursor(self):
         return PostgresCursor(self.conn.cursor())
     
     def commit(self):
         self.conn.commit()
+    
+    def rollback(self):
+        self.conn.rollback()
     
     def close(self):
         self.conn.close()

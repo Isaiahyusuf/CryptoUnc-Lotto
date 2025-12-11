@@ -4982,13 +4982,15 @@ async def start_web_server():
     app.router.add_get('/health', health_check)
     app.router.add_get('/ping', health_check)
     
+    # Use PORT env var for Railway, fallback to 5000 for Replit
+    port = int(os.getenv('PORT', 5000))
+    
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', 5000)
+    site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
-    print("🌐 Web server started on http://0.0.0.0:5000 for UptimeRobot pings")
+    print(f"🌐 Web server started on http://0.0.0.0:{port}")
     print("📌 Health endpoint: /health")
-    print("📌 Your Replit URL: Check the Webview tab above ⬆️")
 
 
 async def main():
