@@ -850,7 +850,7 @@ def get_user_referral_code(user_id: int) -> str:
     """Get or create referral code for user"""
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute("SELECT referral_code FROM referrals WHERE referrer_id = ? LIMIT 1", (user_id,))
+    c.execute(q("SELECT referral_code FROM referrals WHERE referrer_id = ? LIMIT 1"), (user_id,))
     row = c.fetchone()
     if row:
         conn.close()
@@ -874,18 +874,12 @@ def get_referrer_by_code(code: str) -> Optional[int]:
     """Get referrer user_id from referral code"""
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute("SELECT value FROM meta WHERE key LIKE 'ref_code_%' AND value = ?", (code.upper(),))
+    c.execute(q("SELECT key, value FROM meta WHERE key LIKE 'ref_code_%' AND value = ?"), (code.upper(),))
     row = c.fetchone()
     conn.close()
     if row:
-        # Extract user_id from key
-        c2 = get_db_conn()
-        cursor = c2.cursor()
-        cursor.execute("SELECT key FROM meta WHERE value = ?", (code.upper(),))
-        key_row = cursor.fetchone()
-        c2.close()
-        if key_row:
-            return int(key_row[0].replace("ref_code_", ""))
+        # Extract user_id from key (key is in format ref_code_<user_id>)
+        return int(row[0].replace("ref_code_", ""))
     return None
 
 
@@ -897,10 +891,10 @@ def register_referral(referrer_id: int, referred_id: int, code: str) -> bool:
     conn = get_db_conn()
     c = conn.cursor()
     try:
-        c.execute("""
+        c.execute(q("""
             INSERT INTO referrals (referrer_id, referred_id, referral_code)
             VALUES (?, ?, ?)
-        """, (referrer_id, referred_id, code))
+        """), (referrer_id, referred_id, code))
         conn.commit()
         conn.close()
         return True
@@ -915,7 +909,7 @@ def apply_referral_bonus(referred_id: int, ticket_amount: Decimal) -> Optional[D
     
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute("SELECT referrer_id FROM referrals WHERE referred_id = ?", (referred_id,))
+    c.execute(q("SELECT referrer_id FROM referrals WHERE referred_id = ?"), (referred_id,))
     row = c.fetchone()
     
     if not row:
@@ -926,17 +920,17 @@ def apply_referral_bonus(referred_id: int, ticket_amount: Decimal) -> Optional[D
     bonus_amount = ticket_amount * REFERRAL_BONUS_PERCENT
     
     # Update referral stats
-    c.execute("""
+    c.execute(q("""
         UPDATE referrals 
         SET bonus_earned = bonus_earned + ?, tickets_from_referral = tickets_from_referral + 1
         WHERE referred_id = ?
-    """, (float(bonus_amount), referred_id))
+    """), (float(bonus_amount), referred_id))
     
     # Update referrer's stats
-    c.execute("""
+    c.execute(q("""
         UPDATE user_stats SET referral_earnings = referral_earnings + ?
         WHERE user_id = ?
-    """, (float(bonus_amount), referrer_id))
+    """), (float(bonus_amount), referrer_id))
     
     conn.commit()
     conn.close()
@@ -949,10 +943,10 @@ def get_referral_stats(user_id: int) -> Dict:
     conn = get_db_conn()
     c = conn.cursor()
     
-    c.execute("""
+    c.execute(q("""
         SELECT COUNT(*), SUM(bonus_earned), SUM(tickets_from_referral)
         FROM referrals WHERE referrer_id = ?
-    """, (user_id,))
+    """), (user_id,))
     row = c.fetchone()
     
     conn.close()

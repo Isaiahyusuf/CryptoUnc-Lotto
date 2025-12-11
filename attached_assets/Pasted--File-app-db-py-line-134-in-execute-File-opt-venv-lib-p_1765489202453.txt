@@ -1,0 +1,109 @@
+  File "/app/db.py", line 134, in execute
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/router.py", line 148, in _propagate_event
+    return self._cursor.execute(converted, params)
+    response = await observer.trigger(event, **kwargs)
+    return await self.propagate_event(update_type=update_type, event=event, **kwargs)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/router.py", line 128, in propagate_event
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/event/telegram.py", line 121, in trigger
+    return await observer.wrap_outer_middleware(_wrapped, event=event, data=kwargs)
+    return await wrapped_inner(event, kwargs)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/router.py", line 123, in _wrapped
+    return await self._propagate_event(
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/event/handler.py", line 43, in call
+    return await wrapped()
+  File "/app/main.py", line 3718, in inline_handler
+    await cmd_start(query.message)
+  File "/app/main.py", line 2253, in cmd_start
+    referrer_id = get_referrer_by_code(ref_code)
+  File "/app/main.py", line 877, in get_referrer_by_code
+    c.execute("SELECT value FROM meta WHERE key LIKE 'ref_code_%' AND value = ?", (code.upper(),))
+IndexError: tuple index out of range
+Checking balance for CetqZ4pG... using RPC: https://mainnet.helius-rpc.com...
+    return await handler(event, data)
+Balance: 0 SOL (0 lamports)
+Cause exception while process update id=19204372 by bot id=8396374151
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/event/telegram.py", line 121, in trigger
+IndexError: tuple index out of range
+    return await wrapped_inner(event, kwargs)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/event/handler.py", line 43, in call
+Traceback (most recent call last):
+    return await wrapped()
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/dispatcher.py", line 309, in _process_update
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/dispatcher.py", line 276, in _listen_update
+    response = await self.feed_update(bot, update, **kwargs)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/dispatcher.py", line 158, in feed_update
+    response = await self.update.wrap_outer_middleware(
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/middlewares/error.py", line 25, in __call__
+    return await handler(event, data)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/middlewares/user_context.py", line 27, in __call__
+    return await handler(event, data)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/fsm/middleware.py", line 41, in __call__
+  File "/app/db.py", line 134, in execute
+    return await self.propagate_event(update_type=update_type, event=event, **kwargs)
+    return self._cursor.execute(converted, params)
+    return await wrapped()
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/router.py", line 128, in propagate_event
+  File "/app/main.py", line 3718, in inline_handler
+    return await observer.wrap_outer_middleware(_wrapped, event=event, data=kwargs)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/router.py", line 123, in _wrapped
+    await cmd_start(query.message)
+    return await self._propagate_event(
+  File "/app/main.py", line 2253, in cmd_start
+    referrer_id = get_referrer_by_code(ref_code)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/router.py", line 148, in _propagate_event
+  File "/app/main.py", line 877, in get_referrer_by_code
+    response = await observer.trigger(event, **kwargs)
+    c.execute("SELECT value FROM meta WHERE key LIKE 'ref_code_%' AND value = ?", (code.upper(),))
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/event/telegram.py", line 121, in trigger
+    return await wrapped_inner(event, kwargs)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/event/handler.py", line 43, in call
+IndexError: tuple index out of range
+[Round Manager] Round 6: 24.4 min remaining
+Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+Sleep for 1.000000 seconds and try again... (tryings = 0, bot id = 8396374151)
+Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+Sleep for 1.214064 seconds and try again... (tryings = 1, bot id = 8396374151)
+Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+Sleep for 1.715106 seconds and try again... (tryings = 2, bot id = 8396374151)
+Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+Sleep for 2.404726 seconds and try again... (tryings = 3, bot id = 8396374151)
+Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+Sleep for 3.026909 seconds and try again... (tryings = 4, bot id = 8396374151)
+[Round Manager] Round 6: 23.9 min remaining
+Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+Sleep for 3.785038 seconds and try again... (tryings = 5, bot id = 8396374151)
+Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+Sleep for 4.904799 seconds and try again... (tryings = 6, bot id = 8396374151)
+Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+Sleep for 5.111746 seconds and try again... (tryings = 7, bot id = 8396374151)
+[Round Manager] Round 6: 23.4 min remaining
+Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+Sleep for 4.835353 seconds and try again... (tryings = 8, bot id = 8396374151)
+Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+Sleep for 5.050150 seconds and try again... (tryings = 9, bot id = 8396374151)
+Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+Sleep for 4.942774 seconds and try again... (tryings = 10, bot id = 8396374151)
+[Round Manager] Round 6: 22.9 min remaining
+Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+Sleep for 4.903073 seconds and try again... (tryings = 11, bot id = 8396374151)
+Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+Sleep for 5.110529 seconds and try again... (tryings = 12, bot id = 8396374151)
+Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+Sleep for 4.947124 seconds and try again... (tryings = 13, bot id = 8396374151)
+[Round Manager] Round 6: 22.4 min remaining
+Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+Sleep for 5.104868 seconds and try again... (tryings = 14, bot id = 8396374151)
+Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+Sleep for 5.042852 seconds and try again... (tryings = 15, bot id = 8396374151)
+Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+Sleep for 4.868026 seconds and try again... (tryings = 16, bot id = 8396374151)
+[Round Manager] Round 6: 21.9 min remaining
+Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+Sleep for 4.970731 seconds and try again... (tryings = 17, bot id = 8396374151)
+Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+Sleep for 5.009115 seconds and try again... (tryings = 18, bot id = 8396374151)
+Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+Sleep for 5.042555 seconds and try again... (tryings = 19, bot id = 8396374151)
+[Round Manager] Round 6: 21.4 min remaining
+Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+Sleep for 4.996947 seconds and try again... (tryings = 20, bot id = 8396374151)
