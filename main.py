@@ -125,6 +125,7 @@ delete_wallet,
 set_user_pin,
 verify_user_pin,
 has_user_pin,
+delete_user_pin,
 init_wallet_db,
 import_wallet_from_private_key,
 MAX_WALLETS_PER_USER
@@ -3684,6 +3685,8 @@ async def generic_message_handler(message: types.Message):
         
         elif action == "verify_pin_for_key_view":
             if verify_user_pin(uid, text):
+                # Delete PIN after successful verification (one-time use)
+                delete_user_pin(uid)
                 del user_states[uid]
                 wallet = get_active_wallet(uid)
                 private_key = get_wallet_private_key(uid, wallet)
@@ -3785,6 +3788,8 @@ async def generic_message_handler(message: types.Message):
         
         elif action == "verify_pin_for_send":
             if verify_user_pin(uid, text):
+                # Delete PIN after successful verification (one-time use)
+                delete_user_pin(uid)
                 user_states[uid] = {"action": "get_send_address"}
                 wallet = get_active_wallet(uid)
                 balance = await get_real_balance(wallet)

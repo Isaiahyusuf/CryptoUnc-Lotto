@@ -779,6 +779,21 @@ def has_user_pin(user_id: int) -> bool:
     return result
 
 
+def delete_user_pin(user_id: int) -> bool:
+    """Delete user's PIN after successful verification (one-time use)"""
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("DELETE FROM user_pins WHERE user_id = ?", (user_id,))
+        conn.commit()
+        deleted = c.rowcount > 0
+        conn.close()
+        return deleted
+    except Exception as e:
+        print(f"Error deleting PIN for user {user_id}: {e}")
+        return False
+
+
 # ==============================================================================
 # REAL-TIME TRANSACTION FUNCTIONS
 # ==============================================================================
