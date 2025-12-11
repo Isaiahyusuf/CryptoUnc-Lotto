@@ -3565,12 +3565,42 @@ async def generic_message_handler(message: types.Message):
         
         # Handle PIN setting
         if action == "set_pin_after_wallet":
+            # Delete PIN message immediately for security
+            try:
+                await message.delete()
+            except:
+                pass
+            
             if text.isdigit() and len(text) == 4:
+                # First entry - store temporarily and ask for confirmation
+                user_states[uid] = {
+                    "action": "confirm_pin_after_wallet", 
+                    "wallet_address": state.get("wallet_address"),
+                    "first_pin": text
+                }
+                await bot.send_message(uid,
+                    "🔐 <b>Confirm Your PIN</b>\n\n"
+                    "Please enter your 4-digit PIN again to confirm:",
+                    parse_mode="HTML"
+                )
+            else:
+                await bot.send_message(uid, "❌ PIN must be exactly 4 digits. Please try again:")
+            return
+        
+        elif action == "confirm_pin_after_wallet":
+            # Delete PIN message immediately for security
+            try:
+                await message.delete()
+            except:
+                pass
+            
+            first_pin = state.get("first_pin")
+            if text == first_pin:
                 if set_user_pin(uid, text):
                     wallet_address = state.get("wallet_address")
                     set_active_wallet(uid, wallet_address)
                     del user_states[uid]
-                    await message.answer(
+                    await bot.send_message(uid,
                         "✅ <b>PIN Created Successfully!</b>\n\n"
                         "Your PIN has been securely saved.\n"
                         "You can now use your wallet!",
@@ -3578,27 +3608,72 @@ async def generic_message_handler(message: types.Message):
                     )
                     await start_private_play(uid)
                 else:
-                    await message.answer("❌ Invalid PIN. Please try again with 4 digits.")
+                    await bot.send_message(uid, "❌ Failed to save PIN. Please try again with 4 digits.")
             else:
-                await message.answer("❌ PIN must be exactly 4 digits. Please try again:")
+                # PINs don't match - start over
+                user_states[uid] = {"action": "set_pin_after_wallet", "wallet_address": state.get("wallet_address")}
+                await bot.send_message(uid,
+                    "❌ <b>PINs don't match!</b>\n\n"
+                    "Please enter a new 4-digit PIN:",
+                    parse_mode="HTML"
+                )
             return
         
         elif action == "set_pin_for_key_view":
+            # Delete PIN message immediately for security
+            try:
+                await message.delete()
+            except:
+                pass
+            
             if text.isdigit() and len(text) == 4:
+                # First entry - store temporarily and ask for confirmation
+                user_states[uid] = {"action": "confirm_pin_for_key_view", "first_pin": text}
+                await bot.send_message(uid,
+                    "🔐 <b>Confirm Your PIN</b>\n\n"
+                    "Please enter your 4-digit PIN again to confirm:",
+                    parse_mode="HTML"
+                )
+            else:
+                await bot.send_message(uid, "❌ PIN must be exactly 4 digits. Please try again:")
+            return
+        
+        elif action == "confirm_pin_for_key_view":
+            # Delete PIN message immediately for security
+            try:
+                await message.delete()
+            except:
+                pass
+            
+            first_pin = state.get("first_pin")
+            if text == first_pin:
                 if set_user_pin(uid, text):
+                    # Now ask to verify PIN to view key
                     user_states[uid] = {"action": "verify_pin_for_key_view"}
-                    await message.answer(
+                    await bot.send_message(uid,
                         "✅ PIN created!\n\n"
-                        "Please enter your PIN again to view private key:",
+                        "Please enter your PIN to view private key:",
                         parse_mode="HTML"
                     )
                 else:
-                    await message.answer("❌ Invalid PIN. Please try again with 4 digits.")
+                    await bot.send_message(uid, "❌ Failed to save PIN. Please try again with 4 digits.")
             else:
-                await message.answer("❌ PIN must be exactly 4 digits. Please try again:")
+                # PINs don't match - start over
+                user_states[uid] = {"action": "set_pin_for_key_view"}
+                await bot.send_message(uid,
+                    "❌ <b>PINs don't match!</b>\n\n"
+                    "Please enter a new 4-digit PIN:",
+                    parse_mode="HTML"
+                )
             return
         
         elif action == "verify_pin_for_key_view":
+            # Delete PIN message immediately for security
+            try:
+                await message.delete()
+            except:
+                pass
+            
             if verify_user_pin(uid, text):
                 # Delete PIN after successful verification (one-time use)
                 delete_user_pin(uid)
@@ -3607,7 +3682,7 @@ async def generic_message_handler(message: types.Message):
                 private_key = get_wallet_private_key(uid, wallet)
                 if private_key:
                     # Send private key message with auto-delete warning
-                    key_message = await message.answer(
+                    key_message = await bot.send_message(uid,
                         f"🔑 <b>Private Key</b>\n\n"
                         f"Wallet: <code>{wallet[:8]}...{wallet[-8:]}</code>\n\n"
                         f"⚠️ <b>KEEP THIS SECRET!</b>\n"
@@ -3619,9 +3694,9 @@ async def generic_message_handler(message: types.Message):
                     # Schedule auto-deletion after 30 seconds
                     await schedule_private_key_deletion(uid, key_message, delay_seconds=30)
                 else:
-                    await message.answer("❌ Could not retrieve private key.")
+                    await bot.send_message(uid, "❌ Could not retrieve private key.")
             else:
-                await message.answer("❌ Incorrect PIN. Please try again:")
+                await bot.send_message(uid, "❌ Incorrect PIN. Please try again:")
             return
         
         elif action == "import_wallet_private_key":
@@ -3683,12 +3758,38 @@ async def generic_message_handler(message: types.Message):
             return
         
         elif action == "set_pin_for_send":
+            # Delete PIN message immediately for security
+            try:
+                await message.delete()
+            except:
+                pass
+            
             if text.isdigit() and len(text) == 4:
+                # First entry - store temporarily and ask for confirmation
+                user_states[uid] = {"action": "confirm_pin_for_send", "first_pin": text}
+                await bot.send_message(uid,
+                    "🔐 <b>Confirm Your PIN</b>\n\n"
+                    "Please enter your 4-digit PIN again to confirm:",
+                    parse_mode="HTML"
+                )
+            else:
+                await bot.send_message(uid, "❌ PIN must be exactly 4 digits. Please try again:")
+            return
+        
+        elif action == "confirm_pin_for_send":
+            # Delete PIN message immediately for security
+            try:
+                await message.delete()
+            except:
+                pass
+            
+            first_pin = state.get("first_pin")
+            if text == first_pin:
                 if set_user_pin(uid, text):
                     user_states[uid] = {"action": "get_send_address"}
                     wallet = get_active_wallet(uid)
                     balance = await get_real_balance(wallet)
-                    await message.answer(
+                    await bot.send_message(uid,
                         f"✅ PIN created!\n\n"
                         f"💸 <b>Send SOL</b>\n"
                         f"Current balance: <b>{balance} SOL</b>\n\n"
@@ -3696,19 +3797,31 @@ async def generic_message_handler(message: types.Message):
                         parse_mode="HTML"
                     )
                 else:
-                    await message.answer("❌ Invalid PIN. Please try again with 4 digits.")
+                    await bot.send_message(uid, "❌ Failed to save PIN. Please try again with 4 digits.")
             else:
-                await message.answer("❌ PIN must be exactly 4 digits. Please try again:")
+                # PINs don't match - start over
+                user_states[uid] = {"action": "set_pin_for_send"}
+                await bot.send_message(uid,
+                    "❌ <b>PINs don't match!</b>\n\n"
+                    "Please enter a new 4-digit PIN:",
+                    parse_mode="HTML"
+                )
             return
         
         elif action == "verify_pin_for_send":
+            # Delete PIN message immediately for security
+            try:
+                await message.delete()
+            except:
+                pass
+            
             if verify_user_pin(uid, text):
                 # Delete PIN after successful verification (one-time use)
                 delete_user_pin(uid)
                 user_states[uid] = {"action": "get_send_address"}
                 wallet = get_active_wallet(uid)
                 balance = await get_real_balance(wallet)
-                await message.answer(
+                await bot.send_message(uid,
                     f"✅ PIN verified!\n\n"
                     f"💸 <b>Send SOL</b>\n"
                     f"Current balance: <b>{balance} SOL</b>\n\n"
@@ -3716,7 +3829,7 @@ async def generic_message_handler(message: types.Message):
                     parse_mode="HTML"
                 )
             else:
-                await message.answer("❌ Incorrect PIN. Please try again:")
+                await bot.send_message(uid, "❌ Incorrect PIN. Please try again:")
             return
         
         elif action == "get_send_address":

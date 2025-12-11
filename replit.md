@@ -147,3 +147,10 @@ Preferred communication style: Simple, everyday language.
 - **Balance Refresh:** Real-time balance checking from Solana network
 - **PostgreSQL Compatibility:** All wallet queries use q() wrapper for automatic SQLite/PostgreSQL compatibility
 - **Production-Ready:** Wallet system comparable to other Solana wallets with full transaction history
+
+### PIN Security Improvements (December 11, 2025)
+- **Immediate PIN Deletion:** PIN messages are deleted immediately after correct entry for security
+- **PIN Confirmation:** First-time PIN setup requires entering PIN twice to confirm match
+- **Auto-Delete Flow:** User enters PIN → message deleted → verify by re-entering → message deleted → action proceeds
+- **Mismatch Handling:** If PINs don't match during setup, user is prompted to start over with new PIN
+- **One-Time Use:** PINs are deleted from database after successful verification (one-time use for sensitive operations)
