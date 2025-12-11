@@ -13,14 +13,34 @@ import sqlite3
 from contextlib import contextmanager
 
 DATABASE_URL = os.getenv("DATABASE_URL")
-USE_POSTGRES = DATABASE_URL is not None
+
+# Check if DATABASE_URL is valid (not empty, contains proper connection info)
+def is_valid_database_url(url):
+    if not url:
+        return False
+    url = url.strip()
+    if not url:
+        return False
+    # Must contain postgresql:// or postgres:// and have host info
+    if not (url.startswith("postgresql://") or url.startswith("postgres://")):
+        print(f"[Database] Invalid DATABASE_URL format - must start with postgresql:// or postgres://")
+        print(f"[Database] Got: {url[:20]}..." if len(url) > 20 else f"[Database] Got: {url}")
+        return False
+    return True
+
+USE_POSTGRES = is_valid_database_url(DATABASE_URL)
 
 if USE_POSTGRES:
     import psycopg2
     from psycopg2.extras import RealDictCursor
-    print(f"[Database] Using PostgreSQL (Railway)")
+    # Print connection info (hide password)
+    if DATABASE_URL:
+        safe_url = DATABASE_URL.split("@")[-1] if "@" in DATABASE_URL else "configured"
+        print(f"[Database] Using PostgreSQL: ...@{safe_url}")
 else:
     print(f"[Database] Using SQLite (local)")
+    if DATABASE_URL:
+        print(f"[Database] Note: DATABASE_URL was set but invalid, falling back to SQLite")
 
 DB_PATH = "cryptounc_lotto.db"
 
