@@ -754,13 +754,15 @@ def add_funds_to_wallet(wallet_address: str, amount: Decimal):
 
 def set_user_pin(user_id: int, pin: str) -> bool:
     """
-    Set or update user's 4-digit PIN
-    PIN is hashed before storage
+    Set or update user's 4-digit PIN by user_id.
+    PIN is hashed before storage.
     """
     import hashlib
+    user_id = int(user_id)  # Ensure integer type
     
     # Validate PIN is 4 digits
     if not pin.isdigit() or len(pin) != 4:
+        print(f"[PIN] Invalid PIN format for user {user_id}: length={len(pin)}, isdigit={pin.isdigit()}")
         return False
     
     # Hash the PIN
@@ -768,22 +770,29 @@ def set_user_pin(user_id: int, pin: str) -> bool:
     
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute(q("""
-        INSERT INTO user_pins (user_id, pin_hash)
-        VALUES (?, ?)
-        ON CONFLICT(user_id) DO UPDATE SET pin_hash = ?
-    """), (user_id, pin_hash, pin_hash))
-    conn.commit()
-    conn.close()
-    return True
+    try:
+        c.execute(q("""
+            INSERT INTO user_pins (user_id, pin_hash)
+            VALUES (?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET pin_hash = ?
+        """), (user_id, pin_hash, pin_hash))
+        conn.commit()
+        print(f"[PIN] Successfully saved PIN for user {user_id}")
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"[PIN] Error saving PIN for user {user_id}: {e}")
+        conn.close()
+        return False
 
 
 def verify_user_pin(user_id: int, pin: str) -> bool:
     """
-    Verify user's PIN
-    Returns True if PIN matches
+    Verify user's PIN by user_id.
+    Returns True if PIN matches.
     """
     import hashlib
+    user_id = int(user_id)  # Ensure integer type
     
     # Validate PIN format
     if not pin.isdigit() or len(pin) != 4:
@@ -799,23 +808,29 @@ def verify_user_pin(user_id: int, pin: str) -> bool:
     conn.close()
     
     if not row:
+        print(f"[PIN] No PIN found for user {user_id}")
         return False
     
-    return row[0] == pin_hash
+    matches = row[0] == pin_hash
+    print(f"[PIN] Verify for user {user_id}: {'match' if matches else 'no match'}")
+    return matches
 
 
 def has_user_pin(user_id: int) -> bool:
-    """Check if user has set a PIN"""
+    """Check if user has set a PIN by user_id"""
+    user_id = int(user_id)  # Ensure integer type
     conn = get_db_conn()
     c = conn.cursor()
     c.execute(q("SELECT 1 FROM user_pins WHERE user_id = ?"), (user_id,))
     result = c.fetchone() is not None
     conn.close()
+    print(f"[PIN] has_user_pin({user_id}): {result}")
     return result
 
 
 def delete_user_pin(user_id: int) -> bool:
     """Delete user's PIN after successful verification (one-time use)"""
+    user_id = int(user_id)  # Ensure integer type
     try:
         conn = get_db_conn()
         c = conn.cursor()
@@ -823,9 +838,10 @@ def delete_user_pin(user_id: int) -> bool:
         conn.commit()
         deleted = c.rowcount > 0
         conn.close()
+        print(f"[PIN] Deleted PIN for user {user_id}: {deleted}")
         return deleted
     except Exception as e:
-        print(f"Error deleting PIN for user {user_id}: {e}")
+        print(f"[PIN] Error deleting PIN for user {user_id}: {e}")
         return False
 
 

@@ -3709,8 +3709,7 @@ async def generic_message_handler(message: types.Message):
                 pass
             
             if verify_user_pin(uid, text):
-                # Delete PIN after successful verification (one-time use)
-                delete_user_pin(uid)
+                # PIN is now persistent - don't delete after verification
                 del user_states[uid]
                 wallet = get_active_wallet(uid)
                 private_key = get_wallet_private_key(uid, wallet)
@@ -3850,8 +3849,7 @@ async def generic_message_handler(message: types.Message):
                 pass
             
             if verify_user_pin(uid, text):
-                # Delete PIN after successful verification (one-time use)
-                delete_user_pin(uid)
+                # PIN is now persistent - don't delete after verification
                 user_states[uid] = {"action": "get_send_address"}
                 wallet = get_active_wallet(uid)
                 balance = await get_real_balance(wallet)
