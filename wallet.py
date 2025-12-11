@@ -166,13 +166,46 @@ def get_user_wallet_count(user_id: int) -> int:
 
 
 def get_active_wallet(user_id: int) -> Optional[str]:
-    """Get user's currently active wallet address"""
+    """
+    Get user's currently active wallet address.
+    Falls back to finding any existing wallet if no active wallet is set.
+    """
     conn = get_db_conn()
     c = conn.cursor()
+    
+    # First check the active wallet table
     c.execute("SELECT active_wallet_address FROM user_active_wallet WHERE user_id = ?", (user_id,))
     row = c.fetchone()
+    
+    if row and row[0]:
+        # Verify this wallet still exists and is active
+        c.execute("SELECT 1 FROM wallets WHERE user_id = ? AND wallet_address = ? AND is_active = 1", (user_id, row[0]))
+        if c.fetchone():
+            conn.close()
+            return row[0]
+    
+    # Fallback: Find any active wallet for this user and set it as active
+    c.execute("""
+        SELECT wallet_address FROM wallets 
+        WHERE user_id = ? AND is_active = 1 
+        ORDER BY created_at ASC LIMIT 1
+    """, (user_id,))
+    fallback_row = c.fetchone()
+    
+    if fallback_row:
+        wallet_address = fallback_row[0]
+        # Auto-recover: Set this as the active wallet
+        c.execute("""
+            INSERT INTO user_active_wallet (user_id, active_wallet_address)
+            VALUES (?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET active_wallet_address = ?
+        """, (user_id, wallet_address, wallet_address))
+        conn.commit()
+        conn.close()
+        return wallet_address
+    
     conn.close()
-    return row[0] if row else None
+    return None
 
 
 def set_active_wallet(user_id: int, wallet_address: str) -> bool:
@@ -290,13 +323,12 @@ def save_external_wallet(user_id: int, wallet_address: str, wallet_type: str = "
             VALUES (?, ?, ?, ?)
         """, (user_id, wallet_address, wallet_type, wallet_name))
 
-        # Set as active if it's the first wallet (checked BEFORE insert)
-        if is_first_wallet:
-            c.execute("""
-                INSERT INTO user_active_wallet (user_id, active_wallet_address)
-                VALUES (?, ?)
-                ON CONFLICT(user_id) DO UPDATE SET active_wallet_address = ?
-            """, (user_id, wallet_address, wallet_address))
+        # Always set as active wallet (upsert - won't override if already set, but ensures we have one)
+        c.execute("""
+            INSERT INTO user_active_wallet (user_id, active_wallet_address)
+            VALUES (?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET active_wallet_address = ?
+        """, (user_id, wallet_address, wallet_address))
 
         conn.commit()
         conn.close()
