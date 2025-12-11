@@ -17,87 +17,38 @@ import json
 # RAILWAY-ONLY EXECUTION RESTRICTION
 # ==============================================================================
 # This bot is restricted to run ONLY on Railway platform.
-# Running on any other platform will immediately exit.
-# This prevents unauthorized instances from operating.
-#
-# SECURITY MODEL:
-# This check verifies Railway-specific environment variables automatically set
-# by Railway's runtime. While env vars can technically be spoofed by someone
-# with source code access, the TRUE security comes from:
-# 1. BOT_TOKEN and OWNER_WALLET_PRIVATE_KEY are stored ONLY in Railway secrets
-# 2. The source code is in a private repository
-# 3. This check prevents accidental execution and casual unauthorized runs
-#
-# For maximum security, set RAILWAY_DEPLOY_SECRET in Railway and
-# EXPECTED_DEPLOY_SECRET to match - this adds shared secret verification.
-# 
-# NOTE: If an attacker has access to both the code AND all Railway secrets,
-# no client-side check can prevent spoofing. The secrets themselves are the
-# real protection layer.
+# Running on any other platform (including Replit) will immediately exit.
+# This prevents conflict errors from multiple bot instances.
 
 def verify_authorized_environment():
     """
-    Verify that the bot is running on an authorized platform (Railway or Replit).
-    Checks for platform-specific environment variables.
+    Verify that the bot is running ONLY on Railway.
+    Any other platform will be blocked to prevent conflicts.
     """
-    # Check for Railway deploy secret (strongest verification)
-    deploy_secret = os.getenv("RAILWAY_DEPLOY_SECRET")
-    expected_secret = os.getenv("EXPECTED_DEPLOY_SECRET")
+    # Railway-specific environment variables (automatically set by Railway)
+    railway_env = os.getenv("RAILWAY_ENVIRONMENT")
+    railway_project = os.getenv("RAILWAY_PROJECT_ID")
     
-    if deploy_secret and expected_secret:
-        if deploy_secret != expected_secret:
-            print("=" * 60)
-            print("UNAUTHORIZED DEPLOYMENT DETECTED")
-            print("=" * 60)
-            print("Deploy secret mismatch - this is not an authorized instance.")
-            print("=" * 60)
-            sys.exit(1)
-        print("Deploy secret verified.")
+    # Check if running on Railway
+    is_railway = railway_env is not None or railway_project is not None
     
-    # Check for Replit environment
-    is_replit = os.getenv("REPL_ID") or os.getenv("REPLIT_DEPLOYMENT")
-    
-    # Railway-specific environment indicators
-    railway_required = [
-        "RAILWAY_ENVIRONMENT",
-        "RAILWAY_PROJECT_ID",
-    ]
-    
-    railway_optional = [
-        "RAILWAY_SERVICE_ID",
-        "RAILWAY_STATIC_URL",
-        "RAILWAY_PUBLIC_DOMAIN",
-    ]
-    
-    # Require at least the main Railway indicators
-    missing_required = [var for var in railway_required if not os.getenv(var)]
-    present_optional = [var for var in railway_optional if os.getenv(var)]
-    
-    # Must have ALL required vars, OR have deploy secret match, OR be on Replit
-    is_railway = len(missing_required) == 0 or (deploy_secret and deploy_secret == expected_secret)
-    is_authorized = is_railway or is_replit
-    
-    if not is_authorized:
+    if not is_railway:
         print("=" * 60)
-        print("UNAUTHORIZED EXECUTION DETECTED")
+        print("RAILWAY-ONLY BOT - EXECUTION BLOCKED")
         print("=" * 60)
         print("")
-        print("This bot is configured to run ONLY on Railway or Replit.")
-        print("Execution from other platforms is not permitted.")
+        print("This bot runs ONLY on Railway to prevent conflicts.")
+        print("Running multiple instances causes Telegram polling errors.")
         print("")
-        print("Missing required Railway env vars:", missing_required)
+        print("To run this bot:")
+        print("1. Deploy to Railway")
+        print("2. Set all required environment variables in Railway")
+        print("3. The bot will start automatically")
         print("")
-        print("If you are the owner, please deploy this bot to Railway or Replit")
-        print("with the proper environment variables configured.")
         print("=" * 60)
         sys.exit(1)
     
-    if is_replit:
-        print(f"Replit environment verified (REPL_ID: {os.getenv('REPL_ID', 'N/A')[:8]}...)")
-    else:
-        print(f"Railway environment verified (project: {os.getenv('RAILWAY_PROJECT_ID', 'N/A')[:8]}...)")
-    if present_optional:
-        print(f"Additional Railway markers: {', '.join(present_optional)}")
+    print(f"Railway environment verified (project: {railway_project[:8] if railway_project else 'N/A'}...)")
 
 verify_authorized_environment()
 

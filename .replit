@@ -16,15 +16,15 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "CryptoUnc Lotto Bot"
+args = "Project Info"
 
 [[workflows.workflow]]
-name = "CryptoUnc Lotto Bot"
+name = "Project Info"
 author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python main.py"
+args = "python info.py"
 
 [workflows.workflow.metadata]
 outputType = "console"

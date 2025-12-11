@@ -174,3 +174,15 @@ Preferred communication style: Simple, everyday language.
 - **Faster UI:** No more waiting for Solana RPC on every button press
 - **Referral Query Fix:** All referral functions now use q() wrapper for PostgreSQL compatibility
 - **Fixed IndexError:** Resolved "tuple index out of range" error in referral code lookup
+
+### Railway-Only Deployment (December 11, 2025)
+- **Platform Restriction:** Bot now runs ONLY on Railway platform
+- **Conflict Prevention:** Blocks execution on Replit/other platforms to prevent Telegram polling conflicts
+- **Automatic Detection:** Uses Railway environment variables (RAILWAY_ENVIRONMENT, RAILWAY_PROJECT_ID) to verify platform
+- **Exit on Unauthorized:** Immediately exits with clear message if not running on Railway
+
+### Performance Optimizations (December 11, 2025)
+- **5-Second RPC Timeout:** Each RPC call now times out after 5 seconds to speed up failover
+- **Parallel Balance Fetching:** Wallet menu fetches all wallet balances simultaneously instead of one-by-one
+- **Fixed Security Question Saving:** PostgreSQL upsert syntax corrected (uses EXCLUDED.column)
+- **Fixed Referral LIKE Query:** PostgreSQL LIKE pattern with % now handled correctly
