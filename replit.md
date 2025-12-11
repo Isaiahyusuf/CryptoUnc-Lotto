@@ -138,3 +138,12 @@ Preferred communication style: Simple, everyday language.
 - `referrals`: Stores referrer/referred relationships and bonus tracking
 - `draw_history`: Complete draw records for provably fair verification
 - `jackpot_seeds`: Admin seeding records
+- `wallet_transactions`: Complete transaction history for all wallet operations (send, receive, lottery stakes, wins, refunds)
+
+### Wallet System Improvements (December 11, 2025)
+- **Transaction History Tracking:** All wallet operations (sends, lottery stakes, wins, refunds) are logged to `wallet_transactions` table
+- **Wallet Summary:** Users can view total sent, received, staked, won, and refunded SOL
+- **Address Validation:** Proper base58 validation for Solana addresses with helpful error messages
+- **Balance Refresh:** Real-time balance checking from Solana network
+- **PostgreSQL Compatibility:** All wallet queries use q() wrapper for automatic SQLite/PostgreSQL compatibility
+- **Production-Ready:** Wallet system comparable to other Solana wallets with full transaction history
