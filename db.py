@@ -303,6 +303,21 @@ def init_all_tables():
             )
         """)
         
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS wallet_transactions (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL,
+                wallet_address TEXT NOT NULL,
+                tx_type TEXT NOT NULL,
+                amount REAL NOT NULL,
+                to_address TEXT,
+                from_address TEXT,
+                tx_signature TEXT,
+                status TEXT DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
         try:
             c.execute("INSERT INTO meta (key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING", ('current_round', '1'))
         except:
@@ -464,6 +479,21 @@ def init_all_tables():
                 admin_id INTEGER NOT NULL,
                 amount REAL NOT NULL,
                 tx_signature TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS wallet_transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                wallet_address TEXT NOT NULL,
+                tx_type TEXT NOT NULL,
+                amount REAL NOT NULL,
+                to_address TEXT,
+                from_address TEXT,
+                tx_signature TEXT,
+                status TEXT DEFAULT 'pending',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)

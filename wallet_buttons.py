@@ -16,7 +16,11 @@ from wallet import (
     delete_wallet as db_delete_wallet,
     set_active_wallet,
     get_user_wallet_count,
-    MAX_WALLETS_PER_USER
+    MAX_WALLETS_PER_USER,
+    is_valid_solana_address,
+    get_wallet_transactions,
+    get_wallet_summary,
+    send_sol_with_logging
 )
 
 router = Router()
@@ -58,9 +62,15 @@ async def handle_address(message: Message, state: FSMContext):
     """Handle recipient address input"""
     address = message.text.strip()
     
-    # Basic validation
-    if not (32 <= len(address) <= 44 and address.replace('1', '').replace('2', '').replace('3', '').replace('4', '').replace('5', '').replace('6', '').replace('7', '').replace('8', '').replace('9', '').replace('0', '').isalpha()):
-        await message.answer("❌ Invalid Solana address. Please try again with a valid address.")
+    # Proper Solana address validation using base58
+    if not is_valid_solana_address(address):
+        await message.answer(
+            "❌ <b>Invalid Solana address</b>\n\n"
+            "Please enter a valid Solana wallet address.\n"
+            "It should be 32-44 characters and look like:\n"
+            "<code>7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU</code>",
+            parse_mode="HTML"
+        )
         return
     
     await state.update_data(recipient_address=address)
@@ -117,10 +127,10 @@ async def handle_amount(message: Message, state: FSMContext):
         await state.clear()
         return
     
-    # Send transaction
+    # Send transaction with logging
     await message.answer("⏳ Processing transaction...")
     
-    result = await send_sol(wallet, recipient, amount, private_key)
+    result = await send_sol_with_logging(user_id, wallet, recipient, amount, private_key)
     
     if result["success"]:
         await message.answer(
@@ -194,6 +204,137 @@ async def confirm_delete_wallet(callback: CallbackQuery):
 async def cancel_delete(callback: CallbackQuery):
     """Cancel wallet deletion"""
     await callback.message.answer("❌ Wallet deletion cancelled.")
+    await callback.answer()
+
+
+# ================ Transaction History Feature ================
+@router.callback_query(F.data == "tx_history")
+async def handle_tx_history(callback: CallbackQuery):
+    """Show transaction history for the active wallet"""
+    user_id = callback.from_user.id
+    wallet = get_active_wallet(user_id)
+    
+    if not wallet:
+        await callback.message.answer("❌ No active wallet. Please create or connect a wallet first.")
+        await callback.answer()
+        return
+    
+    transactions = get_wallet_transactions(user_id, wallet, limit=10)
+    
+    if not transactions:
+        await callback.message.answer(
+            "📜 <b>Transaction History</b>\n\n"
+            "No transactions found for this wallet yet.\n\n"
+            "Transactions will appear here after you:\n"
+            "• Send SOL to another wallet\n"
+            "• Participate in lottery rounds\n"
+            "• Receive lottery winnings",
+            parse_mode="HTML"
+        )
+        await callback.answer()
+        return
+    
+    history_text = "📜 <b>Recent Transactions</b>\n\n"
+    
+    for tx in transactions:
+        tx_type = tx["tx_type"]
+        amount = tx["amount"]
+        status = tx["status"]
+        
+        if tx_type == "send":
+            icon = "📤"
+            direction = f"To: {tx['to_address'][:8]}..." if tx['to_address'] else ""
+        elif tx_type == "receive":
+            icon = "📥"
+            direction = f"From: {tx['from_address'][:8]}..." if tx['from_address'] else ""
+        elif tx_type == "lottery_stake":
+            icon = "🎰"
+            direction = "Lottery Entry"
+        elif tx_type == "lottery_win":
+            icon = "🏆"
+            direction = "Lottery Win!"
+        elif tx_type == "refund":
+            icon = "↩️"
+            direction = "Refund"
+        else:
+            icon = "💫"
+            direction = tx_type
+        
+        status_icon = "✅" if status == "completed" else "⏳" if status == "pending" else "❌"
+        
+        history_text += f"{icon} {direction}\n"
+        history_text += f"   Amount: {amount} SOL {status_icon}\n"
+        if tx.get("tx_signature"):
+            history_text += f"   TX: <code>{tx['tx_signature'][:12]}...</code>\n"
+        history_text += "\n"
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Refresh", callback_data="tx_history")],
+        [InlineKeyboardButton(text="📊 Wallet Summary", callback_data="wallet_summary")]
+    ])
+    
+    await callback.message.answer(history_text, parse_mode="HTML", reply_markup=keyboard)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "wallet_summary")
+async def handle_wallet_summary(callback: CallbackQuery):
+    """Show wallet activity summary"""
+    user_id = callback.from_user.id
+    wallet = get_active_wallet(user_id)
+    
+    if not wallet:
+        await callback.message.answer("❌ No active wallet.")
+        await callback.answer()
+        return
+    
+    balance = await get_real_balance(wallet)
+    summary = get_wallet_summary(user_id, wallet)
+    
+    await callback.message.answer(
+        f"📊 <b>Wallet Summary</b>\n\n"
+        f"💳 Address: <code>{wallet[:8]}...{wallet[-8:]}</code>\n"
+        f"💰 Current Balance: <b>{balance} SOL</b>\n\n"
+        f"📤 Total Sent: {summary['total_sent']} SOL\n"
+        f"📥 Total Received: {summary['total_received']} SOL\n"
+        f"🎰 Total Staked: {summary['total_staked']} SOL\n"
+        f"🏆 Total Won: {summary['total_won']} SOL\n"
+        f"↩️ Total Refunds: {summary['total_refunds']} SOL\n\n"
+        f"📝 Total Transactions: {summary['transaction_count']}",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "refresh_balance")
+async def handle_refresh_balance(callback: CallbackQuery):
+    """Refresh and show current wallet balance"""
+    user_id = callback.from_user.id
+    wallet = get_active_wallet(user_id)
+    
+    if not wallet:
+        await callback.message.answer("❌ No active wallet.")
+        await callback.answer()
+        return
+    
+    await callback.message.answer("🔄 Fetching balance from Solana network...")
+    
+    try:
+        balance = await get_real_balance(wallet)
+        await callback.message.answer(
+            f"💰 <b>Wallet Balance</b>\n\n"
+            f"Address: <code>{wallet[:8]}...{wallet[-8:]}</code>\n"
+            f"Balance: <b>{balance} SOL</b>\n\n"
+            f"💡 <i>Tip: Deposit SOL to this address to add funds.</i>",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        await callback.message.answer(
+            f"❌ <b>Error fetching balance</b>\n\n"
+            f"The Solana network may be experiencing issues. Please try again in a moment.",
+            parse_mode="HTML"
+        )
+    
     await callback.answer()
 
 

@@ -1025,3 +1025,207 @@ async def execute_automatic_transfer(sender_private_key_hex: str, receiver_addre
             "success": False,
             "error": str(e)
         }
+
+
+# ==============================================================================
+# WALLET VALIDATION FUNCTIONS
+# ==============================================================================
+
+def is_valid_solana_address(address: str) -> bool:
+    """
+    Validate a Solana wallet address format.
+    Solana addresses are base58 encoded and 32-44 characters.
+    """
+    import base58
+    
+    if not address or not isinstance(address, str):
+        return False
+    
+    address = address.strip()
+    
+    if len(address) < 32 or len(address) > 44:
+        return False
+    
+    try:
+        decoded = base58.b58decode(address)
+        return len(decoded) == 32
+    except Exception:
+        return False
+
+
+def validate_wallet_address(address: str) -> Dict:
+    """
+    Validate a Solana wallet address and return detailed info.
+    Returns dict with 'valid', 'address', and optional 'error'.
+    """
+    if not address:
+        return {"valid": False, "error": "Address is required"}
+    
+    address = address.strip()
+    
+    if not is_valid_solana_address(address):
+        return {"valid": False, "error": "Invalid Solana address format"}
+    
+    return {"valid": True, "address": address}
+
+
+# ==============================================================================
+# TRANSACTION HISTORY FUNCTIONS
+# ==============================================================================
+
+def log_wallet_transaction(user_id: int, wallet_address: str, tx_type: str, 
+                          amount: Decimal, to_address: str = None, 
+                          from_address: str = None, tx_signature: str = None,
+                          status: str = "completed") -> bool:
+    """
+    Log a wallet transaction to the database for history tracking.
+    
+    tx_type: 'send', 'receive', 'lottery_stake', 'lottery_win', 'refund'
+    status: 'pending', 'completed', 'failed'
+    """
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute(q("""
+            INSERT INTO wallet_transactions 
+            (user_id, wallet_address, tx_type, amount, to_address, from_address, tx_signature, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """), (user_id, wallet_address, tx_type, float(amount), to_address, from_address, tx_signature, status))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Error logging transaction: {e}")
+        return False
+
+
+def get_wallet_transactions(user_id: int, wallet_address: str = None, limit: int = 20) -> List[Dict]:
+    """
+    Get transaction history for a user's wallet.
+    If wallet_address is None, returns transactions for all user's wallets.
+    """
+    conn = get_db_conn()
+    c = conn.cursor()
+    
+    if wallet_address:
+        c.execute(q("""
+            SELECT id, wallet_address, tx_type, amount, to_address, from_address, 
+                   tx_signature, status, created_at
+            FROM wallet_transactions 
+            WHERE user_id = ? AND wallet_address = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+        """), (user_id, wallet_address, limit))
+    else:
+        c.execute(q("""
+            SELECT id, wallet_address, tx_type, amount, to_address, from_address, 
+                   tx_signature, status, created_at
+            FROM wallet_transactions 
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+        """), (user_id, limit))
+    
+    rows = c.fetchall()
+    conn.close()
+    
+    transactions = []
+    for row in rows:
+        transactions.append({
+            "id": row[0],
+            "wallet_address": row[1],
+            "tx_type": row[2],
+            "amount": Decimal(str(row[3])),
+            "to_address": row[4],
+            "from_address": row[5],
+            "tx_signature": row[6],
+            "status": row[7],
+            "created_at": row[8]
+        })
+    
+    return transactions
+
+
+def get_wallet_summary(user_id: int, wallet_address: str) -> Dict:
+    """
+    Get a summary of wallet activity including total sent, received, etc.
+    """
+    conn = get_db_conn()
+    c = conn.cursor()
+    
+    c.execute(q("""
+        SELECT tx_type, SUM(amount), COUNT(*)
+        FROM wallet_transactions 
+        WHERE user_id = ? AND wallet_address = ? AND status = 'completed'
+        GROUP BY tx_type
+    """), (user_id, wallet_address))
+    
+    rows = c.fetchall()
+    conn.close()
+    
+    summary = {
+        "total_sent": Decimal("0"),
+        "total_received": Decimal("0"),
+        "total_staked": Decimal("0"),
+        "total_won": Decimal("0"),
+        "total_refunds": Decimal("0"),
+        "transaction_count": 0
+    }
+    
+    for tx_type, total, count in rows:
+        summary["transaction_count"] += count
+        if tx_type == "send":
+            summary["total_sent"] = Decimal(str(total or 0))
+        elif tx_type == "receive":
+            summary["total_received"] = Decimal(str(total or 0))
+        elif tx_type == "lottery_stake":
+            summary["total_staked"] = Decimal(str(total or 0))
+        elif tx_type == "lottery_win":
+            summary["total_won"] = Decimal(str(total or 0))
+        elif tx_type == "refund":
+            summary["total_refunds"] = Decimal(str(total or 0))
+    
+    return summary
+
+
+# ==============================================================================
+# ENHANCED SEND SOL WITH LOGGING
+# ==============================================================================
+
+async def send_sol_with_logging(user_id: int, from_address: str, to_address: str, 
+                                amount_sol: Decimal, private_key_hex: str) -> Dict:
+    """
+    Send SOL and automatically log the transaction to history.
+    """
+    log_wallet_transaction(
+        user_id=user_id,
+        wallet_address=from_address,
+        tx_type="send",
+        amount=amount_sol,
+        to_address=to_address,
+        status="pending"
+    )
+    
+    result = await send_sol(from_address, to_address, amount_sol, private_key_hex)
+    
+    if result["success"]:
+        log_wallet_transaction(
+            user_id=user_id,
+            wallet_address=from_address,
+            tx_type="send",
+            amount=amount_sol,
+            to_address=to_address,
+            tx_signature=result.get("signature"),
+            status="completed"
+        )
+    else:
+        log_wallet_transaction(
+            user_id=user_id,
+            wallet_address=from_address,
+            tx_type="send",
+            amount=amount_sol,
+            to_address=to_address,
+            status="failed"
+        )
+    
+    return result
