@@ -82,6 +82,7 @@ Preferred communication style: Simple, everyday language.
 - `SOLANA_RPC`: Solana RPC endpoint URL.
 - `ENCRYPTION_KEY`: Master key for private key encryption.
 - `SUPPORT_USERNAME`: Telegram support contact.
+- `DATABASE_URL` (Required for Railway): PostgreSQL connection string provided by Railway.
 - `HELIUS_RPC` (Optional): Primary Helius RPC endpoint with automatic fallback.
 - `ANNOUNCEMENTS_GROUP_ID` (Optional): Telegram group for additional announcements.
 
@@ -97,7 +98,9 @@ Preferred communication style: Simple, everyday language.
 
 ### Database
 
-- **SQLite:** File-based (`cryptounc_lotto.db`) for local data storage, suitable for current scale.
+- **PostgreSQL (Railway):** When `DATABASE_URL` environment variable is set, uses PostgreSQL for persistent storage across deployments.
+- **SQLite (Fallback):** If no `DATABASE_URL`, falls back to file-based SQLite for local development.
+- **Data Persistence:** All user data, wallets, and lottery entries are now persistent across Railway deployments.
 
 ### Wallet Connection Flow
 
@@ -116,13 +119,19 @@ Preferred communication style: Simple, everyday language.
 - FSM states added: `NumberSelectionStates.selecting_numbers`, `confirming_purchase`
 
 ### Engagement Features
-1. **Referral System:** 5% bonus when referred users buy tickets
+1. **Referral System:** Coming soon (tracking only, no rewards yet)
 2. **VIP Tier System:** Bronze → Silver → Gold → Platinum → Diamond
 3. **Leaderboard:** Top winners and top players
 4. **Personal Statistics Dashboard:** Tickets, spending, winnings, VIP tier
 5. **Check Jackpot Button:** Live view of current prize pool (owner wallet balance)
 6. **Admin Jackpot Seeding:** `/seedjackpot <amount>` command
 7. **Prize Rollover:** No winner = jackpot carries forward to next round
+
+### Database Migration (December 11, 2025)
+- Migrated from SQLite to PostgreSQL for persistent storage on Railway
+- Data now survives GitHub pushes and Railway redeployments
+- Set `DATABASE_URL` environment variable in Railway to enable PostgreSQL
+- Without `DATABASE_URL`, falls back to SQLite (local development only)
 
 ### New Database Tables
 - `user_stats`: Tracks tickets, spending, winnings, VIP tier, referral earnings

@@ -131,7 +131,7 @@ import_wallet_from_private_key,
 MAX_WALLETS_PER_USER
 )
 
-import sqlite3
+from db import get_db_conn, init_all_tables, q, USE_POSTGRES
 
 from wallet_buttons import router as wallet_router
 
@@ -478,7 +478,7 @@ MIN_PLAYERS_PER_STAKE = MIN_PLAYERS_TO_DRAW  # Alias for legacy code
 # Legacy: Keep STAKE_PACKAGES for database compatibility
 STAKE_PACKAGES = [TICKET_PRICE]  # Single fixed price
 
-DB_PATH = "cryptounc_lotto.db"
+# DB_PATH removed - now using db.py module for database abstraction
 
 # ==============================================================================
 # JACKPOT / POT SYSTEM
@@ -732,173 +732,8 @@ def migrate_timestamps_to_iso():
 
 
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    # Users table
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            username TEXT
-        )
-    """)
-    # Entries table
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS entries (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            round INTEGER,
-            numbers TEXT,
-            stake_amount REAL,
-            tx_signature TEXT,
-            paid INTEGER DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    # Draws table
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS draws (
-            round INTEGER PRIMARY KEY,
-            winning_numbers TEXT,
-            drawn_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    # Meta table
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS meta (
-            key TEXT PRIMARY KEY,
-            value TEXT
-        )
-    """)
-    c.execute("INSERT OR IGNORE INTO meta(key, value) VALUES('current_round','1')")
-    
-    # Scheduled rounds table - tracks each scheduled round
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS scheduled_rounds (
-            round_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            round_number INTEGER NOT NULL,
-            scheduled_time TIMESTAMP NOT NULL,
-            start_time TIMESTAMP,
-            end_time TIMESTAMP,
-            status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'open', 'closed', 'completed', 'cancelled')),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(round_number, scheduled_time)
-        )
-    """)
-    
-    # Create index for scheduled rounds lookups
-    c.execute("CREATE INDEX IF NOT EXISTS idx_scheduled_rounds_time ON scheduled_rounds(scheduled_time, status)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_scheduled_rounds_status ON scheduled_rounds(status)")
-    
-    # Round stakes table - tracks each stake category within a round
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS round_stakes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            round_id INTEGER NOT NULL,
-            stake_amount REAL NOT NULL,
-            status TEXT DEFAULT 'open' CHECK(status IN ('open', 'closed', 'drawn', 'pending_refund', 'refunded')),
-            winner_user_id INTEGER,
-            prize_amount REAL,
-            tx_signature TEXT,
-            first_stake_time TIMESTAMP,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(round_id, stake_amount),
-            FOREIGN KEY (round_id) REFERENCES scheduled_rounds(round_id) ON DELETE CASCADE,
-            FOREIGN KEY (winner_user_id) REFERENCES users(user_id)
-        )
-    """)
-    
-    # Create index for round stakes lookups
-    c.execute("CREATE INDEX IF NOT EXISTS idx_round_stakes_round ON round_stakes(round_id, status)")
-    
-    # Round participants table - tracks individual participants per stake
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS round_participants (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            round_stake_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
-            numbers TEXT NOT NULL,
-            tx_signature TEXT,
-            refunded INTEGER DEFAULT 0 CHECK(refunded IN (0, 1)),
-            refund_tx TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (round_stake_id) REFERENCES round_stakes(id) ON DELETE CASCADE,
-            FOREIGN KEY (user_id) REFERENCES users(user_id)
-        )
-    """)
-    
-    # Create index for participant lookups
-    c.execute("CREATE INDEX IF NOT EXISTS idx_round_participants_stake ON round_participants(round_stake_id)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_round_participants_user ON round_participants(user_id)")
-    
-    # Referrals table - tracks referral relationships
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS referrals (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            referrer_id INTEGER NOT NULL,
-            referred_id INTEGER NOT NULL UNIQUE,
-            referral_code TEXT NOT NULL,
-            bonus_earned REAL DEFAULT 0,
-            tickets_from_referral INTEGER DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (referrer_id) REFERENCES users(user_id),
-            FOREIGN KEY (referred_id) REFERENCES users(user_id)
-        )
-    """)
-    c.execute("CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_id)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_referrals_code ON referrals(referral_code)")
-    
-    # User stats table - tracks player statistics
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS user_stats (
-            user_id INTEGER PRIMARY KEY,
-            total_tickets INTEGER DEFAULT 0,
-            total_spent REAL DEFAULT 0,
-            total_won REAL DEFAULT 0,
-            wins INTEGER DEFAULT 0,
-            biggest_win REAL DEFAULT 0,
-            referral_earnings REAL DEFAULT 0,
-            vip_tier INTEGER DEFAULT 0,
-            notification_enabled INTEGER DEFAULT 1,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users(user_id)
-        )
-    """)
-    
-    # Draw history table - for provably fair verification
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS draw_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            round_id INTEGER NOT NULL,
-            winning_numbers TEXT NOT NULL,
-            seed_data TEXT,
-            player_count INTEGER,
-            total_pot REAL,
-            winner_id INTEGER,
-            prize_amount REAL,
-            tx_signature TEXT,
-            drawn_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (round_id) REFERENCES scheduled_rounds(round_id)
-        )
-    """)
-    c.execute("CREATE INDEX IF NOT EXISTS idx_draw_history_round ON draw_history(round_id)")
-    
-    # Jackpot seeds table - admin additions to jackpot
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS jackpot_seeds (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            admin_id INTEGER NOT NULL,
-            amount REAL NOT NULL,
-            tx_signature TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    
-    conn.commit()
-    conn.close()
-
-
-def get_db_conn():
-    return sqlite3.connect(DB_PATH)
+    """Initialize database tables - delegates to db.py"""
+    init_all_tables()
 
 
 def get_current_round() -> int:
@@ -931,9 +766,9 @@ def str_to_numbers(s):
 def save_user(user_id: int, username: str):
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute("INSERT OR IGNORE INTO users(user_id, username) VALUES (?, ?)", (user_id, username))
+    c.execute(q("INSERT OR IGNORE INTO users(user_id, username) VALUES (?, ?)"), (user_id, username))
     # Also initialize user stats
-    c.execute("INSERT OR IGNORE INTO user_stats(user_id) VALUES (?)", (user_id,))
+    c.execute(q("INSERT OR IGNORE INTO user_stats(user_id) VALUES (?)"), (user_id,))
     conn.commit()
     conn.close()
 
@@ -962,8 +797,12 @@ def get_user_referral_code(user_id: int) -> str:
     # Create new code
     code = generate_referral_code(user_id)
     # Store in meta table for lookup
-    c.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", 
-              (f"ref_code_{user_id}", code))
+    if USE_POSTGRES:
+        c.execute("INSERT INTO meta(key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", 
+                  (f"ref_code_{user_id}", code))
+    else:
+        c.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", 
+                  (f"ref_code_{user_id}", code))
     conn.commit()
     conn.close()
     return code
@@ -1091,10 +930,10 @@ def update_user_stats(user_id: int, tickets: int = 0, spent: Decimal = Decimal("
     c = conn.cursor()
     
     # Ensure user stats exist
-    c.execute("INSERT OR IGNORE INTO user_stats(user_id) VALUES (?)", (user_id,))
+    c.execute(q("INSERT OR IGNORE INTO user_stats(user_id) VALUES (?)"), (user_id,))
     
     # Get current stats
-    c.execute("SELECT total_tickets, biggest_win FROM user_stats WHERE user_id = ?", (user_id,))
+    c.execute(q("SELECT total_tickets, biggest_win FROM user_stats WHERE user_id = ?"), (user_id,))
     row = c.fetchone()
     current_tickets = row[0] if row else 0
     biggest_win = Decimal(str(row[1])) if row and row[1] else Decimal("0")
@@ -1104,7 +943,7 @@ def update_user_stats(user_id: int, tickets: int = 0, spent: Decimal = Decimal("
     new_tier = compute_vip_tier(new_tickets)
     new_biggest = max(biggest_win, won)
     
-    c.execute("""
+    c.execute(q("""
         UPDATE user_stats SET 
             total_tickets = total_tickets + ?,
             total_spent = total_spent + ?,
@@ -1113,7 +952,7 @@ def update_user_stats(user_id: int, tickets: int = 0, spent: Decimal = Decimal("
             biggest_win = ?,
             vip_tier = ?
         WHERE user_id = ?
-    """, (tickets, float(spent), float(won), 1 if is_win else 0, float(new_biggest), new_tier, user_id))
+    """), (tickets, float(spent), float(won), 1 if is_win else 0, float(new_biggest), new_tier, user_id))
     
     conn.commit()
     conn.close()
@@ -1125,8 +964,8 @@ def get_user_stats(user_id: int) -> Dict:
     conn = get_db_conn()
     c = conn.cursor()
     
-    c.execute("INSERT OR IGNORE INTO user_stats(user_id) VALUES (?)", (user_id,))
-    c.execute("SELECT * FROM user_stats WHERE user_id = ?", (user_id,))
+    c.execute(q("INSERT OR IGNORE INTO user_stats(user_id) VALUES (?)"), (user_id,))
+    c.execute(q("SELECT * FROM user_stats WHERE user_id = ?"), (user_id,))
     row = c.fetchone()
     conn.close()
     
@@ -1322,12 +1161,12 @@ def toggle_notifications(user_id: int) -> bool:
     """Toggle notification preference for user. Returns new state."""
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute("INSERT OR IGNORE INTO user_stats(user_id) VALUES (?)", (user_id,))
-    c.execute("SELECT notification_enabled FROM user_stats WHERE user_id = ?", (user_id,))
+    c.execute(q("INSERT OR IGNORE INTO user_stats(user_id) VALUES (?)"), (user_id,))
+    c.execute(q("SELECT notification_enabled FROM user_stats WHERE user_id = ?"), (user_id,))
     row = c.fetchone()
     current = row[0] if row else 1
     new_state = 0 if current else 1
-    c.execute("UPDATE user_stats SET notification_enabled = ? WHERE user_id = ?", (new_state, user_id))
+    c.execute(q("UPDATE user_stats SET notification_enabled = ? WHERE user_id = ?"), (new_state, user_id))
     conn.commit()
     conn.close()
     return bool(new_state)
@@ -1346,10 +1185,9 @@ def get_users_with_notifications() -> List[int]:
 def add_entry(user_id: int, round_num: int, numbers, stake_amount: float, tx_signature: str = "", paid=0):
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute(
-        "INSERT INTO entries(user_id, round, numbers, stake_amount, tx_signature, paid) VALUES (?, ?, ?, ?, ?, ?)",
-        (user_id, round_num, numbers_to_str(numbers), stake_amount, tx_signature, paid)
-    )
+    c.execute(q(
+        "INSERT INTO entries(user_id, round, numbers, stake_amount, tx_signature, paid) VALUES (?, ?, ?, ?, ?, ?)"
+    ), (user_id, round_num, numbers_to_str(numbers), stake_amount, tx_signature, paid))
     conn.commit()
     conn.close()
 
@@ -1357,7 +1195,7 @@ def add_entry(user_id: int, round_num: int, numbers, stake_amount: float, tx_sig
 def get_entries_for_round(round_num: int):
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute("SELECT id, user_id, numbers, paid FROM entries WHERE round = ?", (round_num,))
+    c.execute(q("SELECT id, user_id, numbers, paid FROM entries WHERE round = ?"), (round_num,))
     rows = c.fetchall()
     conn.close()
     return rows
@@ -1378,10 +1216,16 @@ def get_user_last_entry(user_id: int):
 def save_draw(round_num: int, winning_numbers):
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute(
-        "INSERT OR REPLACE INTO draws(round, winning_numbers) VALUES (?, ?)",
-        (round_num, numbers_to_str(winning_numbers))
-    )
+    if USE_POSTGRES:
+        c.execute(
+            "INSERT INTO draws(round, winning_numbers) VALUES (%s, %s) ON CONFLICT (round) DO UPDATE SET winning_numbers = EXCLUDED.winning_numbers",
+            (round_num, numbers_to_str(winning_numbers))
+        )
+    else:
+        c.execute(
+            "INSERT OR REPLACE INTO draws(round, winning_numbers) VALUES (?, ?)",
+            (round_num, numbers_to_str(winning_numbers))
+        )
     conn.commit()
     conn.close()
 
@@ -1423,7 +1267,8 @@ def migrate_add_winning_numbers_column():
         c.execute("ALTER TABLE scheduled_rounds ADD COLUMN winning_numbers TEXT")
         conn.commit()
         print("✅ Added winning_numbers column to scheduled_rounds")
-    except sqlite3.OperationalError:
+    except Exception:
+        # Column already exists (SQLite OperationalError or PostgreSQL error)
         pass
     finally:
         conn.close()
@@ -1434,11 +1279,18 @@ def create_scheduled_round(round_number: int, scheduled_time: datetime):
     c = conn.cursor()
     try:
         scheduled_time_str = scheduled_time.isoformat() if hasattr(scheduled_time, 'isoformat') else scheduled_time
-        c.execute("""
-            INSERT INTO scheduled_rounds (round_number, scheduled_time, status)
-            VALUES (?, ?, 'pending')
-        """, (round_number, scheduled_time_str))
-        round_id = c.lastrowid
+        if USE_POSTGRES:
+            c.execute("""
+                INSERT INTO scheduled_rounds (round_number, scheduled_time, status)
+                VALUES (%s, %s, 'pending') RETURNING round_id
+            """, (round_number, scheduled_time_str))
+            round_id = c.fetchone()[0]
+        else:
+            c.execute("""
+                INSERT INTO scheduled_rounds (round_number, scheduled_time, status)
+                VALUES (?, ?, 'pending')
+            """, (round_number, scheduled_time_str))
+            round_id = c.lastrowid
         
         for stake in STAKE_PACKAGES:
             c.execute("""
@@ -1453,9 +1305,13 @@ def create_scheduled_round(round_number: int, scheduled_time: datetime):
         print(f"🎲 Round {round_id} created with hidden winning numbers")
         
         return round_id
-    except sqlite3.IntegrityError:
+    except Exception as e:
+        # Handle both SQLite and PostgreSQL integrity errors
+        if "unique" in str(e).lower() or "duplicate" in str(e).lower() or "integrity" in str(e).lower():
+            conn.rollback()
+            return None
         conn.rollback()
-        return None
+        raise
     finally:
         conn.close()
 
@@ -1529,11 +1385,18 @@ def add_round_participant(round_stake_id: int, user_id: int, numbers: list, tx_s
             return {"success": False, "error": "Round has ended"}
     
     try:
-        c.execute("""
-            INSERT INTO round_participants (round_stake_id, user_id, numbers, tx_signature)
-            VALUES (?, ?, ?, ?)
-        """, (round_stake_id, user_id, numbers_to_str(numbers), tx_signature))
-        participant_id = c.lastrowid
+        if USE_POSTGRES:
+            c.execute("""
+                INSERT INTO round_participants (round_stake_id, user_id, numbers, tx_signature)
+                VALUES (%s, %s, %s, %s) RETURNING id
+            """, (round_stake_id, user_id, numbers_to_str(numbers), tx_signature))
+            participant_id = c.fetchone()[0]
+        else:
+            c.execute("""
+                INSERT INTO round_participants (round_stake_id, user_id, numbers, tx_signature)
+                VALUES (?, ?, ?, ?)
+            """, (round_stake_id, user_id, numbers_to_str(numbers), tx_signature))
+            participant_id = c.lastrowid
         
         c.execute("""
             SELECT first_stake_time, COUNT(rp.id) as count
@@ -1557,8 +1420,8 @@ def add_round_participant(round_stake_id: int, user_id: int, numbers: list, tx_s
         # Update user stats (tickets purchased + amount spent)
         update_user_stats(user_id, tickets=1, spent=Decimal(str(stake_amount)))
         
-        # Apply referral bonus if applicable (tracked but not paid immediately)
-        apply_referral_bonus(user_id, Decimal(str(stake_amount)))
+        # Referral bonus tracking disabled - coming soon
+        # apply_referral_bonus(user_id, Decimal(str(stake_amount)))
         
         return {"success": True, "participant_id": participant_id, "round_id": round_id, "stake_amount": stake_amount, "ticket_count": count}
     except Exception as e:
@@ -1607,11 +1470,18 @@ def get_or_create_active_round_stake(stake_amount: Decimal):
         if not pending_row:
             # No rounds at all - create one
             now_utc = datetime.now(pytz.UTC)
-            c.execute("""
-                INSERT INTO scheduled_rounds (round_number, scheduled_time, status, start_time)
-                VALUES (?, ?, 'open', ?)
-            """, (get_current_round(), now_utc.isoformat(), now_utc.isoformat()))
-            round_id = c.lastrowid
+            if USE_POSTGRES:
+                c.execute("""
+                    INSERT INTO scheduled_rounds (round_number, scheduled_time, status, start_time)
+                    VALUES (%s, %s, 'open', %s) RETURNING round_id
+                """, (get_current_round(), now_utc.isoformat(), now_utc.isoformat()))
+                round_id = c.fetchone()[0]
+            else:
+                c.execute("""
+                    INSERT INTO scheduled_rounds (round_number, scheduled_time, status, start_time)
+                    VALUES (?, ?, 'open', ?)
+                """, (get_current_round(), now_utc.isoformat(), now_utc.isoformat()))
+                round_id = c.lastrowid
         else:
             round_id = pending_row[0]
             # Open the pending round
@@ -1637,11 +1507,18 @@ def get_or_create_active_round_stake(stake_amount: Decimal):
             return None, None  # Stake is not open
     else:
         # Create the stake
-        c.execute("""
-            INSERT INTO round_stakes (round_id, stake_amount, status)
-            VALUES (?, ?, 'open')
-        """, (round_id, float(stake_amount)))
-        stake_id = c.lastrowid
+        if USE_POSTGRES:
+            c.execute("""
+                INSERT INTO round_stakes (round_id, stake_amount, status)
+                VALUES (%s, %s, 'open') RETURNING id
+            """, (round_id, float(stake_amount)))
+            stake_id = c.fetchone()[0]
+        else:
+            c.execute("""
+                INSERT INTO round_stakes (round_id, stake_amount, status)
+                VALUES (?, ?, 'open')
+            """, (round_id, float(stake_amount)))
+            stake_id = c.lastrowid
     
     conn.commit()
     conn.close()
@@ -2330,7 +2207,7 @@ async def cmd_start(message: types.Message):
         f"• No winner? Prize rolls over to next round!\n\n"
         f"💰 Ticket Price: {TICKET_PRICE} SOL\n"
         f"⏰ 24 Hourly Rounds (one per hour)\n\n"
-        f"🎁 Invite friends & earn 5% on their tickets!",
+        f"🎁 Referral rewards coming soon!",
         reply_markup=keyboard,
         parse_mode="HTML"
     )
@@ -3063,11 +2940,18 @@ async def inline_handler(query: types.CallbackQuery):
         # Add entry and get ticket ID
         conn = get_db_conn()
         c = conn.cursor()
-        c.execute(
-            "INSERT INTO entries(user_id, round, numbers, stake_amount, tx_signature, paid) VALUES (?, ?, ?, ?, ?, ?)",
-            (uid, round_num, numbers_to_str(lottery_numbers), float(amount), tx_signature, 1)
-        )
-        ticket_id = c.lastrowid
+        if USE_POSTGRES:
+            c.execute(
+                "INSERT INTO entries(user_id, round, numbers, stake_amount, tx_signature, paid) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+                (uid, round_num, numbers_to_str(lottery_numbers), float(amount), tx_signature, 1)
+            )
+            ticket_id = c.fetchone()[0]
+        else:
+            c.execute(
+                "INSERT INTO entries(user_id, round, numbers, stake_amount, tx_signature, paid) VALUES (?, ?, ?, ?, ?, ?)",
+                (uid, round_num, numbers_to_str(lottery_numbers), float(amount), tx_signature, 1)
+            )
+            ticket_id = c.lastrowid
         conn.commit()
         conn.close()
 
@@ -3135,7 +3019,7 @@ async def inline_handler(query: types.CallbackQuery):
             f"• No winner? Jackpot grows for next round!\n\n"
             f"<b>🎁 Referral Program:</b>\n"
             f"• Invite friends using your unique link\n"
-            f"• Earn 5% of every ticket they buy\n\n"
+            f"• Referral rewards coming soon!\n\n"
             f"<b>🎖️ VIP Tiers:</b>\n"
             f"• Bronze (0+ tickets) → Silver (10+) → Gold (50+)\n"
             f"• Platinum (100+) → Diamond (500+ tickets)\n\n"
@@ -3249,22 +3133,16 @@ async def inline_handler(query: types.CallbackQuery):
     elif data == "referral":
         await query.answer()
         ref_code = get_user_referral_code(uid)
-        ref_stats = get_referral_stats(uid)
         
         bot_info = await bot.get_me()
         ref_link = f"https://t.me/{bot_info.username}?start={ref_code}"
         
-        text = f"🎁 <b>Invite Friends & Earn!</b>\n\n"
+        text = f"🎁 <b>Invite Friends!</b>\n\n"
         text += f"Share your referral link:\n"
         text += f"<code>{ref_link}</code>\n\n"
-        text += f"<b>How it works:</b>\n"
-        text += f"• Share your link with friends\n"
-        text += f"• When they buy tickets, you earn <b>5%</b>\n"
-        text += f"• Bonuses are tracked automatically\n\n"
-        text += f"<b>Your Stats:</b>\n"
-        text += f"👥 Friends invited: {ref_stats['total_referrals']}\n"
-        text += f"💰 Total earned: {ref_stats['total_bonus']} SOL\n"
-        text += f"🎫 Tickets from referrals: {ref_stats['total_tickets']}\n"
+        text += f"<b>Referral rewards coming soon!</b>\n\n"
+        text += f"We're working on an exciting referral reward program.\n"
+        text += f"Start sharing now to build your network!\n"
         
         keyboard = create_keyboard_with_nav([
             [InlineKeyboardButton(text="📈 My Stats", callback_data="my_stats")]

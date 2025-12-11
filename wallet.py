@@ -1,6 +1,13 @@
 # Wallet.py - Real Solana Mainnet Wallet Management
 import os
 import sqlite3
+from db import get_db_conn, q, USE_POSTGRES
+
+if USE_POSTGRES:
+    import psycopg2
+    DBIntegrityError = psycopg2.IntegrityError
+else:
+    DBIntegrityError = sqlite3.IntegrityError
 from decimal import Decimal
 from typing import Optional, List, Dict
 import asyncio
@@ -85,54 +92,11 @@ async def get_working_rpc() -> str:
     
     return FALLBACK_RPC
 
-DB_PATH = "cryptounc_lotto.db"
-
-
-def get_db_conn():
-    """Get database connection"""
-    return sqlite3.connect(DB_PATH)
 
 
 def init_wallet_db():
-    """Initialize wallet tables in database"""
-    conn = get_db_conn()
-    c = conn.cursor()
-
-    # Wallets table - stores user wallets
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS wallets (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            wallet_address TEXT NOT NULL,
-            wallet_type TEXT NOT NULL,
-            wallet_name TEXT,
-            private_key TEXT,
-            is_active INTEGER DEFAULT 1,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(user_id, wallet_address)
-        )
-    """)
-
-    # User active wallet tracker
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS user_active_wallet (
-            user_id INTEGER PRIMARY KEY,
-            active_wallet_address TEXT,
-            FOREIGN KEY (active_wallet_address) REFERENCES wallets(wallet_address)
-        )
-    """)
-
-    # User PINs table - stores encrypted 4-digit PINs for wallet security
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS user_pins (
-            user_id INTEGER PRIMARY KEY,
-            pin_hash TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    conn.commit()
-    conn.close()
+    """Initialize wallet tables - now handled by db.py init_all_tables()"""
+    pass
 
 
 async def get_real_balance(wallet_address: str) -> Decimal:
@@ -291,9 +255,13 @@ def create_wallet(user_id: int, wallet_name: Optional[str] = None) -> Optional[D
             "type": "bot",
             "name": wallet_name
         }
-    except sqlite3.IntegrityError:
+    except (sqlite3.IntegrityError, Exception) as e:
+        # Handle both SQLite and PostgreSQL integrity errors
+        if "unique" in str(e).lower() or "duplicate" in str(e).lower() or isinstance(e, sqlite3.IntegrityError):
+            conn.close()
+            return None
         conn.close()
-        return None
+        raise
 
 
 def save_external_wallet(user_id: int, wallet_address: str, wallet_type: str = "external", wallet_name: Optional[str] = None) -> bool:
@@ -333,9 +301,13 @@ def save_external_wallet(user_id: int, wallet_address: str, wallet_type: str = "
         conn.commit()
         conn.close()
         return True
-    except sqlite3.IntegrityError:
+    except (sqlite3.IntegrityError, Exception) as e:
+        # Handle both SQLite and PostgreSQL integrity errors
+        if "unique" in str(e).lower() or "duplicate" in str(e).lower() or isinstance(e, sqlite3.IntegrityError):
+            conn.close()
+            return False
         conn.close()
-        return False
+        raise
 
 
 def import_wallet_from_private_key(user_id: int, private_key_input: str, wallet_name: Optional[str] = None) -> Dict:
