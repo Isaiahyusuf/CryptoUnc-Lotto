@@ -130,25 +130,37 @@ async def get_real_balance(wallet_address: str) -> Decimal:
 
 def get_user_wallets(user_id: int) -> List[Dict]:
     """
-    Get all wallets for a user
-    Returns list of wallet dicts
+    Get all wallets for a user by their user_id.
+    Only returns wallets that haven't been deleted (is_active = 1).
+    Wallets persist in the database until user explicitly deletes them.
     """
     conn = get_db_conn()
     c = conn.cursor()
     
-    # Debug: Log the query
-    print(f"[Wallet] Getting wallets for user_id: {user_id} (type: {type(user_id)})")
+    # Ensure user_id is integer for consistent comparison
+    user_id = int(user_id)
     
+    print(f"[Wallet] Fetching wallets for user_id: {user_id}")
+    
+    # Get all non-deleted wallets for this user
     c.execute(q("""
-        SELECT wallet_address, wallet_type, wallet_name, is_active 
+        SELECT wallet_address, wallet_type, wallet_name, is_active, user_id
         FROM wallets 
         WHERE user_id = ? AND is_active = 1
         ORDER BY created_at ASC
     """), (user_id,))
     rows = c.fetchall()
     
-    # Debug: Log the result count
-    print(f"[Wallet] Found {len(rows)} wallets for user {user_id}")
+    print(f"[Wallet] Found {len(rows)} active wallets for user {user_id}")
+    
+    # If no wallets found, check if user has ANY wallets (even deleted ones)
+    if len(rows) == 0:
+        c.execute(q("SELECT COUNT(*), user_id FROM wallets WHERE user_id = ? GROUP BY user_id"), (user_id,))
+        check = c.fetchone()
+        if check:
+            print(f"[Wallet] User {user_id} has {check[0]} total wallets (including deleted)")
+        else:
+            print(f"[Wallet] User {user_id} has no wallets in database at all")
     
     conn.close()
 
@@ -164,7 +176,8 @@ def get_user_wallets(user_id: int) -> List[Dict]:
 
 
 def get_user_wallet_count(user_id: int) -> int:
-    """Get number of active wallets for a user"""
+    """Get number of active wallets for a user by user_id"""
+    user_id = int(user_id)  # Ensure integer type
     conn = get_db_conn()
     c = conn.cursor()
     c.execute(q("SELECT COUNT(*) FROM wallets WHERE user_id = ? AND is_active = 1"), (user_id,))
@@ -175,9 +188,11 @@ def get_user_wallet_count(user_id: int) -> int:
 
 def get_active_wallet(user_id: int) -> Optional[str]:
     """
-    Get user's currently active wallet address.
+    Get user's currently active wallet address by user_id.
     Falls back to finding any existing wallet if no active wallet is set.
+    Wallets are identified by user_id and persist until user deletes them.
     """
+    user_id = int(user_id)  # Ensure integer type
     conn = get_db_conn()
     c = conn.cursor()
     
@@ -217,7 +232,8 @@ def get_active_wallet(user_id: int) -> Optional[str]:
 
 
 def set_active_wallet(user_id: int, wallet_address: str) -> bool:
-    """Set which wallet is active for the user"""
+    """Set which wallet is active for the user by user_id"""
+    user_id = int(user_id)  # Ensure integer type
     conn = get_db_conn()
     c = conn.cursor()
 
@@ -241,12 +257,13 @@ def set_active_wallet(user_id: int, wallet_address: str) -> bool:
 
 def create_wallet(user_id: int, wallet_name: Optional[str] = None) -> Optional[Dict]:
     """
-    Create a new bot-managed wallet for the user
+    Create a new bot-managed wallet for the user by user_id.
     Returns wallet dict with address (private key is ENCRYPTED in database)
     
-    IMPORTANT: This function checks for existing wallets FIRST and reuses them.
-    A new wallet is only created if the user has less than MAX_WALLETS_PER_USER wallets.
+    Wallets are stored with user_id and persist until user explicitly deletes them.
     """
+    user_id = int(user_id)  # Ensure integer type
+    
     # Check wallet limit FIRST - never exceed MAX_WALLETS_PER_USER
     current_count = get_user_wallet_count(user_id)
     if current_count >= MAX_WALLETS_PER_USER:
@@ -356,12 +373,14 @@ def save_external_wallet(user_id: int, wallet_address: str, wallet_type: str = "
 
 def import_wallet_from_private_key(user_id: int, private_key_input: str, wallet_name: Optional[str] = None) -> Dict:
     """
-    Import a wallet using private key (hex or base58 format)
-    Returns dict with success status, address, or error message
+    Import a wallet using private key (hex or base58 format) for a user by user_id.
+    Returns dict with success status, address, or error message.
+    Wallet is stored with user_id and persists until user explicitly deletes it.
     
     SECURITY: Private key is encrypted before storage
     """
     import base58
+    user_id = int(user_id)  # Ensure integer type
     
     # Check wallet limit
     if get_user_wallet_count(user_id) >= MAX_WALLETS_PER_USER:
