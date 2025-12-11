@@ -156,19 +156,28 @@ def init_all_tables():
     c = conn.cursor()
     
     if USE_POSTGRES:
+        # For PostgreSQL, we need to handle existing tables gracefully
+        # Check if tables exist first to avoid SERIAL type conflicts
         c.execute("""
-            CREATE TABLE IF NOT EXISTS wallets (
-                id SERIAL PRIMARY KEY,
-                user_id BIGINT NOT NULL,
-                wallet_address TEXT NOT NULL,
-                wallet_type TEXT NOT NULL,
-                wallet_name TEXT,
-                private_key TEXT,
-                is_active INTEGER DEFAULT 1,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(user_id, wallet_address)
-            )
+            SELECT table_name FROM information_schema.tables 
+            WHERE table_schema = 'public'
         """)
+        existing_tables = {row[0] for row in c.fetchall()}
+        
+        if 'wallets' not in existing_tables:
+            c.execute("""
+                CREATE TABLE wallets (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL,
+                    wallet_address TEXT NOT NULL,
+                    wallet_type TEXT NOT NULL,
+                    wallet_name TEXT,
+                    private_key TEXT,
+                    is_active INTEGER DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, wallet_address)
+                )
+            """)
         
         c.execute("""
             CREATE TABLE IF NOT EXISTS user_active_wallet (
@@ -200,123 +209,132 @@ def init_all_tables():
             )
         """)
         
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS entries (
-                id SERIAL PRIMARY KEY,
-                user_id BIGINT,
-                round INTEGER,
-                numbers TEXT,
-                stake_amount REAL,
-                tx_signature TEXT,
-                paid INTEGER DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+        if 'entries' not in existing_tables:
+            c.execute("""
+                CREATE TABLE entries (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT,
+                    round INTEGER,
+                    numbers TEXT,
+                    stake_amount REAL,
+                    tx_signature TEXT,
+                    paid INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
         
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS scheduled_rounds (
-                round_id SERIAL PRIMARY KEY,
-                round_number INTEGER NOT NULL,
-                scheduled_time TIMESTAMP NOT NULL,
-                start_time TIMESTAMP,
-                end_time TIMESTAMP,
-                status TEXT DEFAULT 'pending',
-                winning_numbers TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+        if 'scheduled_rounds' not in existing_tables:
+            c.execute("""
+                CREATE TABLE scheduled_rounds (
+                    round_id SERIAL PRIMARY KEY,
+                    round_number INTEGER NOT NULL,
+                    scheduled_time TIMESTAMP NOT NULL,
+                    start_time TIMESTAMP,
+                    end_time TIMESTAMP,
+                    status TEXT DEFAULT 'pending',
+                    winning_numbers TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
         
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS round_stakes (
-                id SERIAL PRIMARY KEY,
-                round_id INTEGER NOT NULL,
-                stake_amount REAL NOT NULL,
-                status TEXT DEFAULT 'open',
-                winner_user_id BIGINT,
-                prize_amount REAL,
-                tx_signature TEXT,
-                first_stake_time TIMESTAMP,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+        if 'round_stakes' not in existing_tables:
+            c.execute("""
+                CREATE TABLE round_stakes (
+                    id SERIAL PRIMARY KEY,
+                    round_id INTEGER NOT NULL,
+                    stake_amount REAL NOT NULL,
+                    status TEXT DEFAULT 'open',
+                    winner_user_id BIGINT,
+                    prize_amount REAL,
+                    tx_signature TEXT,
+                    first_stake_time TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
         
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS round_participants (
-                id SERIAL PRIMARY KEY,
-                round_stake_id INTEGER NOT NULL,
-                user_id BIGINT NOT NULL,
-                numbers TEXT NOT NULL,
-                tx_signature TEXT NOT NULL,
-                refunded INTEGER DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(round_stake_id, user_id)
-            )
-        """)
+        if 'round_participants' not in existing_tables:
+            c.execute("""
+                CREATE TABLE round_participants (
+                    id SERIAL PRIMARY KEY,
+                    round_stake_id INTEGER NOT NULL,
+                    user_id BIGINT NOT NULL,
+                    numbers TEXT NOT NULL,
+                    tx_signature TEXT NOT NULL,
+                    refunded INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(round_stake_id, user_id)
+                )
+            """)
         
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS user_stats (
-                user_id BIGINT PRIMARY KEY,
-                total_tickets INTEGER DEFAULT 0,
-                total_spent REAL DEFAULT 0,
-                total_won REAL DEFAULT 0,
-                wins INTEGER DEFAULT 0,
-                biggest_win REAL DEFAULT 0,
-                referral_earnings REAL DEFAULT 0,
-                vip_tier INTEGER DEFAULT 0,
-                notification_enabled INTEGER DEFAULT 1
-            )
-        """)
+        if 'user_stats' not in existing_tables:
+            c.execute("""
+                CREATE TABLE user_stats (
+                    user_id BIGINT PRIMARY KEY,
+                    total_tickets INTEGER DEFAULT 0,
+                    total_spent REAL DEFAULT 0,
+                    total_won REAL DEFAULT 0,
+                    wins INTEGER DEFAULT 0,
+                    biggest_win REAL DEFAULT 0,
+                    referral_earnings REAL DEFAULT 0,
+                    vip_tier INTEGER DEFAULT 0,
+                    notification_enabled INTEGER DEFAULT 1
+                )
+            """)
         
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS referrals (
-                id SERIAL PRIMARY KEY,
-                referrer_id BIGINT NOT NULL,
-                referred_id BIGINT NOT NULL UNIQUE,
-                referral_code TEXT,
-                bonus_earned REAL DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+        if 'referrals' not in existing_tables:
+            c.execute("""
+                CREATE TABLE referrals (
+                    id SERIAL PRIMARY KEY,
+                    referrer_id BIGINT NOT NULL,
+                    referred_id BIGINT NOT NULL UNIQUE,
+                    referral_code TEXT,
+                    bonus_earned REAL DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
         
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS draw_history (
-                id SERIAL PRIMARY KEY,
-                round_id INTEGER NOT NULL,
-                winning_numbers TEXT NOT NULL,
-                seed_data TEXT,
-                player_count INTEGER,
-                total_pot REAL,
-                winner_id BIGINT,
-                prize_amount REAL,
-                tx_signature TEXT,
-                drawn_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+        if 'draw_history' not in existing_tables:
+            c.execute("""
+                CREATE TABLE draw_history (
+                    id SERIAL PRIMARY KEY,
+                    round_id INTEGER NOT NULL,
+                    winning_numbers TEXT NOT NULL,
+                    seed_data TEXT,
+                    player_count INTEGER,
+                    total_pot REAL,
+                    winner_id BIGINT,
+                    prize_amount REAL,
+                    tx_signature TEXT,
+                    drawn_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
         
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS jackpot_seeds (
-                id SERIAL PRIMARY KEY,
-                admin_id BIGINT NOT NULL,
-                amount REAL NOT NULL,
-                tx_signature TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+        if 'jackpot_seeds' not in existing_tables:
+            c.execute("""
+                CREATE TABLE jackpot_seeds (
+                    id SERIAL PRIMARY KEY,
+                    admin_id BIGINT NOT NULL,
+                    amount REAL NOT NULL,
+                    tx_signature TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
         
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS wallet_transactions (
-                id SERIAL PRIMARY KEY,
-                user_id BIGINT NOT NULL,
-                wallet_address TEXT NOT NULL,
-                tx_type TEXT NOT NULL,
-                amount REAL NOT NULL,
-                to_address TEXT,
-                from_address TEXT,
-                tx_signature TEXT,
-                status TEXT DEFAULT 'pending',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+        if 'wallet_transactions' not in existing_tables:
+            c.execute("""
+                CREATE TABLE wallet_transactions (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL,
+                    wallet_address TEXT NOT NULL,
+                    tx_type TEXT NOT NULL,
+                    amount REAL NOT NULL,
+                    to_address TEXT,
+                    from_address TEXT,
+                    tx_signature TEXT,
+                    status TEXT DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
         
         try:
             c.execute("INSERT INTO meta (key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING", ('current_round', '1'))
