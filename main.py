@@ -1555,99 +1555,100 @@ async def verify_solana_transaction(tx_signature: str, expected_recipient: str, 
     try:
         from solana.rpc.async_api import AsyncClient
         from solders.signature import Signature
+        from wallet import RPC_ENDPOINTS
         
-        async with AsyncClient(SOLANA_RPC) as client:
-            # Parse the signature
+        # Parse the signature first
+        try:
+            sig = Signature.from_string(tx_signature)
+        except Exception as e:
+            return {"valid": False, "error": f"Invalid signature format: {e}"}
+        
+        # Try each RPC endpoint with failover
+        last_error = None
+        for rpc in RPC_ENDPOINTS:
             try:
-                sig = Signature.from_string(tx_signature)
-            except Exception as e:
-                return {"valid": False, "error": f"Invalid signature format: {e}"}
-            
-            # Get transaction details
-            try:
-                tx_response = await client.get_transaction(
-                    sig,
-                    encoding="jsonParsed",
-                    max_supported_transaction_version=0
-                )
-            except Exception as e:
-                return {"valid": False, "error": f"Failed to fetch transaction: {e}"}
-            
-            if not tx_response or not tx_response.value:
-                return {"valid": False, "error": "Transaction not found on blockchain. Please wait for confirmation."}
-            
-            tx = tx_response.value
-            
-            # Check if transaction was successful
-            if tx.transaction.meta.err is not None:
-                return {"valid": False, "error": "Transaction failed on blockchain"}
-            
-            # Parse the transaction to find SOL transfers
-            try:
-                # Get pre and post balances
-                pre_balances = tx.transaction.meta.pre_balances
-                post_balances = tx.transaction.meta.post_balances
-                account_keys = tx.transaction.transaction.message.account_keys
-                
-                # Build account map for balance changes
-                account_changes = {}
-                recipient_idx = None
-                sender_idx = None
-                
-                for i, key in enumerate(account_keys):
-                    key_str = str(key.pubkey) if hasattr(key, 'pubkey') else str(key)
-                    balance_change = post_balances[i] - pre_balances[i]
-                    account_changes[key_str] = Decimal(balance_change) / Decimal("1000000000")
+                async with AsyncClient(rpc) as client:
+                    # Get transaction details
+                    tx_response = await client.get_transaction(
+                        sig,
+                        encoding="jsonParsed",
+                        max_supported_transaction_version=0
+                    )
                     
-                    if key_str == expected_recipient:
-                        recipient_idx = i
-                    if sender_wallet and key_str == sender_wallet:
-                        sender_idx = i
-                
-                # Check recipient received funds
-                if recipient_idx is None:
-                    return {"valid": False, "error": f"Recipient {expected_recipient[:8]}... not found in transaction"}
-                
-                amount_received = account_changes[expected_recipient]
-                
-                # Security check: recipient should ONLY receive, not send back
-                if amount_received <= Decimal("0"):
-                    return {"valid": False, "error": "Recipient did not receive positive balance in this transaction"}
-                
-                # Check sender if specified
-                if sender_wallet:
-                    if sender_idx is None:
-                        return {"valid": False, "error": "Your wallet is not part of this transaction"}
+                    if not tx_response or not tx_response.value:
+                        return {"valid": False, "error": "Transaction not found on blockchain. Please wait for confirmation."}
                     
-                    sender_change = account_changes[sender_wallet]
-                    # Sender should have negative balance change (sent funds + fees)
-                    if sender_change >= Decimal("0"):
-                        return {"valid": False, "error": "Sender did not send funds in this transaction"}
-                
-                # Security: Check for suspicious patterns
-                # If sender received any funds back (net positive to sender from recipient)
-                # This could indicate a rebate attack
-                if sender_wallet and sender_wallet in account_changes:
-                    # The recipient should not have any outgoing transfers back to sender
-                    # We check this by ensuring recipient only gained balance
-                    pass  # Already checked above that recipient gained balance
-                
-                # Allow small margin (0.001 SOL) for rounding only
-                min_expected = expected_amount - Decimal("0.001")
-                if amount_received < min_expected:
-                    return {
-                        "valid": False, 
-                        "error": f"Amount received ({amount_received:.6f} SOL) less than required ({expected_amount} SOL)"
-                    }
-                
-                return {
-                    "valid": True,
-                    "amount_received": float(amount_received),
-                    "signature": tx_signature
-                }
-                
+                    tx = tx_response.value
+                    
+                    # Check if transaction was successful
+                    if tx.transaction.meta.err is not None:
+                        return {"valid": False, "error": "Transaction failed on blockchain"}
+                    
+                    # Parse the transaction to find SOL transfers
+                    try:
+                        # Get pre and post balances
+                        pre_balances = tx.transaction.meta.pre_balances
+                        post_balances = tx.transaction.meta.post_balances
+                        account_keys = tx.transaction.transaction.message.account_keys
+                        
+                        # Build account map for balance changes
+                        account_changes = {}
+                        recipient_idx = None
+                        sender_idx = None
+                        
+                        for i, key in enumerate(account_keys):
+                            key_str = str(key.pubkey) if hasattr(key, 'pubkey') else str(key)
+                            balance_change = post_balances[i] - pre_balances[i]
+                            account_changes[key_str] = Decimal(balance_change) / Decimal("1000000000")
+                            
+                            if key_str == expected_recipient:
+                                recipient_idx = i
+                            if sender_wallet and key_str == sender_wallet:
+                                sender_idx = i
+                        
+                        # Check recipient received funds
+                        if recipient_idx is None:
+                            return {"valid": False, "error": f"Recipient {expected_recipient[:8]}... not found in transaction"}
+                        
+                        amount_received = account_changes[expected_recipient]
+                        
+                        # Security check: recipient should ONLY receive, not send back
+                        if amount_received <= Decimal("0"):
+                            return {"valid": False, "error": "Recipient did not receive positive balance in this transaction"}
+                        
+                        # Check sender if specified
+                        if sender_wallet:
+                            if sender_idx is None:
+                                return {"valid": False, "error": "Your wallet is not part of this transaction"}
+                            
+                            sender_change = account_changes[sender_wallet]
+                            # Sender should have negative balance change (sent funds + fees)
+                            if sender_change >= Decimal("0"):
+                                return {"valid": False, "error": "Sender did not send funds in this transaction"}
+                        
+                        # Allow small margin (0.001 SOL) for rounding only
+                        min_expected = expected_amount - Decimal("0.001")
+                        if amount_received < min_expected:
+                            return {
+                                "valid": False, 
+                                "error": f"Amount received ({amount_received:.6f} SOL) less than required ({expected_amount} SOL)"
+                            }
+                        
+                        return {
+                            "valid": True,
+                            "amount_received": float(amount_received),
+                            "signature": tx_signature
+                        }
+                        
+                    except Exception as e:
+                        return {"valid": False, "error": f"Failed to parse transaction: {e}"}
+                        
             except Exception as e:
-                return {"valid": False, "error": f"Failed to parse transaction: {e}"}
+                last_error = e
+                continue  # Try next RPC
+        
+        # All RPCs failed
+        return {"valid": False, "error": f"All RPC endpoints failed. Last error: {last_error}"}
                 
     except ImportError as e:
         return {"valid": False, "error": f"Solana library error: {e}"}
@@ -5466,13 +5467,12 @@ async def main():
     migrate_add_winning_numbers_column()  # Add winning numbers column if needed
     migrate_timestamps_to_iso()  # Migrate legacy timestamps to ISO format
     print("🤖 CryptoUnc Lotto Bot with Real Solana Integration starting...")
-    rpc_endpoint = os.getenv('SOLANA_RPC', 'mainnet-beta')
     # Mask API key in logs for security
-    if '?' in rpc_endpoint:
-        rpc_display = rpc_endpoint.split('?')[0] + "?api-key=***"
+    if SOLANA_RPC and '?' in SOLANA_RPC:
+        rpc_display = SOLANA_RPC.split('?')[0] + "?api-key=***"
     else:
-        rpc_display = rpc_endpoint
-    print(f"📍 Connected to: {rpc_display}")
+        rpc_display = SOLANA_RPC if SOLANA_RPC else FALLBACK_RPC
+    print(f"📍 Primary RPC: {rpc_display}")
     
     # Delete webhook to ensure polling works
     await bot.delete_webhook(drop_pending_updates=True)
