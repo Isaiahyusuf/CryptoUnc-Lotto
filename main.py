@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import time
 import decimal
+import sqlite3
 from decimal import Decimal
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
