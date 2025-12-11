@@ -392,18 +392,14 @@ ANNOUNCEMENTS_GROUP = os.getenv("ANNOUNCEMENTS_GROUP_ID")  # Optional group for 
 # ==============================================================================
 # SOLANA RPC CONFIGURATION
 # ==============================================================================
-# Uses SOLANA_RPC as primary with public RPC as fallback.
-# HELIUS_RPC is optional secondary if you want an additional endpoint.
+# Uses SOLANA_RPC as primary with public Solana RPC as automatic fallback.
 
 FALLBACK_RPC = "https://api.mainnet-beta.solana.com"
 SOLANA_RPC = os.getenv("SOLANA_RPC", FALLBACK_RPC)
-HELIUS_RPC = os.getenv("HELIUS_RPC")  # Optional secondary
 
 if SOLANA_RPC and SOLANA_RPC != FALLBACK_RPC:
     print(f"✅ Primary RPC: SOLANA_RPC (configured)")
-    if HELIUS_RPC:
-        print(f"   Secondary RPC: HELIUS_RPC (configured)")
-    print(f"   Fallback RPC: {FALLBACK_RPC}")
+    print(f"   Fallback: {FALLBACK_RPC}")
 else:
     print(f"⚠️ No SOLANA_RPC configured, using public fallback: {FALLBACK_RPC}")
 
