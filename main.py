@@ -450,12 +450,12 @@ TICKET_PRICE = Decimal("0.025")  # Fixed ticket price: 0.025 SOL
 STAKE_MIN = TICKET_PRICE  # Legacy alias
 STAKE_MAX = TICKET_PRICE  # Legacy alias (same as min since fixed price)
 
-# Round schedule - continuous rounds every 30 minutes
-ROUNDS_PER_DAY = 48  # One round every 30 minutes
-ROUND_TIMES_UTC = [f"{h:02d}:{m:02d}" for h in range(24) for m in (0, 30)]  # Every 30 min
+# Round schedule - 24 hourly rounds (one per hour)
+ROUNDS_PER_DAY = 24  # One round every hour
+ROUND_TIMES_UTC = [f"{h:02d}:00" for h in range(24)]  # Every hour on the hour
 
-# Round duration - exactly 30 minutes per round
-ROUND_DURATION_MINUTES = 30  # Each round lasts 30 minutes exactly
+# Round duration - exactly 60 minutes per round
+ROUND_DURATION_MINUTES = 60  # Each round lasts 60 minutes (1 hour) exactly
 
 # No player limits - unlimited players per round
 MIN_PLAYERS_TO_DRAW = 0       # No minimum players required
@@ -927,6 +927,7 @@ def create_scheduled_round(round_number: int, scheduled_time: datetime):
 
 
 def get_active_rounds():
+    """Get only current open round and next pending round (max 2)"""
     conn = get_db_conn()
     c = conn.cursor()
     c.execute("""
@@ -934,6 +935,7 @@ def get_active_rounds():
         FROM scheduled_rounds
         WHERE status IN ('open', 'pending')
         ORDER BY scheduled_time ASC
+        LIMIT 2
     """)
     rows = c.fetchall()
     conn.close()
@@ -1759,8 +1761,11 @@ async def mark_refund_completed(participant_id: int, tx_signature: str):
 async def cmd_start(message: types.Message):
     save_user(message.from_user.id, message.from_user.username or "")
     
-    # Get current jackpot pot
-    current_pot = get_current_pot()
+    # Get current jackpot from owner wallet balance
+    try:
+        jackpot = await get_real_balance(OWNER_WALLET)
+    except:
+        jackpot = Decimal("0")
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎲 Play Now", callback_data="play_now")],
@@ -1772,14 +1777,13 @@ async def cmd_start(message: types.Message):
     ])
     await message.answer(
         f"🎟️ <b>Welcome to CryptoUnc Lotto!</b>\n\n"
-        f"🏆 <b>Current Jackpot: {current_pot} SOL</b>\n\n"
+        f"🏆 <b>Current Jackpot: {jackpot} SOL</b>\n\n"
         f"📋 <b>How It Works:</b>\n"
         f"• Pick 5 numbers (1-40)\n"
-        f"• Match ALL 5 to win the ENTIRE pot!\n"
-        f"• No winner? Pot grows each round!\n\n"
-        f"💰 Stakes: {STAKE_MIN} - {STAKE_MAX} SOL\n"
-        f"⏰ 4 Rounds Daily: 00:00, 06:00, 12:00, 18:00 UTC\n"
-        f"👥 Min {MIN_PLAYERS_TO_DRAW} players per round\n\n"
+        f"• Match ALL 5 to win the ENTIRE jackpot!\n"
+        f"• No winner? Jackpot grows each round!\n\n"
+        f"💰 Ticket Price: {TICKET_PRICE} SOL\n"
+        f"⏰ 24 Hourly Rounds (one per hour)\n\n"
         f"Join now and win the jackpot!",
         reply_markup=keyboard,
         parse_mode="HTML"
@@ -1895,7 +1899,10 @@ async def start_private_play(user_id: int):
         return
 
     balance = await get_real_balance(wallet)
-    current_pot = get_current_pot()
+    try:
+        jackpot = await get_real_balance(OWNER_WALLET)
+    except:
+        jackpot = Decimal("0")
     user_tickets = get_user_tickets_for_current_round(user_id)
 
     keyboard = create_keyboard_with_nav([
@@ -1911,7 +1918,7 @@ async def start_private_play(user_id: int):
         f"💳 Wallet: <code>{wallet[:8]}...{wallet[-8:]}</code>\n"
         f"💵 Balance: <b>{balance} SOL</b>\n\n"
         f"🎫 Ticket Price: <b>{TICKET_PRICE} SOL</b>\n"
-        f"🏆 Current Prize Pool: <b>{current_pot} SOL</b>\n"
+        f"🏆 Current Jackpot: <b>{jackpot} SOL</b>\n"
         f"🎟️ Your Tickets This Round: <b>{len(user_tickets)}</b>\n\n"
         f"Buy a ticket and pick 5 numbers (1-40) to win!",
         reply_markup=keyboard,
@@ -1919,8 +1926,11 @@ async def start_private_play(user_id: int):
     )
 
 
-async def show_number_picker(user_id: int, selected_numbers: List[int]):
-    """Display the number picker grid for players to select 5 numbers from 1-40"""
+async def show_number_picker(user_id: int, selected_numbers: List[int], message_to_edit: types.Message = None):
+    """Display the number picker grid for players to select 5 numbers from 1-40
+    
+    If message_to_edit is provided, edits that message instead of sending a new one.
+    """
     buttons = []
     row = []
     
@@ -1947,14 +1957,22 @@ async def show_number_picker(user_id: int, selected_numbers: List[int]):
     
     selected_str = ", ".join(map(str, sorted(selected_numbers))) if selected_numbers else "None"
     
-    await bot.send_message(user_id,
+    text = (
         f"🎲 <b>Pick Your Numbers!</b>\n\n"
         f"Select <b>5 numbers</b> from 1 to 40.\n"
         f"Tap a number to select/deselect it.\n\n"
-        f"Selected ({len(selected_numbers)}/5): <b>{selected_str}</b>",
-        reply_markup=keyboard,
-        parse_mode="HTML"
+        f"Selected ({len(selected_numbers)}/5): <b>{selected_str}</b>"
     )
+    
+    if message_to_edit:
+        try:
+            await message_to_edit.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+            return message_to_edit
+        except:
+            pass
+    
+    msg = await bot.send_message(user_id, text, reply_markup=keyboard, parse_mode="HTML")
+    return msg
 
 
 @dp.callback_query()
@@ -1968,11 +1986,10 @@ async def inline_handler(query: types.CallbackQuery):
 
     elif data == "show_prize_pool":
         await query.answer()
-        current_pot = get_current_pot()
         try:
-            owner_balance = await get_real_balance(OWNER_WALLET)
+            jackpot = await get_real_balance(OWNER_WALLET)
         except:
-            owner_balance = Decimal("0")
+            jackpot = Decimal("0")
         
         keyboard = create_keyboard_with_nav([
             [InlineKeyboardButton(text=f"🎫 Buy Ticket ({TICKET_PRICE} SOL)", callback_data="buy_ticket")]
@@ -1980,12 +1997,12 @@ async def inline_handler(query: types.CallbackQuery):
         
         await bot.send_message(uid,
             f"💰 <b>Prize Pool</b>\n\n"
-            f"🏆 <b>Current Jackpot: {current_pot} SOL</b>\n\n"
+            f"🏆 <b>Current Jackpot: {jackpot} SOL</b>\n\n"
             f"The prize pool grows with every ticket purchase!\n"
             f"Match all 5 winning numbers to win the entire jackpot!\n\n"
             f"🎫 Ticket Price: <b>{TICKET_PRICE} SOL</b>\n"
-            f"💵 20% goes to team, 80% goes to prize pool\n\n"
-            f"If no winner, 80% of round stakes roll over to next round!",
+            f"💵 20% goes to team wallet, 80% goes to jackpot\n\n"
+            f"If no winner, the jackpot rolls over to next round!",
             reply_markup=keyboard,
             parse_mode="HTML"
         )
@@ -2049,7 +2066,24 @@ async def inline_handler(query: types.CallbackQuery):
         
         await bot.send_message(uid, "⏳ Processing payment...")
         
-        result = await send_sol(wallet, OWNER_WALLET, TICKET_PRICE, private_key)
+        # Calculate fee split: 20% to team, 80% to owner (jackpot)
+        team_fee = TICKET_PRICE * TEAM_FEE_PERCENTAGE
+        owner_amount = TICKET_PRICE * WINNER_SHARE_PERCENTAGE
+        
+        # Send 20% to team wallet first
+        if TEAM_WALLET and TEAM_WALLET != OWNER_WALLET:
+            team_result = await send_sol(wallet, TEAM_WALLET, team_fee, private_key)
+            if not team_result["success"]:
+                await bot.send_message(uid,
+                    f"❌ <b>Transaction failed!</b>\n\n"
+                    f"Error: {team_result.get('error', 'Unknown error')}\n\n"
+                    f"Please try again or contact support.",
+                    parse_mode="HTML"
+                )
+                return
+        
+        # Send 80% to owner wallet (jackpot)
+        result = await send_sol(wallet, OWNER_WALLET, owner_amount, private_key)
         
         if not result["success"]:
             await bot.send_message(uid,
@@ -2062,14 +2096,16 @@ async def inline_handler(query: types.CallbackQuery):
         
         tx_signature = result["signature"]
         
+        # Send number picker and store message for editing
+        picker_msg = await show_number_picker(uid, [])
+        
         user_states[uid] = {
             "action": "picking_numbers",
             "tx_signature": tx_signature,
             "selected_numbers": [],
-            "stake_amount": float(TICKET_PRICE)
+            "stake_amount": float(TICKET_PRICE),
+            "picker_message_id": picker_msg.message_id if picker_msg else None
         }
-        
-        await show_number_picker(uid, [])
 
     elif data.startswith("pick_num_"):
         await query.answer()
@@ -2087,7 +2123,9 @@ async def inline_handler(query: types.CallbackQuery):
             selected.append(num)
         
         user_states[uid]["selected_numbers"] = selected
-        await show_number_picker(uid, selected)
+        
+        # Edit the existing message instead of sending a new one
+        await show_number_picker(uid, selected, query.message)
 
     elif data == "confirm_numbers":
         await query.answer()
@@ -3151,15 +3189,17 @@ async def generic_message_handler(message: types.Message):
                 # Also add to entries table for legacy/backup tracking
                 add_entry(uid, get_current_round(), lottery_numbers, float(amount), tx_signature, paid=1)
                 
-                # Add stake to pot
-                add_to_pot(amount)
+                try:
+                    jackpot = await get_real_balance(OWNER_WALLET)
+                except:
+                    jackpot = Decimal("0")
                 
                 await message.answer(
                     f"✅ <b>Stake Successful!</b>\n\n"
                     f"🎫 <b>Ticket ID:</b> #{participant_id}\n"
                     f"🎲 <b>Your Numbers:</b> {numbers_to_str(lottery_numbers)}\n"
                     f"💰 <b>Stake:</b> {amount} SOL\n"
-                    f"🏆 <b>Current Pot:</b> {get_current_pot()} SOL\n\n"
+                    f"🏆 <b>Current Jackpot:</b> {jackpot} SOL\n\n"
                     f"📝 Transaction:\n<code>{tx_signature[:20]}...</code>\n\n"
                     f"🍀 <b>Good luck!</b> Winner will be announced in the channel.",
                     parse_mode="HTML"
@@ -3257,15 +3297,17 @@ async def generic_message_handler(message: types.Message):
             # Also add to entries table for legacy/backup tracking
             add_entry(uid, get_current_round(), lottery_numbers, float(stake_amount), tx_signature, paid=1)
             
-            # Add stake to pot
-            add_to_pot(stake_amount)
+            try:
+                jackpot = await get_real_balance(OWNER_WALLET)
+            except:
+                jackpot = Decimal("0")
             
             await message.answer(
                 f"✅ <b>Stake Confirmed!</b>\n\n"
                 f"🎫 <b>Ticket ID:</b> #{participant_id}\n"
                 f"🎲 <b>Your Numbers:</b> {numbers_to_str(lottery_numbers)}\n"
                 f"💰 <b>Stake:</b> {stake_amount} SOL\n"
-                f"🏆 <b>Current Pot:</b> {get_current_pot()} SOL\n\n"
+                f"🏆 <b>Current Jackpot:</b> {jackpot} SOL\n\n"
                 f"📝 Transaction verified:\n<code>{tx_signature[:20]}...</code>\n\n"
                 f"🍀 <b>Good luck!</b> Winner will be announced in the channel.",
                 parse_mode="HTML"
@@ -3784,7 +3826,10 @@ async def dm_round_results_to_players(round_id: int, result: dict):
                 else:
                     status_text = f"❌ You matched {matches} number{'s' if matches != 1 else ''}. Better luck next time!"
                 
-                new_pot = result.get('new_pot', get_current_pot())
+                try:
+                    new_pot = await get_real_balance(OWNER_WALLET)
+                except:
+                    new_pot = result.get('new_pot', Decimal("0"))
                 
                 dm_message = (
                     f"📊 <b>Round {round_id} Results</b>\n\n"
@@ -3901,7 +3946,10 @@ async def announce_new_ticket(user_id: int, ticket_id: int, stake_amount, number
         
         player_display = f"@{username}" if username else f"Player ID: {user_id}"
         
-        current_pot = get_current_pot()
+        try:
+            jackpot = await get_real_balance(OWNER_WALLET)
+        except:
+            jackpot = Decimal("0")
         
         message_text = (
             f"🎫 <b>New Ticket Purchased!</b>\n\n"
@@ -3910,8 +3958,8 @@ async def announce_new_ticket(user_id: int, ticket_id: int, stake_amount, number
             f"🎟️ Ticket #{ticket_id}\n"
             f"🎲 Numbers: <b>{', '.join(map(str, numbers))}</b>\n"
             f"💰 Stake: {stake_amount} SOL\n\n"
-            f"📊 Round {round_id}: {ticket_count}/{MIN_PLAYERS_TO_DRAW} tickets\n"
-            f"🏆 Current Jackpot: <b>{current_pot} SOL</b>"
+            f"📊 Round {round_id}: {ticket_count} tickets\n"
+            f"🏆 Current Jackpot: <b>{jackpot} SOL</b>"
         )
         
         await send_to_announcements(message_text)
@@ -3922,14 +3970,17 @@ async def announce_new_ticket(user_id: int, ticket_id: int, stake_amount, number
 async def announce_round_cancelled(round_id: int, player_count: int, refund_count: int):
     """Announce when a round is cancelled due to insufficient players"""
     try:
-        current_pot = get_current_pot()
+        try:
+            jackpot = await get_real_balance(OWNER_WALLET)
+        except:
+            jackpot = Decimal("0")
         
         message_text = (
             f"⚠️ <b>Round {round_id} Cancelled</b>\n\n"
-            f"👥 Players: {player_count}/{MIN_PLAYERS_TO_DRAW}\n"
-            f"❌ Not enough players to start the draw.\n"
-            f"✅ All {refund_count} participants have been refunded.\n\n"
-            f"💰 <b>Current Jackpot: {current_pot} SOL</b>\n\n"
+            f"👥 Players: {player_count}\n"
+            f"❌ Round ended without a winner.\n"
+            f"✅ All {refund_count} participants have been notified.\n\n"
+            f"💰 <b>Current Jackpot: {jackpot} SOL</b>\n\n"
             f"Join the next round for a chance to win!"
         )
         
@@ -3941,7 +3992,10 @@ async def announce_round_cancelled(round_id: int, player_count: int, refund_coun
 async def announce_round_opened(round_id: int):
     """Announce when a new round opens with current pot information"""
     try:
-        current_pot = get_current_pot()
+        try:
+            jackpot = await get_real_balance(OWNER_WALLET)
+        except:
+            jackpot = Decimal("0")
         
         # Get total participants for this round
         conn = get_db_conn()
@@ -3956,20 +4010,19 @@ async def announce_round_opened(round_id: int):
         conn.close()
         
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=f"🎟️ Join Round ({player_count}/{MIN_PLAYERS_TO_DRAW} players)", callback_data=f"join_round_{round_id}")],
+            [InlineKeyboardButton(text=f"🎟️ Join Round ({player_count} players)", callback_data=f"join_round_{round_id}")],
             [InlineKeyboardButton(text="🔄 Refresh", callback_data=f"check_round_{round_id}")]
         ])
         
         message_text = (
             f"🎰 <b>Round {round_id} is NOW OPEN!</b>\n\n"
-            f"🏆 <b>Current Jackpot: {current_pot} SOL</b>\n\n"
+            f"🏆 <b>Current Jackpot: {jackpot} SOL</b>\n\n"
             f"📋 <b>Rules:</b>\n"
             f"• Pick 5 numbers (1-40)\n"
-            f"• Match ALL 5 to win the ENTIRE pot!\n"
-            f"• If no winner: 20% to team, 80% carries forward\n\n"
-            f"💰 <b>Stakes:</b> {STAKE_MIN} - {STAKE_MAX} SOL\n"
-            f"👥 <b>Min players:</b> {MIN_PLAYERS_TO_DRAW}\n"
-            f"⏰ <b>Timeout:</b> {JOIN_TIMEOUT_MINUTES} minutes\n\n"
+            f"• Match ALL 5 to win the ENTIRE jackpot!\n"
+            f"• If no winner, jackpot carries forward\n\n"
+            f"💰 <b>Ticket Price:</b> {TICKET_PRICE} SOL\n"
+            f"⏰ <b>Round Duration:</b> {ROUND_DURATION_MINUTES} minutes\n\n"
             f"Join now for a chance to win the jackpot!"
         )
         
