@@ -128,7 +128,8 @@ has_user_pin,
 delete_user_pin,
 init_wallet_db,
 import_wallet_from_private_key,
-MAX_WALLETS_PER_USER
+MAX_WALLETS_PER_USER,
+log_wallet_transaction
 )
 
 from db import get_db_conn, init_all_tables, q, USE_POSTGRES, DB_PATH
@@ -2035,6 +2036,17 @@ async def process_refunds_for_stake(round_stake_id: int):
             """, (tx_signature, participant_id))
             conn.commit()
             
+            # Log refund transaction
+            log_wallet_transaction(
+                user_id=user_id,
+                wallet_address=participant_wallet,
+                tx_type="refund",
+                amount=refund_amount,
+                from_address=OWNER_WALLET,
+                tx_signature=tx_signature,
+                status="completed"
+            )
+            
             successful_refunds += 1
             
             # Send success message to user
@@ -2532,6 +2544,17 @@ async def inline_handler(query: types.CallbackQuery):
             return
         
         tx_signature = result["signature"]
+        
+        # Log lottery stake transaction
+        log_wallet_transaction(
+            user_id=uid,
+            wallet_address=wallet,
+            tx_type="lottery_stake",
+            amount=TICKET_PRICE,
+            to_address=OWNER_WALLET,
+            tx_signature=tx_signature,
+            status="completed"
+        )
         
         # Send number picker and store message for editing
         picker_msg = await show_number_picker(uid, [])
@@ -4654,6 +4677,17 @@ async def pay_jackpot_winner(result: dict):
         if prize_result and prize_result.get("success"):
             print(f"✅ Jackpot paid! TX: {prize_result['signature'][:16]}...")
             
+            # Log lottery win transaction
+            log_wallet_transaction(
+                user_id=winner_id,
+                wallet_address=winner_wallet,
+                tx_type="lottery_win",
+                amount=prize_amount,
+                from_address=OWNER_WALLET,
+                tx_signature=prize_result['signature'],
+                status="completed"
+            )
+            
             # Update result with actual prize amount for announcements
             result['prize_amount'] = prize_amount
             
@@ -4893,6 +4927,17 @@ async def distribute_prize(stake_id: int, result: dict):
                         """, (prize_result["signature"], stake_id))
                         conn.commit()
                         conn.close()
+                        
+                        # Log lottery win transaction
+                        log_wallet_transaction(
+                            user_id=winner_id,
+                            wallet_address=winner_wallet,
+                            tx_type="lottery_win",
+                            amount=prize_amount,
+                            from_address=OWNER_WALLET,
+                            tx_signature=prize_result["signature"],
+                            status="completed"
+                        )
                         
                         # Update winner stats
                         update_user_stats(winner_id, won=prize_amount, is_win=True)
