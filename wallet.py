@@ -288,9 +288,9 @@ def create_wallet(user_id: int, wallet_name: Optional[str] = None) -> Optional[D
             "type": "bot",
             "name": wallet_name
         }
-    except (sqlite3.IntegrityError, Exception) as e:
+    except (DBIntegrityError, Exception) as e:
         # Handle both SQLite and PostgreSQL integrity errors
-        if "unique" in str(e).lower() or "duplicate" in str(e).lower() or isinstance(e, sqlite3.IntegrityError):
+        if "unique" in str(e).lower() or "duplicate" in str(e).lower() or isinstance(e, DBIntegrityError):
             conn.close()
             return None
         conn.close()
@@ -333,9 +333,9 @@ def save_external_wallet(user_id: int, wallet_address: str, wallet_type: str = "
         conn.commit()
         conn.close()
         return True
-    except (sqlite3.IntegrityError, Exception) as e:
+    except (DBIntegrityError, Exception) as e:
         # Handle both SQLite and PostgreSQL integrity errors
-        if "unique" in str(e).lower() or "duplicate" in str(e).lower() or isinstance(e, sqlite3.IntegrityError):
+        if "unique" in str(e).lower() or "duplicate" in str(e).lower() or isinstance(e, DBIntegrityError):
             conn.close()
             return False
         conn.close()
