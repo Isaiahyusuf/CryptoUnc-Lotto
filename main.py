@@ -4925,10 +4925,10 @@ async def manage_rounds():
             c = conn.cursor()
             now_str = now.isoformat()
             
-            c.execute("""
+            c.execute(q("""
                 SELECT round_id, scheduled_time FROM scheduled_rounds
                 WHERE status = 'pending' AND scheduled_time <= ?
-            """, (now_str,))
+            """), (now_str,))
             pending_rounds = c.fetchall()
             
             if pending_rounds:
@@ -4939,14 +4939,17 @@ async def manage_rounds():
                 print(f"[Round Manager] ✅ Round {round_id} is now OPEN! (scheduled for {scheduled_time})")
                 await announce_round_opened(round_id)
             
-            c.execute("""
+            c.execute(q("""
                 SELECT round_id, start_time FROM scheduled_rounds
                 WHERE status = 'open'
-            """)
+            """))
             open_rounds = c.fetchall()
             
             for round_id, start_time in open_rounds:
-                start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+                if isinstance(start_time, str):
+                    start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+                else:
+                    start_dt = start_time
                 if start_dt.tzinfo is None:
                     start_dt = start_dt.replace(tzinfo=pytz.UTC)
                 
