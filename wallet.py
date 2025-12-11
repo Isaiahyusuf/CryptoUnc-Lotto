@@ -135,12 +135,12 @@ def get_user_wallets(user_id: int) -> List[Dict]:
     """
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute("""
+    c.execute(q("""
         SELECT wallet_address, wallet_type, wallet_name, is_active 
         FROM wallets 
         WHERE user_id = ? AND is_active = 1
         ORDER BY created_at ASC
-    """, (user_id,))
+    """), (user_id,))
     rows = c.fetchall()
     conn.close()
 
@@ -159,7 +159,7 @@ def get_user_wallet_count(user_id: int) -> int:
     """Get number of active wallets for a user"""
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM wallets WHERE user_id = ? AND is_active = 1", (user_id,))
+    c.execute(q("SELECT COUNT(*) FROM wallets WHERE user_id = ? AND is_active = 1"), (user_id,))
     count = c.fetchone()[0]
     conn.close()
     return count
@@ -174,32 +174,32 @@ def get_active_wallet(user_id: int) -> Optional[str]:
     c = conn.cursor()
     
     # First check the active wallet table
-    c.execute("SELECT active_wallet_address FROM user_active_wallet WHERE user_id = ?", (user_id,))
+    c.execute(q("SELECT active_wallet_address FROM user_active_wallet WHERE user_id = ?"), (user_id,))
     row = c.fetchone()
     
     if row and row[0]:
         # Verify this wallet still exists and is active
-        c.execute("SELECT 1 FROM wallets WHERE user_id = ? AND wallet_address = ? AND is_active = 1", (user_id, row[0]))
+        c.execute(q("SELECT 1 FROM wallets WHERE user_id = ? AND wallet_address = ? AND is_active = 1"), (user_id, row[0]))
         if c.fetchone():
             conn.close()
             return row[0]
     
     # Fallback: Find any active wallet for this user and set it as active
-    c.execute("""
+    c.execute(q("""
         SELECT wallet_address FROM wallets 
         WHERE user_id = ? AND is_active = 1 
         ORDER BY created_at ASC LIMIT 1
-    """, (user_id,))
+    """), (user_id,))
     fallback_row = c.fetchone()
     
     if fallback_row:
         wallet_address = fallback_row[0]
         # Auto-recover: Set this as the active wallet
-        c.execute("""
+        c.execute(q("""
             INSERT INTO user_active_wallet (user_id, active_wallet_address)
             VALUES (?, ?)
             ON CONFLICT(user_id) DO UPDATE SET active_wallet_address = ?
-        """, (user_id, wallet_address, wallet_address))
+        """), (user_id, wallet_address, wallet_address))
         conn.commit()
         conn.close()
         return wallet_address
@@ -214,17 +214,17 @@ def set_active_wallet(user_id: int, wallet_address: str) -> bool:
     c = conn.cursor()
 
     # Verify wallet belongs to user
-    c.execute("SELECT 1 FROM wallets WHERE user_id = ? AND wallet_address = ?", (user_id, wallet_address))
+    c.execute(q("SELECT 1 FROM wallets WHERE user_id = ? AND wallet_address = ?"), (user_id, wallet_address))
     if not c.fetchone():
         conn.close()
         return False
 
     # Update or insert active wallet
-    c.execute("""
+    c.execute(q("""
         INSERT INTO user_active_wallet (user_id, active_wallet_address) 
         VALUES (?, ?)
         ON CONFLICT(user_id) DO UPDATE SET active_wallet_address = ?
-    """, (user_id, wallet_address, wallet_address))
+    """), (user_id, wallet_address, wallet_address))
 
     conn.commit()
     conn.close()
@@ -267,18 +267,18 @@ def create_wallet(user_id: int, wallet_name: Optional[str] = None) -> Optional[D
 
     try:
         # Store ENCRYPTED private key in database
-        c.execute("""
+        c.execute(q("""
             INSERT INTO wallets (user_id, wallet_address, wallet_type, wallet_name, private_key)
             VALUES (?, ?, ?, ?, ?)
-        """, (user_id, wallet_address, "bot", wallet_name, encrypted_private_key))
+        """), (user_id, wallet_address, "bot", wallet_name, encrypted_private_key))
 
         # Set as active if it's the first wallet (checked BEFORE insert)
         if is_first_wallet:
-            c.execute("""
+            c.execute(q("""
                 INSERT INTO user_active_wallet (user_id, active_wallet_address)
                 VALUES (?, ?)
                 ON CONFLICT(user_id) DO UPDATE SET active_wallet_address = ?
-            """, (user_id, wallet_address, wallet_address))
+            """), (user_id, wallet_address, wallet_address))
 
         conn.commit()
         conn.close()
@@ -318,17 +318,17 @@ def save_external_wallet(user_id: int, wallet_address: str, wallet_type: str = "
     c = conn.cursor()
 
     try:
-        c.execute("""
+        c.execute(q("""
             INSERT INTO wallets (user_id, wallet_address, wallet_type, wallet_name)
             VALUES (?, ?, ?, ?)
-        """, (user_id, wallet_address, wallet_type, wallet_name))
+        """), (user_id, wallet_address, wallet_type, wallet_name))
 
         # Always set as active wallet (upsert - won't override if already set, but ensures we have one)
-        c.execute("""
+        c.execute(q("""
             INSERT INTO user_active_wallet (user_id, active_wallet_address)
             VALUES (?, ?)
             ON CONFLICT(user_id) DO UPDATE SET active_wallet_address = ?
-        """, (user_id, wallet_address, wallet_address))
+        """), (user_id, wallet_address, wallet_address))
 
         conn.commit()
         conn.close()
@@ -396,7 +396,7 @@ def import_wallet_from_private_key(user_id: int, private_key_input: str, wallet_
         # Check if wallet already exists for this user
         conn = get_db_conn()
         c = conn.cursor()
-        c.execute("SELECT 1 FROM wallets WHERE user_id = ? AND wallet_address = ?", (user_id, wallet_address))
+        c.execute(q("SELECT 1 FROM wallets WHERE user_id = ? AND wallet_address = ?"), (user_id, wallet_address))
         if c.fetchone():
             conn.close()
             return {"success": False, "error": "This wallet is already imported"}
@@ -412,17 +412,17 @@ def import_wallet_from_private_key(user_id: int, private_key_input: str, wallet_
         conn = get_db_conn()
         c = conn.cursor()
         
-        c.execute("""
+        c.execute(q("""
             INSERT INTO wallets (user_id, wallet_address, wallet_type, wallet_name, private_key)
             VALUES (?, ?, ?, ?, ?)
-        """, (user_id, wallet_address, "imported", wallet_name, encrypted_private_key))
+        """), (user_id, wallet_address, "imported", wallet_name, encrypted_private_key))
         
         # Set as active wallet
-        c.execute("""
+        c.execute(q("""
             INSERT INTO user_active_wallet (user_id, active_wallet_address)
             VALUES (?, ?)
             ON CONFLICT(user_id) DO UPDATE SET active_wallet_address = ?
-        """, (user_id, wallet_address, wallet_address))
+        """), (user_id, wallet_address, wallet_address))
         
         conn.commit()
         conn.close()
@@ -458,11 +458,11 @@ def _migrate_plaintext_key(user_id: int, wallet_address: str, plaintext_key: str
         # Update database with encrypted key
         conn = get_db_conn()
         c = conn.cursor()
-        c.execute("""
+        c.execute(q("""
             UPDATE wallets 
             SET private_key = ? 
             WHERE user_id = ? AND wallet_address = ? AND wallet_type = 'bot'
-        """, (encrypted_key, user_id, wallet_address))
+        """), (encrypted_key, user_id, wallet_address))
         conn.commit()
         conn.close()
         
@@ -482,10 +482,10 @@ def get_wallet_private_key(user_id: int, wallet_address: str) -> Optional[str]:
     """
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute("""
+    c.execute(q("""
         SELECT private_key, wallet_type FROM wallets 
         WHERE user_id = ? AND wallet_address = ? AND wallet_type IN ('bot', 'imported')
-    """, (user_id, wallet_address))
+    """), (user_id, wallet_address))
     row = c.fetchone()
     conn.close()
     
@@ -521,11 +521,11 @@ def _migrate_plaintext_key_any_type(user_id: int, wallet_address: str, plaintext
         encrypted_key = encrypt_private_key(plaintext_key)
         conn = get_db_conn()
         c = conn.cursor()
-        c.execute("""
+        c.execute(q("""
             UPDATE wallets 
             SET private_key = ? 
             WHERE user_id = ? AND wallet_address = ? AND wallet_type = ?
-        """, (encrypted_key, user_id, wallet_address, wallet_type))
+        """), (encrypted_key, user_id, wallet_address, wallet_type))
         conn.commit()
         conn.close()
         print(f"✅ Migrated plaintext key to encrypted for {wallet_type} wallet {wallet_address[:8]}...")
@@ -674,17 +674,17 @@ def delete_wallet(user_id: int, wallet_address: str) -> bool:
     conn = get_db_conn()
     c = conn.cursor()
 
-    c.execute("""
+    c.execute(q("""
         UPDATE wallets 
         SET is_active = 0 
         WHERE user_id = ? AND wallet_address = ?
-    """, (user_id, wallet_address))
+    """), (user_id, wallet_address))
 
     # If this was the active wallet, clear it
-    c.execute("""
+    c.execute(q("""
         DELETE FROM user_active_wallet 
         WHERE user_id = ? AND active_wallet_address = ?
-    """, (user_id, wallet_address))
+    """), (user_id, wallet_address))
 
     conn.commit()
     affected = c.rowcount > 0
@@ -737,11 +737,11 @@ def set_user_pin(user_id: int, pin: str) -> bool:
     
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute("""
+    c.execute(q("""
         INSERT INTO user_pins (user_id, pin_hash)
         VALUES (?, ?)
         ON CONFLICT(user_id) DO UPDATE SET pin_hash = ?
-    """, (user_id, pin_hash, pin_hash))
+    """), (user_id, pin_hash, pin_hash))
     conn.commit()
     conn.close()
     return True
@@ -763,7 +763,7 @@ def verify_user_pin(user_id: int, pin: str) -> bool:
     
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute("SELECT pin_hash FROM user_pins WHERE user_id = ?", (user_id,))
+    c.execute(q("SELECT pin_hash FROM user_pins WHERE user_id = ?"), (user_id,))
     row = c.fetchone()
     conn.close()
     
@@ -777,7 +777,7 @@ def has_user_pin(user_id: int) -> bool:
     """Check if user has set a PIN"""
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute("SELECT 1 FROM user_pins WHERE user_id = ?", (user_id,))
+    c.execute(q("SELECT 1 FROM user_pins WHERE user_id = ?"), (user_id,))
     result = c.fetchone() is not None
     conn.close()
     return result
@@ -788,7 +788,7 @@ def delete_user_pin(user_id: int) -> bool:
     try:
         conn = get_db_conn()
         c = conn.cursor()
-        c.execute("DELETE FROM user_pins WHERE user_id = ?", (user_id,))
+        c.execute(q("DELETE FROM user_pins WHERE user_id = ?"), (user_id,))
         conn.commit()
         deleted = c.rowcount > 0
         conn.close()
