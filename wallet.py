@@ -16,6 +16,7 @@ import asyncio
 # Balance cache for faster responses (especially for jackpot display)
 _balance_cache = {}
 BALANCE_CACHE_TTL = 30  # Cache balance for 30 seconds
+RPC_TIMEOUT = 5  # Timeout per RPC request in seconds
 
 from encryption import encrypt_private_key, decrypt_private_key, is_encryption_configured
 
@@ -126,19 +127,27 @@ async def get_real_balance(wallet_address: str, use_cache: bool = True) -> Decim
     for rpc in RPC_ENDPOINTS:
         try:
             print(f"Checking balance for {wallet_address[:8]}... using RPC: {rpc[:30]}...")
-            async with AsyncClient(rpc) as client:
-                pubkey = Pubkey.from_string(wallet_address)
-                response = await client.get_balance(pubkey, commitment=Confirmed)
+            
+            async def fetch_balance():
+                async with AsyncClient(rpc) as client:
+                    pubkey = Pubkey.from_string(wallet_address)
+                    return await client.get_balance(pubkey, commitment=Confirmed)
+            
+            # Add timeout to prevent slow RPC from blocking
+            response = await asyncio.wait_for(fetch_balance(), timeout=RPC_TIMEOUT)
 
-                if response.value is not None:
-                    lamports = response.value
-                    sol_balance = Decimal(lamports) / Decimal(1_000_000_000)
-                    print(f"Balance: {sol_balance} SOL ({lamports} lamports)")
-                    # Cache the result
-                    _balance_cache[wallet_address] = (time.time(), sol_balance)
-                    return sol_balance
-                _balance_cache[wallet_address] = (time.time(), Decimal("0"))
-                return Decimal("0")
+            if response.value is not None:
+                lamports = response.value
+                sol_balance = Decimal(lamports) / Decimal(1_000_000_000)
+                print(f"Balance: {sol_balance} SOL ({lamports} lamports)")
+                # Cache the result
+                _balance_cache[wallet_address] = (time.time(), sol_balance)
+                return sol_balance
+            _balance_cache[wallet_address] = (time.time(), Decimal("0"))
+            return Decimal("0")
+        except asyncio.TimeoutError:
+            print(f"RPC timeout ({rpc[:30]}...) after {RPC_TIMEOUT}s, trying next endpoint...")
+            continue
         except Exception as e:
             last_error = e
             print(f"RPC error ({rpc[:30]}...): {e}, trying next endpoint...")
