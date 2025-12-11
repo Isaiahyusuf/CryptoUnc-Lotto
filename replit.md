@@ -102,3 +102,30 @@ Preferred communication style: Simple, everyday language.
 ### Wallet Connection Flow
 
 - **External Wallet Integration:** HTML interface (Index.html) for signature verification with Phantom and Solflare wallets, using a challenge-response authentication pattern to extract public keys securely.
+
+## Recent Changes (December 11, 2025)
+
+### Player Number Selection
+- Players now **pick their own 5 numbers** (1-40) instead of getting random numbers
+- Interactive 8x5 grid of numbers to tap and select
+- Visual feedback shows selected numbers with checkmarks (✅)
+- Confirm button appears after selecting exactly 5 numbers
+- Clear All and Cancel buttons for easy navigation
+- Bot still generates winning numbers for each round using cryptographic randomness (provably fair)
+- Payment only processed after player confirms their number selection
+- FSM states added: `NumberSelectionStates.selecting_numbers`, `confirming_purchase`
+
+### Engagement Features
+1. **Referral System:** 5% bonus when referred users buy tickets
+2. **VIP Tier System:** Bronze → Silver → Gold → Platinum → Diamond
+3. **Leaderboard:** Top winners and top players
+4. **Personal Statistics Dashboard:** Tickets, spending, winnings, VIP tier
+5. **Partial Match Prizes:** Match 4 = 0.1 SOL, Match 3 = 0.02 SOL
+6. **Admin Jackpot Seeding:** `/seedjackpot <amount>` command
+7. **Notification Toggle:** Users can enable/disable round reminders
+
+### New Database Tables
+- `user_stats`: Tracks tickets, spending, winnings, VIP tier, referral earnings
+- `referrals`: Stores referrer/referred relationships and bonus tracking
+- `draw_history`: Complete draw records for provably fair verification
+- `jackpot_seeds`: Admin seeding records

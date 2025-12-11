@@ -104,6 +104,9 @@ verify_authorized_environment()
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
 from dotenv import load_dotenv
 from aiohttp import web
 
@@ -521,7 +524,50 @@ def reset_pot():
 
 
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+storage = MemoryStorage()
+dp = Dispatcher(storage=storage)
+
+
+# FSM States for number selection
+class NumberSelectionStates(StatesGroup):
+    selecting_numbers = State()
+    confirming_purchase = State()
+
+
+# Store user's selected numbers temporarily
+user_selected_numbers = {}  # {user_id: {"numbers": [list], "stake_id": int, "round_id": int}}
+
+
+def create_number_picker_keyboard(selected_numbers: list) -> InlineKeyboardMarkup:
+    """Create a 8x5 grid of numbers 1-40 for selection"""
+    buttons = []
+    row = []
+    
+    for num in range(1, 41):
+        # Show selected numbers with checkmark
+        if num in selected_numbers:
+            text = f"✅ {num}"
+        else:
+            text = str(num)
+        
+        row.append(InlineKeyboardButton(text=text, callback_data=f"pick_num_{num}"))
+        
+        if len(row) == 8:  # 8 numbers per row
+            buttons.append(row)
+            row = []
+    
+    if row:  # Add remaining numbers
+        buttons.append(row)
+    
+    # Add action buttons
+    action_row = []
+    if len(selected_numbers) == 5:
+        action_row.append(InlineKeyboardButton(text="✅ Confirm Selection", callback_data="confirm_numbers"))
+    action_row.append(InlineKeyboardButton(text="🔄 Clear All", callback_data="clear_numbers"))
+    action_row.append(InlineKeyboardButton(text="❌ Cancel", callback_data="cancel_number_selection"))
+    buttons.append(action_row)
+    
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 dp.include_router(wallet_router)
 
@@ -2281,7 +2327,7 @@ async def cmd_start(message: types.Message):
         f"🎟️ <b>Welcome to CryptoUnc Lotto!</b> {vip_badge}\n\n"
         f"🏆 <b>Current Jackpot: {jackpot} SOL</b>\n\n"
         f"📋 <b>How It Works:</b>\n"
-        f"• Pick 5 numbers (1-40)\n"
+        f"• <b>Pick your 5 lucky numbers (1-40)</b>\n"
         f"• Match ALL 5 to win the ENTIRE jackpot!\n"
         f"• Match 4 = 0.1 SOL | Match 3 = 0.02 SOL\n"
         f"• No winner? Jackpot grows each round!\n\n"
@@ -3048,9 +3094,9 @@ async def inline_handler(query: types.CallbackQuery):
             f"<b>🎮 How to Play:</b>\n"
             f"1. Create or import a Solana wallet\n"
             f"2. Deposit SOL to your wallet\n"
-            f"3. Tap 'Play Now' and buy a ticket\n"
+            f"3. Tap 'Play Now' and join a round\n"
             f"4. Ticket price: <b>{TICKET_PRICE} SOL</b>\n"
-            f"5. You receive 5 random numbers (1-40)\n"
+            f"5. <b>Pick your 5 lucky numbers (1-40)</b>\n"
             f"6. Wait for the round to end\n\n"
             f"<b>🎯 Round Schedule:</b>\n"
             f"• {ROUNDS_PER_DAY} rounds per day (one every hour)\n"
@@ -3352,7 +3398,7 @@ async def inline_handler(query: types.CallbackQuery):
         await bot.send_message(uid, text, reply_markup=keyboard, parse_mode="HTML")
     
     elif data.startswith("join_stake_"):
-        await query.answer("Processing...")
+        await query.answer("Pick your lucky numbers!")
         stake_id = int(data.split("_")[2])
         
         wallet = get_active_wallet(uid)
@@ -3366,7 +3412,7 @@ async def inline_handler(query: types.CallbackQuery):
         
         conn = get_db_conn()
         c = conn.cursor()
-        c.execute("SELECT stake_amount FROM round_stakes WHERE id = ?", (stake_id,))
+        c.execute("SELECT stake_amount, round_id FROM round_stakes WHERE id = ?", (stake_id,))
         stake_row = c.fetchone()
         conn.close()
         
@@ -3375,6 +3421,7 @@ async def inline_handler(query: types.CallbackQuery):
             return
         
         stake_amount = Decimal(str(stake_row[0]))
+        round_id = stake_row[1]
         
         balance = await get_real_balance(wallet)
         if balance < stake_amount:
@@ -3400,10 +3447,125 @@ async def inline_handler(query: types.CallbackQuery):
             )
             return
         
+        # Store stake info and start number selection
+        user_selected_numbers[uid] = {
+            "numbers": [],
+            "stake_id": stake_id,
+            "round_id": round_id,
+            "stake_amount": stake_amount,
+            "wallet": wallet,
+            "private_key": private_key
+        }
+        
+        keyboard = create_number_picker_keyboard([])
+        await bot.send_message(uid,
+            f"🎯 <b>Pick Your Lucky Numbers!</b>\n\n"
+            f"Select <b>5 numbers</b> from 1-40\n"
+            f"Stake: <b>{stake_amount} SOL</b>\n\n"
+            f"Selected: None (0/5)\n\n"
+            f"Tap numbers to select them:",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+    
+    # Number picker callbacks
+    elif data.startswith("pick_num_"):
+        num = int(data.split("_")[2])
+        
+        if uid not in user_selected_numbers:
+            await query.answer("Session expired. Please start again.")
+            return
+        
+        selected = user_selected_numbers[uid]["numbers"]
+        
+        if num in selected:
+            # Deselect
+            selected.remove(num)
+            await query.answer(f"Removed {num}")
+        elif len(selected) < 5:
+            # Select
+            selected.append(num)
+            await query.answer(f"Added {num}!")
+        else:
+            await query.answer("Already selected 5 numbers! Tap one to remove it.", show_alert=True)
+            return
+        
+        user_selected_numbers[uid]["numbers"] = selected
+        stake_amount = user_selected_numbers[uid]["stake_amount"]
+        
+        selected_str = ", ".join(map(str, sorted(selected))) if selected else "None"
+        keyboard = create_number_picker_keyboard(selected)
+        
+        try:
+            await query.message.edit_text(
+                f"🎯 <b>Pick Your Lucky Numbers!</b>\n\n"
+                f"Select <b>5 numbers</b> from 1-40\n"
+                f"Stake: <b>{stake_amount} SOL</b>\n\n"
+                f"Selected: <b>{selected_str}</b> ({len(selected)}/5)\n\n"
+                f"{'✅ Ready! Tap Confirm to proceed.' if len(selected) == 5 else 'Tap numbers to select them:'}",
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+        except:
+            pass
+    
+    elif data == "clear_numbers":
+        if uid in user_selected_numbers:
+            user_selected_numbers[uid]["numbers"] = []
+            stake_amount = user_selected_numbers[uid]["stake_amount"]
+            keyboard = create_number_picker_keyboard([])
+            
+            try:
+                await query.message.edit_text(
+                    f"🎯 <b>Pick Your Lucky Numbers!</b>\n\n"
+                    f"Select <b>5 numbers</b> from 1-40\n"
+                    f"Stake: <b>{stake_amount} SOL</b>\n\n"
+                    f"Selected: None (0/5)\n\n"
+                    f"Tap numbers to select them:",
+                    reply_markup=keyboard,
+                    parse_mode="HTML"
+                )
+            except:
+                pass
+        await query.answer("Cleared!")
+    
+    elif data == "cancel_number_selection":
+        if uid in user_selected_numbers:
+            del user_selected_numbers[uid]
+        await query.answer("Cancelled")
+        await query.message.edit_text(
+            "❌ <b>Number selection cancelled.</b>\n\n"
+            "Use /start to return to the main menu.",
+            parse_mode="HTML"
+        )
+    
+    elif data == "confirm_numbers":
+        await query.answer("Processing your ticket...")
+        
+        if uid not in user_selected_numbers:
+            await bot.send_message(uid, "❌ Session expired. Please start again with /start")
+            return
+        
+        data_info = user_selected_numbers[uid]
+        selected = data_info["numbers"]
+        
+        if len(selected) != 5:
+            await bot.send_message(uid, "❌ Please select exactly 5 numbers.")
+            return
+        
+        stake_id = data_info["stake_id"]
+        stake_amount = data_info["stake_amount"]
+        wallet = data_info["wallet"]
+        private_key = data_info["private_key"]
+        round_id = data_info["round_id"]
+        
+        # Clear selection data
+        del user_selected_numbers[uid]
+        
         owner_amt = stake_amount * Decimal("0.8")
         team_amt = stake_amount * Decimal("0.2")
         
-        await bot.send_message(uid, "⏳ Processing payment...")
+        await query.message.edit_text("⏳ Processing payment...")
         
         result = await send_sol(wallet, OWNER_WALLET, owner_amt, private_key)
         
@@ -3421,22 +3583,20 @@ async def inline_handler(query: types.CallbackQuery):
         if TEAM_WALLET and TEAM_WALLET != OWNER_WALLET:
             await send_sol(wallet, TEAM_WALLET, team_amt, private_key)
         
-        # Generate lottery numbers deterministically from transaction signature
-        number_seed = generate_provable_seed(uid, stake_id, tx_signature, "participant_numbers")
-        lottery_numbers = generate_lottery_numbers(number_seed, count=5, min_val=1, max_val=40)
+        # Use player's selected numbers (sorted)
+        lottery_numbers = sorted(selected)
         
         add_result = add_round_participant(stake_id, uid, lottery_numbers, tx_signature)
         
         if add_result["success"]:
             participant_id = add_result["participant_id"]
-            round_id = add_result.get("round_id", 0)
             ticket_count = add_result.get("ticket_count", 1)
             
             await bot.send_message(uid,
                 f"✅ <b>Successfully Joined!</b>\n\n"
                 f"🎫 Ticket #{participant_id}\n"
                 f"🎰 Stake: {stake_amount} SOL\n"
-                f"🎲 Your Numbers: {numbers_to_str(lottery_numbers)}\n"
+                f"🎲 <b>Your Numbers: {numbers_to_str(lottery_numbers)}</b>\n"
                 f"📝 TX: <code>{tx_signature[:20]}...</code>\n\n"
                 f"🍀 Good luck! Winners announced after the round ends.",
                 parse_mode="HTML"
