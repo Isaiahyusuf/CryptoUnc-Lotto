@@ -6,7 +6,6 @@ import asyncio
 import hashlib
 import time
 import decimal
-import sqlite3
 from decimal import Decimal
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
@@ -603,6 +602,8 @@ def migrate_database():
         print("✅ PostgreSQL: Schema managed by init_all_tables")
         return
     
+    import sqlite3  # Only import when using SQLite
+    
     if not os.path.exists(DB_PATH):
         return
     
@@ -667,6 +668,8 @@ def migrate_timestamps_to_iso():
     if USE_POSTGRES:
         print("✅ PostgreSQL: Timestamps are UTC by default")
         return
+    
+    import sqlite3  # Only import when using SQLite
     
     if not os.path.exists(DB_PATH):
         return
