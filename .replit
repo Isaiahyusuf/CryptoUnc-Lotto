@@ -16,23 +16,20 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "CryptoUnc Lotto Bot"
+args = "Health Check"
 
 [[workflows.workflow]]
-name = "CryptoUnc Lotto Bot"
+name = "Health Check"
 author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python main.py"
+args = "python health_server.py"
+waitForPort = 5000
 
 [workflows.workflow.metadata]
-outputType = "console"
+outputType = "webview"
 
 [[ports]]
 localPort = 5000
 externalPort = 80
-
-[[ports]]
-localPort = 35381
-externalPort = 3000
