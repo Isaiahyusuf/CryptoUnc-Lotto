@@ -317,10 +317,9 @@ def validate_environment():
     if not os.getenv("OWNER_WALLET_PRIVATE_KEY"):
         missing.append("OWNER_WALLET_PRIVATE_KEY - Bot's Solana wallet private key (hex or JSON array)")
     
-    # Check HELIUS_RPC (primary) or SOLANA_RPC (legacy)
-    if not os.getenv("HELIUS_RPC") and not os.getenv("SOLANA_RPC"):
-        warnings.append("HELIUS_RPC - Primary Helius RPC endpoint (recommended for reliability)")
-        print("ℹ️ Using fallback RPC: https://api.mainnet-beta.solana.com")
+    # Check SOLANA_RPC (optional - falls back to public RPC if not set)
+    if not os.getenv("SOLANA_RPC"):
+        print("ℹ️ No SOLANA_RPC configured, using fallback: https://api.mainnet-beta.solana.com")
     
     # Check ENCRYPTION_KEY (for wallet encryption)
     if not os.getenv("ENCRYPTION_KEY"):

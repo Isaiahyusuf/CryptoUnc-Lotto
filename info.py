@@ -23,7 +23,7 @@ Required Environment Variables:
 - DATABASE_URL: PostgreSQL connection string (provided by Railway)
 
 Optional:
-- HELIUS_RPC: Primary Helius RPC endpoint
+- SOLANA_RPC: Your Solana RPC endpoint (e.g., Helius). Falls back to public RPC if not set.
 - ANNOUNCEMENTS_GROUP_ID: Additional Telegram group for announcements
 - SUPPORT_USERNAME: Telegram support contact
 """
