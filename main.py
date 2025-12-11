@@ -2290,9 +2290,12 @@ async def show_wallet_menu(user_id: int):
     keyboard_buttons = []
 
     if wallets:
+        # Fetch all wallet balances in PARALLEL for speed
+        balance_tasks = [get_real_balance(w["address"]) for w in wallets]
+        balances = await asyncio.gather(*balance_tasks)
+        
         text = "💼 <b>Your Wallets</b>\n\n"
-        for i, wallet in enumerate(wallets, 1):
-            balance = await get_real_balance(wallet["address"])
+        for i, (wallet, balance) in enumerate(zip(wallets, balances), 1):
             is_active = "✅" if wallet["address"] == active_wallet else ""
             text += f"{is_active} <b>{wallet['name']}</b>\n"
             text += f"   Type: {wallet['type'].capitalize()}\n"
