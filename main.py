@@ -392,18 +392,20 @@ ANNOUNCEMENTS_GROUP = os.getenv("ANNOUNCEMENTS_GROUP_ID")  # Optional group for 
 # ==============================================================================
 # SOLANA RPC CONFIGURATION
 # ==============================================================================
-# Uses HELIUS_RPC as primary (from Railway secrets) with public RPC as fallback.
-# The fallback ensures the bot continues working even if Helius has issues.
+# Uses SOLANA_RPC as primary with public RPC as fallback.
+# HELIUS_RPC is optional secondary if you want an additional endpoint.
 
-HELIUS_RPC = os.getenv("HELIUS_RPC")
 FALLBACK_RPC = "https://api.mainnet-beta.solana.com"
-SOLANA_RPC = HELIUS_RPC if HELIUS_RPC else os.getenv("SOLANA_RPC", FALLBACK_RPC)
+SOLANA_RPC = os.getenv("SOLANA_RPC", FALLBACK_RPC)
+HELIUS_RPC = os.getenv("HELIUS_RPC")  # Optional secondary
 
-if HELIUS_RPC:
-    print(f"✅ Primary RPC: Helius (configured)")
+if SOLANA_RPC and SOLANA_RPC != FALLBACK_RPC:
+    print(f"✅ Primary RPC: SOLANA_RPC (configured)")
+    if HELIUS_RPC:
+        print(f"   Secondary RPC: HELIUS_RPC (configured)")
     print(f"   Fallback RPC: {FALLBACK_RPC}")
 else:
-    print(f"⚠️ No HELIUS_RPC configured, using: {SOLANA_RPC}")
+    print(f"⚠️ No SOLANA_RPC configured, using public fallback: {FALLBACK_RPC}")
 
 # ==============================================================================
 # LOTTERY CONFIGURATION

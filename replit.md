@@ -79,11 +79,11 @@ Preferred communication style: Simple, everyday language.
 - `TEAM_WALLET`: Receives a percentage of stakes.
 - `ADMIN_ID`: Telegram user ID for administrative access.
 - `ROUND_CHANNEL_ID`: Public Telegram channel for announcements.
-- `SOLANA_RPC`: Solana RPC endpoint URL.
+- `SOLANA_RPC`: Primary Solana RPC endpoint URL.
 - `ENCRYPTION_KEY`: Master key for private key encryption.
 - `SUPPORT_USERNAME`: Telegram support contact.
 - `DATABASE_URL` (Required for Railway): PostgreSQL connection string provided by Railway.
-- `HELIUS_RPC` (Optional): Primary Helius RPC endpoint with automatic fallback.
+- `HELIUS_RPC` (Optional): Secondary RPC endpoint for failover.
 - `ANNOUNCEMENTS_GROUP_ID` (Optional): Telegram group for additional announcements.
 
 ### Python Package Dependencies

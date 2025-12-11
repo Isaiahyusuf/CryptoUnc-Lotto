@@ -36,13 +36,13 @@ from solana.rpc.commitment import Confirmed
 # ==============================================================================
 # SOLANA RPC CONFIGURATION WITH AUTOMATIC FALLBACK
 # ==============================================================================
-# Uses HELIUS_RPC as primary (from Railway secrets) with public RPC as fallback.
+# Uses SOLANA_RPC as primary with public RPC as fallback.
+# HELIUS_RPC is optional secondary if configured.
 # Automatically switches to fallback if primary RPC has errors.
-# The RPC list always includes all distinct endpoints for reliable failover.
 
-HELIUS_RPC = os.getenv("HELIUS_RPC")
+SOLANA_RPC_ENV = os.getenv("SOLANA_RPC")
+HELIUS_RPC = os.getenv("HELIUS_RPC")  # Optional secondary
 FALLBACK_RPC = "https://api.mainnet-beta.solana.com"
-LEGACY_RPC = os.getenv("SOLANA_RPC")
 
 # Build the ordered list of RPC endpoints (deduplicated)
 def _build_rpc_list() -> list:
@@ -50,15 +50,15 @@ def _build_rpc_list() -> list:
     endpoints = []
     seen = set()
     
-    # Priority 1: Helius RPC (if configured)
+    # Priority 1: SOLANA_RPC (primary)
+    if SOLANA_RPC_ENV and SOLANA_RPC_ENV not in seen:
+        endpoints.append(SOLANA_RPC_ENV)
+        seen.add(SOLANA_RPC_ENV)
+    
+    # Priority 2: HELIUS_RPC (optional secondary)
     if HELIUS_RPC and HELIUS_RPC not in seen:
         endpoints.append(HELIUS_RPC)
         seen.add(HELIUS_RPC)
-    
-    # Priority 2: Legacy SOLANA_RPC (if configured and different)
-    if LEGACY_RPC and LEGACY_RPC not in seen:
-        endpoints.append(LEGACY_RPC)
-        seen.add(LEGACY_RPC)
     
     # Priority 3: Public fallback (always included)
     if FALLBACK_RPC not in seen:
