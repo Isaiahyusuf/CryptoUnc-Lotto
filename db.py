@@ -475,7 +475,7 @@ def init_all_tables():
         c.execute("CREATE INDEX IF NOT EXISTS idx_entries_round ON entries(round)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_scheduled_status ON scheduled_rounds(status)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_round_stakes ON round_stakes(round_id)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_participants_stake ON round_participants(stake_id)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_participants_stake ON round_participants(round_stake_id)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_id)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_draw_history_round ON draw_history(round_id)")
     
