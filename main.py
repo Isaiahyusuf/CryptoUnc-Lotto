@@ -535,7 +535,24 @@ class NumberSelectionStates(StatesGroup):
 
 
 # Store user's selected numbers temporarily
-user_selected_numbers = {}  # {user_id: {"numbers": [list], "stake_id": int, "round_id": int}}
+user_selected_numbers = {}  # {user_id: {"numbers": [list], "stake_id": int, "round_id": int, "created_at": timestamp}}
+NUMBER_SELECTION_TIMEOUT_SECONDS = 300  # 5 minutes timeout for number selection
+
+
+def cleanup_expired_number_selections():
+    """Remove expired number selection sessions to prevent private key retention"""
+    import time
+    current_time = time.time()
+    expired_users = []
+    
+    for uid, data in user_selected_numbers.items():
+        created_at = data.get("created_at", 0)
+        if current_time - created_at > NUMBER_SELECTION_TIMEOUT_SECONDS:
+            expired_users.append(uid)
+    
+    for uid in expired_users:
+        del user_selected_numbers[uid]
+        print(f"[Cleanup] Expired number selection session for user {uid}")
 
 
 def create_number_picker_keyboard(selected_numbers: list) -> InlineKeyboardMarkup:
@@ -2293,6 +2310,11 @@ async def mark_refund_completed(participant_id: int, tx_signature: str):
 async def cmd_start(message: types.Message):
     save_user(message.from_user.id, message.from_user.username or "")
     
+    # Clean up any abandoned number selection session for this user
+    uid = message.from_user.id
+    if uid in user_selected_numbers:
+        del user_selected_numbers[uid]
+    
     # Get current jackpot from owner wallet balance
     try:
         jackpot = await get_real_balance(OWNER_WALLET)
@@ -3448,13 +3470,15 @@ async def inline_handler(query: types.CallbackQuery):
             return
         
         # Store stake info and start number selection
+        import time
         user_selected_numbers[uid] = {
             "numbers": [],
             "stake_id": stake_id,
             "round_id": round_id,
             "stake_amount": stake_amount,
             "wallet": wallet,
-            "private_key": private_key
+            "private_key": private_key,
+            "created_at": time.time()
         }
         
         keyboard = create_number_picker_keyboard([])
@@ -4527,6 +4551,9 @@ async def manage_rounds():
     while True:
         try:
             now = datetime.now(pytz.UTC)
+            
+            # Clean up expired number selection sessions (security: remove decrypted private keys)
+            cleanup_expired_number_selections()
             
             conn = get_db_conn()
             c = conn.cursor()
