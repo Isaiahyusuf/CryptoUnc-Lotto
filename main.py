@@ -131,7 +131,7 @@ import_wallet_from_private_key,
 MAX_WALLETS_PER_USER
 )
 
-from db import get_db_conn, init_all_tables, q, USE_POSTGRES
+from db import get_db_conn, init_all_tables, q, USE_POSTGRES, DB_PATH
 
 from wallet_buttons import router as wallet_router
 
@@ -597,6 +597,11 @@ pending_pins = {}  # Stores PIN attempts: {user_id: {"pin": "1234", "action": "v
 # ---------------------------
 def migrate_database():
     """Safely migrate existing database to new schema with pending_refund status"""
+    # Skip for PostgreSQL - schema is managed by init_all_tables
+    if USE_POSTGRES:
+        print("✅ PostgreSQL: Schema managed by init_all_tables")
+        return
+    
     if not os.path.exists(DB_PATH):
         return
     
@@ -657,6 +662,11 @@ def migrate_database():
 
 def migrate_timestamps_to_iso():
     """Migrate legacy CURRENT_TIMESTAMP values to UTC ISO format strings"""
+    # Skip for PostgreSQL - timestamps are handled correctly
+    if USE_POSTGRES:
+        print("✅ PostgreSQL: Timestamps are UTC by default")
+        return
+    
     if not os.path.exists(DB_PATH):
         return
     
