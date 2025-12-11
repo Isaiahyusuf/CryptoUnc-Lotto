@@ -1199,38 +1199,12 @@ def get_top_players(limit: int = 10) -> List[Dict]:
 
 
 # ==============================================================================
-# PARTIAL MATCH PRIZES
+# MATCH COUNTING (for determining jackpot winner)
 # ==============================================================================
-
-PARTIAL_PRIZES = {
-    4: Decimal("0.1"),   # Match 4 = 0.1 SOL
-    3: Decimal("0.02"),  # Match 3 = 0.02 SOL
-}
-
 
 def count_matching_numbers(player_nums: List[int], winning_nums: List[int]) -> int:
     """Count how many numbers match"""
     return len(set(player_nums) & set(winning_nums))
-
-
-def calculate_partial_prizes(participants: List, winning_numbers: List[int]) -> List[Dict]:
-    """Calculate partial prizes for participants who matched 3 or 4 numbers"""
-    partial_winners = []
-    
-    for participant_id, user_id, numbers_str, tx_sig, stake_amount in participants:
-        user_numbers = str_to_numbers(numbers_str)
-        matches = count_matching_numbers(user_numbers, winning_numbers)
-        
-        if matches in PARTIAL_PRIZES:
-            partial_winners.append({
-                "participant_id": participant_id,
-                "user_id": user_id,
-                "matches": matches,
-                "prize": PARTIAL_PRIZES[matches],
-                "numbers": user_numbers
-            })
-    
-    return partial_winners
 
 
 # ==============================================================================
@@ -2336,14 +2310,15 @@ async def cmd_start(message: types.Message):
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎲 Play Now", callback_data="play_now")],
-        [InlineKeyboardButton(text="🎰 Active Rounds", callback_data="check_active_rounds"),
-         InlineKeyboardButton(text="💼 Wallets", callback_data="my_wallets")],
-        [InlineKeyboardButton(text="🏆 Leaderboard", callback_data="leaderboard"),
+        [InlineKeyboardButton(text="💰 Check Jackpot", callback_data="check_jackpot"),
+         InlineKeyboardButton(text="🎰 Active Rounds", callback_data="check_active_rounds")],
+        [InlineKeyboardButton(text="💼 Wallets", callback_data="my_wallets"),
          InlineKeyboardButton(text="📈 My Stats", callback_data="my_stats")],
-        [InlineKeyboardButton(text="🎁 Invite Friends", callback_data="referral"),
-         InlineKeyboardButton(text="📊 Results", callback_data="view_results")],
-        [InlineKeyboardButton(text="📘 Rules", callback_data="rules"),
-         InlineKeyboardButton(text="🛠 Support", callback_data="support")]
+        [InlineKeyboardButton(text="🏆 Leaderboard", callback_data="leaderboard"),
+         InlineKeyboardButton(text="🎁 Invite Friends", callback_data="referral")],
+        [InlineKeyboardButton(text="📊 Results", callback_data="view_results"),
+         InlineKeyboardButton(text="📘 Rules", callback_data="rules")],
+        [InlineKeyboardButton(text="🛠 Support", callback_data="support")]
     ])
     await message.answer(
         f"🎟️ <b>Welcome to CryptoUnc Lotto!</b> {vip_badge}\n\n"
@@ -2351,8 +2326,7 @@ async def cmd_start(message: types.Message):
         f"📋 <b>How It Works:</b>\n"
         f"• <b>Pick your 5 lucky numbers (1-40)</b>\n"
         f"• Match ALL 5 to win the ENTIRE jackpot!\n"
-        f"• Match 4 = 0.1 SOL | Match 3 = 0.02 SOL\n"
-        f"• No winner? Jackpot grows each round!\n\n"
+        f"• No winner? Prize rolls over to next round!\n\n"
         f"💰 Ticket Price: {TICKET_PRICE} SOL\n"
         f"⏰ 24 Hourly Rounds (one per hour)\n\n"
         f"🎁 Invite friends & earn 5% on their tickets!",
@@ -3107,6 +3081,29 @@ async def inline_handler(query: types.CallbackQuery):
             parse_mode="HTML"
         )
 
+    elif data == "check_jackpot":
+        await query.answer("Checking current jackpot...")
+        try:
+            jackpot = await get_real_balance(OWNER_WALLET)
+        except:
+            jackpot = Decimal("0")
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Refresh", callback_data="check_jackpot")],
+            [InlineKeyboardButton(text="🎲 Play Now", callback_data="play_now")],
+            [InlineKeyboardButton(text="🔙 Back to Menu", callback_data="back_to_main")]
+        ])
+        
+        await bot.send_message(uid,
+            f"💰 <b>Current Jackpot</b>\n\n"
+            f"🏆 <b>{jackpot} SOL</b>\n\n"
+            f"This is the live balance in the prize pool.\n"
+            f"Match all 5 numbers to win it all!\n\n"
+            f"No winner? Prize rolls over to next round!",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+
     elif data == "rules":
         keyboard = create_keyboard_with_nav([
             [InlineKeyboardButton(text="🎲 Play Now", callback_data="play_now")]
@@ -3125,9 +3122,8 @@ async def inline_handler(query: types.CallbackQuery):
             f"• Each round lasts {ROUND_DURATION_MINUTES} minutes\n"
             f"• Draw happens automatically when round ends\n\n"
             f"<b>🏆 How to Win:</b>\n"
-            f"• Match ALL 5 numbers = WIN THE JACKPOT!\n"
-            f"• Match 4 numbers = <b>0.1 SOL</b> prize\n"
-            f"• Match 3 numbers = <b>0.02 SOL</b> prize\n"
+            f"• Match ALL 5 numbers = WIN THE ENTIRE JACKPOT!\n"
+            f"• No winner? Prize rolls over to next round!\n"
             f"• Winning numbers shown after each round\n"
             f"• You get a private message with your results\n"
             f"• Winners announced in the public channel\n\n"
@@ -4969,54 +4965,12 @@ async def announce_refunds(round_id: int, stake_amount: float, refund_count: int
 
 
 async def distribute_prize(stake_id: int, result: dict):
-    """Distribute jackpot and partial prizes. Updates winner stats."""
+    """Distribute entire jackpot (owner wallet balance) to winner. No partial prizes."""
     try:
         winner_id = result.get('winner_user_id')
-        winning_numbers = result.get('winning_numbers', [])
-        participants = result.get('participants', [])
         
-        # First: Always try to distribute partial prizes (3 or 4 matches)
-        # This runs regardless of whether there's a jackpot winner
-        if participants and winning_numbers:
-            partial_winners = calculate_partial_prizes(participants, winning_numbers)
-            
-            for pw in partial_winners:
-                user_id = pw['user_id']
-                prize = pw['prize']
-                matches = pw['matches']
-                
-                user_wallet = get_active_wallet(user_id)
-                if not user_wallet:
-                    print(f"⚠️ Partial winner {user_id} has no wallet, skipping")
-                    continue
-                
-                team_wallet = os.getenv("TEAM_WALLET", OWNER_WALLET)
-                try:
-                    print(f"💰 Sending partial prize to {user_id}: {prize} SOL ({matches} matches)")
-                    partial_result = await send_sol(team_wallet, user_wallet, float(prize))
-                    
-                    if partial_result and partial_result.get("success"):
-                        # Update winner stats
-                        update_user_stats(user_id, won=prize, is_win=True)
-                        
-                        try:
-                            await bot.send_message(
-                                user_id,
-                                f"🎯 <b>Partial Match Prize!</b>\n\n"
-                                f"You matched <b>{matches} out of 5</b> numbers!\n"
-                                f"💰 Prize: <b>{prize} SOL</b>\n"
-                                f"📝 TX: <code>{partial_result['signature'][:20]}...</code>\n\n"
-                                f"Keep playing for the jackpot!",
-                                parse_mode="HTML"
-                            )
-                        except Exception as e:
-                            print(f"⚠️ Could not notify partial winner {user_id}: {e}")
-                    else:
-                        print(f"⚠️ Partial prize transfer failed for {user_id}: {partial_result.get('error', 'Unknown')}")
-                except Exception as e:
-                    print(f"⚠️ Partial prize failed for {user_id}: {e}")
-        
-        # Second: Distribute jackpot to winner (if any)
+        # Distribute jackpot to winner (if any)
+        # No winner = prize rolls over to next round (stays in owner wallet)
         if winner_id:
             winner_wallet = get_active_wallet(winner_id)
             if not winner_wallet:

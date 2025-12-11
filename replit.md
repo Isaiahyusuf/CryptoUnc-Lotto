@@ -26,10 +26,10 @@ Preferred communication style: Simple, everyday language.
 
 - **Hourly Rounds:** 24 rounds daily, each 60 minutes.
 - **Ticket Price:** 0.025 SOL per ticket.
-- **Gameplay:** Each ticket contains 5 random numbers (1-40).
+- **Gameplay:** Players pick their own 5 numbers (1-40).
 - **Winning Condition:** Match all 5 numbers to win the entire jackpot.
-- **Jackpot:** 80% of ticket price contributes to the jackpot (Owner Wallet), 20% to the Team Wallet. Jackpot balance is displayed in real-time from the blockchain.
-- **Partial Prizes:** Match 4 numbers for 0.1 SOL, Match 3 numbers for 0.02 SOL (paid from team wallet).
+- **Jackpot:** 80% of ticket price contributes to the jackpot (Owner Wallet), 20% to the Team Wallet. Jackpot = owner wallet balance (live on-chain).
+- **Prize Rollover:** If no winner, prize stays in owner wallet and rolls over to next round. No partial prizes.
 - **Draws:** Automated at round end. Winning numbers are generated at round creation using cryptographic randomness.
 - **Engagement Features:**
     - **Referral System:** Unique codes/links, 5% bonus for referred ticket purchases.
@@ -120,9 +120,9 @@ Preferred communication style: Simple, everyday language.
 2. **VIP Tier System:** Bronze → Silver → Gold → Platinum → Diamond
 3. **Leaderboard:** Top winners and top players
 4. **Personal Statistics Dashboard:** Tickets, spending, winnings, VIP tier
-5. **Partial Match Prizes:** Match 4 = 0.1 SOL, Match 3 = 0.02 SOL
+5. **Check Jackpot Button:** Live view of current prize pool (owner wallet balance)
 6. **Admin Jackpot Seeding:** `/seedjackpot <amount>` command
-7. **Notification Toggle:** Users can enable/disable round reminders
+7. **Prize Rollover:** No winner = jackpot carries forward to next round
 
 ### New Database Tables
 - `user_stats`: Tracks tickets, spending, winnings, VIP tier, referral earnings
