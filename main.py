@@ -2488,12 +2488,15 @@ async def inline_handler(query: types.CallbackQuery):
             await bot.send_message(uid, "❌ Please create or connect a wallet first.")
             return
         
-        balance = await get_real_balance(wallet)
-        if balance < TICKET_PRICE:
+        # Check balance FIRST before showing number picker
+        balance = await get_real_balance(wallet, use_cache=False)  # Fresh balance check
+        required_amount = TICKET_PRICE + Decimal("0.00005")  # Include network fees buffer
+        
+        if balance < required_amount:
             await bot.send_message(uid,
                 f"⚠️ <b>Insufficient Balance</b>\n\n"
                 f"Your balance: {balance} SOL\n"
-                f"Ticket price: {TICKET_PRICE} SOL\n\n"
+                f"Required: {required_amount} SOL (ticket + fees)\n\n"
                 f"Please deposit more SOL to your wallet:\n"
                 f"<code>{wallet}</code>",
                 parse_mode="HTML"
@@ -2511,57 +2514,17 @@ async def inline_handler(query: types.CallbackQuery):
             )
             return
         
-        await bot.send_message(uid, "⏳ Processing payment...")
-        
-        # Calculate fee split: 20% to team, 80% to owner (jackpot)
-        team_fee = TICKET_PRICE * TEAM_FEE_PERCENTAGE
-        owner_amount = TICKET_PRICE * WINNER_SHARE_PERCENTAGE
-        
-        # Send 20% to team wallet first
-        if TEAM_WALLET and TEAM_WALLET != OWNER_WALLET:
-            team_result = await send_sol(wallet, TEAM_WALLET, team_fee, private_key)
-            if not team_result["success"]:
-                await bot.send_message(uid,
-                    f"❌ <b>Transaction failed!</b>\n\n"
-                    f"Error: {team_result.get('error', 'Unknown error')}\n\n"
-                    f"Please try again or contact support.",
-                    parse_mode="HTML"
-                )
-                return
-        
-        # Send 80% to owner wallet (jackpot)
-        result = await send_sol(wallet, OWNER_WALLET, owner_amount, private_key)
-        
-        if not result["success"]:
-            await bot.send_message(uid,
-                f"❌ <b>Transaction failed!</b>\n\n"
-                f"Error: {result.get('error', 'Unknown error')}\n\n"
-                f"Please try again or contact support.",
-                parse_mode="HTML"
-            )
-            return
-        
-        tx_signature = result["signature"]
-        
-        # Log lottery stake transaction
-        log_wallet_transaction(
-            user_id=uid,
-            wallet_address=wallet,
-            tx_type="lottery_stake",
-            amount=TICKET_PRICE,
-            to_address=OWNER_WALLET,
-            tx_signature=tx_signature,
-            status="completed"
-        )
-        
-        # Send number picker and store message for editing
+        # NO PAYMENT YET - Just show number picker
+        # Payment will be processed AFTER user confirms their numbers
         picker_msg = await show_number_picker(uid, [])
         
+        # Store wallet info for payment after number confirmation
         user_states[uid] = {
             "action": "picking_numbers",
-            "tx_signature": tx_signature,
             "selected_numbers": [],
             "stake_amount": float(TICKET_PRICE),
+            "wallet": wallet,
+            "private_key": private_key,
             "picker_message_id": picker_msg.message_id if picker_msg else None
         }
 
@@ -2586,7 +2549,7 @@ async def inline_handler(query: types.CallbackQuery):
         await show_number_picker(uid, selected, query.message)
 
     elif data == "confirm_numbers":
-        await query.answer()
+        await query.answer("Processing payment...")
         
         if uid not in user_states or user_states[uid].get("action") != "picking_numbers":
             await bot.send_message(uid, "❌ Session expired. Please buy a new ticket.")
@@ -2599,13 +2562,81 @@ async def inline_handler(query: types.CallbackQuery):
             await bot.send_message(uid, f"❌ Please select exactly 5 numbers. You have selected {len(selected)}.")
             return
         
-        tx_signature = state.get("tx_signature")
-        stake_amount = state.get("stake_amount", float(TICKET_PRICE))
+        wallet = state.get("wallet")
+        private_key = state.get("private_key")
+        stake_amount = Decimal(str(state.get("stake_amount", float(TICKET_PRICE))))
         
-        round_stake_id, round_id = get_or_create_active_round_stake(Decimal(str(stake_amount)))
+        if not wallet or not private_key:
+            await bot.send_message(uid, "❌ Session expired. Please buy a new ticket.")
+            del user_states[uid]
+            return
+        
+        # Re-check balance before payment (in case balance changed)
+        balance = await get_real_balance(wallet, use_cache=False)
+        required_amount = stake_amount + Decimal("0.00005")
+        
+        if balance < required_amount:
+            await bot.send_message(uid,
+                f"⚠️ <b>Insufficient Balance</b>\n\n"
+                f"Your balance: {balance} SOL\n"
+                f"Required: {required_amount} SOL\n\n"
+                f"Please deposit more SOL and try again.",
+                parse_mode="HTML"
+            )
+            del user_states[uid]
+            return
+        
+        # Update message to show processing
+        try:
+            await query.message.edit_text("⏳ <b>Processing payment...</b>\n\nPlease wait...", parse_mode="HTML")
+        except:
+            pass
+        
+        # NOW process the payment
+        team_fee = stake_amount * TEAM_FEE_PERCENTAGE
+        owner_amount = stake_amount * WINNER_SHARE_PERCENTAGE
+        
+        # Send 80% to owner wallet (jackpot) first
+        result = await send_sol(wallet, OWNER_WALLET, owner_amount, private_key)
+        
+        if not result["success"]:
+            await bot.send_message(uid,
+                f"❌ <b>Transaction failed!</b>\n\n"
+                f"Error: {result.get('error', 'Unknown error')}\n\n"
+                f"Your SOL was NOT deducted. Please try again.",
+                parse_mode="HTML"
+            )
+            del user_states[uid]
+            return
+        
+        tx_signature = result["signature"]
+        
+        # Send 20% to team wallet
+        if TEAM_WALLET and TEAM_WALLET != OWNER_WALLET:
+            team_result = await send_sol(wallet, TEAM_WALLET, team_fee, private_key)
+            if not team_result["success"]:
+                print(f"Warning: Team wallet payment failed: {team_result.get('error')}")
+        
+        # Log lottery stake transaction
+        log_wallet_transaction(
+            user_id=uid,
+            wallet_address=wallet,
+            tx_type="lottery_stake",
+            amount=stake_amount,
+            to_address=OWNER_WALLET,
+            tx_signature=tx_signature,
+            status="completed"
+        )
+        
+        # Get round and register ticket
+        round_stake_id, round_id = get_or_create_active_round_stake(stake_amount)
         
         if not round_stake_id:
-            await bot.send_message(uid, "❌ No active round. Please try again later.")
+            await bot.send_message(uid, 
+                f"❌ No active round, but payment was processed.\n"
+                f"Contact support with TX: <code>{tx_signature}</code>",
+                parse_mode="HTML"
+            )
             del user_states[uid]
             return
         
@@ -2627,7 +2658,7 @@ async def inline_handler(query: types.CallbackQuery):
                 parse_mode="HTML"
             )
             
-            await announce_new_ticket(uid, participant_id, Decimal(str(stake_amount)), sorted(selected), round_id, ticket_count)
+            await announce_new_ticket(uid, participant_id, stake_amount, sorted(selected), round_id, ticket_count)
         else:
             await bot.send_message(uid,
                 f"❌ <b>Failed to register ticket</b>\n\n"
@@ -2643,8 +2674,7 @@ async def inline_handler(query: types.CallbackQuery):
             del user_states[uid]
         await bot.send_message(uid,
             "❌ <b>Number selection cancelled</b>\n\n"
-            "Note: Your payment was already processed.\n"
-            "Please contact support if you need assistance.",
+            "No payment was made. You can buy a ticket anytime.",
             parse_mode="HTML"
         )
         await start_private_play(uid)
@@ -3589,79 +3619,6 @@ async def inline_handler(query: types.CallbackQuery):
             "Use /start to return to the main menu.",
             parse_mode="HTML"
         )
-    
-    elif data == "confirm_numbers":
-        await query.answer("Processing your ticket...")
-        
-        if uid not in user_selected_numbers:
-            await bot.send_message(uid, "❌ Session expired. Please start again with /start")
-            return
-        
-        data_info = user_selected_numbers[uid]
-        selected = data_info["numbers"]
-        
-        if len(selected) != 5:
-            await bot.send_message(uid, "❌ Please select exactly 5 numbers.")
-            return
-        
-        stake_id = data_info["stake_id"]
-        stake_amount = data_info["stake_amount"]
-        wallet = data_info["wallet"]
-        private_key = data_info["private_key"]
-        round_id = data_info["round_id"]
-        
-        # Clear selection data
-        del user_selected_numbers[uid]
-        
-        owner_amt = stake_amount * Decimal("0.8")
-        team_amt = stake_amount * Decimal("0.2")
-        
-        await query.message.edit_text("⏳ Processing payment...")
-        
-        result = await send_sol(wallet, OWNER_WALLET, owner_amt, private_key)
-        
-        if not result["success"]:
-            await bot.send_message(uid,
-                f"❌ <b>Transaction failed!</b>\n\n"
-                f"Error: {result.get('error', 'Unknown error')}\n\n"
-                f"Please try again or contact support.",
-                parse_mode="HTML"
-            )
-            return
-        
-        tx_signature = result["signature"]
-        
-        if TEAM_WALLET and TEAM_WALLET != OWNER_WALLET:
-            await send_sol(wallet, TEAM_WALLET, team_amt, private_key)
-        
-        # Use player's selected numbers (sorted)
-        lottery_numbers = sorted(selected)
-        
-        add_result = add_round_participant(stake_id, uid, lottery_numbers, tx_signature)
-        
-        if add_result["success"]:
-            participant_id = add_result["participant_id"]
-            ticket_count = add_result.get("ticket_count", 1)
-            
-            await bot.send_message(uid,
-                f"✅ <b>Successfully Joined!</b>\n\n"
-                f"🎫 Ticket #{participant_id}\n"
-                f"🎰 Stake: {stake_amount} SOL\n"
-                f"🎲 <b>Your Numbers: {numbers_to_str(lottery_numbers)}</b>\n"
-                f"📝 TX: <code>{tx_signature[:20]}...</code>\n\n"
-                f"🍀 Good luck! Winners announced after the round ends.",
-                parse_mode="HTML"
-            )
-            
-            await announce_new_ticket(uid, participant_id, stake_amount, lottery_numbers, round_id, ticket_count)
-        else:
-            await bot.send_message(uid,
-                f"❌ <b>Failed to join round</b>\n\n"
-                f"Error: {add_result.get('error')}\n\n"
-                f"Payment was processed. Contact support with TX:\n"
-                f"<code>{tx_signature}</code>",
-                parse_mode="HTML"
-            )
 
     elif data == "back_to_main":
         await query.answer()
