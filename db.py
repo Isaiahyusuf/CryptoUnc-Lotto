@@ -211,6 +211,32 @@ def get_db_conn():
         return SQLiteConnection(DB_PATH)
 
 
+def migrate_remove_unique_constraint():
+    """Migration: Remove UNIQUE constraint from round_participants to allow unlimited tickets per user"""
+    if USE_POSTGRES:
+        try:
+            conn = get_db_conn()
+            c = conn.cursor()
+            # Check if the constraint exists
+            c.execute("""
+                SELECT constraint_name FROM information_schema.table_constraints 
+                WHERE table_name = 'round_participants' 
+                AND constraint_type = 'UNIQUE'
+            """)
+            constraints = c.fetchall()
+            for row in constraints:
+                constraint_name = row[0]
+                try:
+                    c.execute(f"ALTER TABLE round_participants DROP CONSTRAINT {constraint_name}")
+                    print(f"[Migration] Dropped UNIQUE constraint: {constraint_name}")
+                except Exception as e:
+                    print(f"[Migration] Could not drop constraint {constraint_name}: {e}")
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"[Migration] Error removing UNIQUE constraint: {e}")
+
+
 def init_all_tables():
     """Initialize all database tables with correct syntax for current DB type"""
     # Initialize connection pool for PostgreSQL
@@ -326,8 +352,7 @@ def init_all_tables():
                     numbers TEXT NOT NULL,
                     tx_signature TEXT NOT NULL,
                     refunded INTEGER DEFAULT 0,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(round_stake_id, user_id)
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
         
@@ -546,8 +571,7 @@ def init_all_tables():
                 numbers TEXT NOT NULL,
                 tx_signature TEXT NOT NULL,
                 refunded INTEGER DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(round_stake_id, user_id)
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
         

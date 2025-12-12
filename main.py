@@ -83,7 +83,7 @@ MAX_WALLETS_PER_USER,
 log_wallet_transaction
 )
 
-from db import get_db_conn, init_all_tables, q, USE_POSTGRES, DB_PATH, save_security_question, get_security_question, verify_security_answer, has_security_question, add_announcement_group, remove_announcement_group, get_announcement_groups
+from db import get_db_conn, init_all_tables, migrate_remove_unique_constraint, q, USE_POSTGRES, DB_PATH, save_security_question, get_security_question, verify_security_answer, has_security_question, add_announcement_group, remove_announcement_group, get_announcement_groups
 
 from wallet_buttons import router as wallet_router
 
@@ -730,6 +730,9 @@ def migrate_timestamps_to_iso():
 def init_db():
     """Initialize database tables - delegates to db.py"""
     init_all_tables()
+    
+    # Run migration to allow unlimited tickets per user
+    migrate_remove_unique_constraint()
     
     # Verify database connection and show stats
     try:
@@ -1421,17 +1424,6 @@ def add_round_participant(round_stake_id: int, user_id: int, numbers: list, tx_s
         if datetime.now(pytz.UTC) > end_datetime:
             conn.close()
             return {"success": False, "error": "Round has ended"}
-    
-    # Check if user already has a ticket in this round stake
-    c.execute(q("""
-        SELECT id FROM round_participants 
-        WHERE round_stake_id = ? AND user_id = ? AND refunded = 0
-    """), (round_stake_id, user_id))
-    existing = c.fetchone()
-    
-    if existing:
-        conn.close()
-        return {"success": False, "error": "You already have a ticket in this round. Wait for the draw or choose a different stake level."}
     
     try:
         if USE_POSTGRES:
