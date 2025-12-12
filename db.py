@@ -237,6 +237,35 @@ def migrate_remove_unique_constraint():
             print(f"[Migration] Error removing UNIQUE constraint: {e}")
 
 
+def migrate_add_referral_column():
+    """Migration: Add tickets_from_referral column to referrals table if missing"""
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        
+        if USE_POSTGRES:
+            # Check if column exists
+            c.execute("""
+                SELECT column_name FROM information_schema.columns 
+                WHERE table_name = 'referrals' AND column_name = 'tickets_from_referral'
+            """)
+            if not c.fetchone():
+                c.execute("ALTER TABLE referrals ADD COLUMN tickets_from_referral INTEGER DEFAULT 0")
+                print("[Migration] Added tickets_from_referral column to referrals table")
+        else:
+            # SQLite - check if column exists
+            c.execute("PRAGMA table_info(referrals)")
+            columns = [row[1] for row in c.fetchall()]
+            if 'tickets_from_referral' not in columns:
+                c.execute("ALTER TABLE referrals ADD COLUMN tickets_from_referral INTEGER DEFAULT 0")
+                print("[Migration] Added tickets_from_referral column to referrals table")
+        
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[Migration] Error adding tickets_from_referral column: {e}")
+
+
 def init_all_tables():
     """Initialize all database tables with correct syntax for current DB type"""
     # Initialize connection pool for PostgreSQL
@@ -379,6 +408,7 @@ def init_all_tables():
                     referred_id BIGINT NOT NULL UNIQUE,
                     referral_code TEXT,
                     bonus_earned REAL DEFAULT 0,
+                    tickets_from_referral INTEGER DEFAULT 0,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
@@ -596,6 +626,7 @@ def init_all_tables():
                 referred_id INTEGER NOT NULL UNIQUE,
                 referral_code TEXT,
                 bonus_earned REAL DEFAULT 0,
+                tickets_from_referral INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
