@@ -10,3 +10,15 @@ cryptography==41.0.7
 pytz
 psycopg2-binary
 sendgrid
+aiogram==3.4.1
+aiohttp==3.9.1
+base58==2.1.1
+construct==2.10.68
+cryptography==41.0.7
+psycopg2-binary
+python-dotenv==1.0.0
+pytz
+requests==2.31.0
+sendgrid
+solana==0.30.2
+solders==0.18.1

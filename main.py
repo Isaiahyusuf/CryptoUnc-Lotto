@@ -1422,6 +1422,17 @@ def add_round_participant(round_stake_id: int, user_id: int, numbers: list, tx_s
             conn.close()
             return {"success": False, "error": "Round has ended"}
     
+    # Check if user already has a ticket in this round stake
+    c.execute(q("""
+        SELECT id FROM round_participants 
+        WHERE round_stake_id = ? AND user_id = ? AND refunded = 0
+    """), (round_stake_id, user_id))
+    existing = c.fetchone()
+    
+    if existing:
+        conn.close()
+        return {"success": False, "error": "You already have a ticket in this round. Wait for the draw or choose a different stake level."}
+    
     try:
         if USE_POSTGRES:
             c.execute("""
