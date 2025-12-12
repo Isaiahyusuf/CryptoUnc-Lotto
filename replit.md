@@ -185,3 +185,15 @@ Preferred communication style: Simple, everyday language.
 - **Parallel Balance Fetching:** Wallet menu fetches all wallet balances simultaneously instead of one-by-one
 - **Fixed Security Question Saving:** PostgreSQL upsert syntax corrected (uses EXCLUDED.column)
 - **Fixed Referral LIKE Query:** PostgreSQL LIKE pattern with % now handled correctly
+
+### Data Persistence Fix (December 12, 2025)
+- **DATABASE_URL Now Required:** Bot will NOT start without PostgreSQL connected
+- **Prevents Data Loss:** No more silent fallback to SQLite that loses user data on redeploys
+- **Clear Error Messages:** If DATABASE_URL is missing, bot shows exactly what's wrong and how to fix it
+- **Startup Confirmation:** Logs show "PostgreSQL database connected - user data will persist"
+
+### Ticket Purchase Flow Fix (December 12, 2025)
+- **Payment After Numbers:** Payment now processed ONLY after user confirms their 5 numbers
+- **Double Balance Check:** Balance checked before number picker AND before payment
+- **No More Lost Money:** If payment fails, users are told "Your SOL was NOT deducted"
+- **Clean Cancel:** Cancel button now correctly says "No payment was made"

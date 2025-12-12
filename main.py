@@ -303,6 +303,26 @@ def validate_environment():
     missing = []
     warnings = []
     
+    # ===== CRITICAL: DATABASE_URL IS REQUIRED =====
+    # Without PostgreSQL, user data will be lost on every redeploy!
+    from db import USE_POSTGRES, DATABASE_URL
+    
+    if not USE_POSTGRES:
+        print("\n" + "="*60)
+        print("❌ CRITICAL: DATABASE_URL NOT CONFIGURED!")
+        print("="*60)
+        print("\nThe bot REQUIRES PostgreSQL to persist user data.")
+        print("Without it, ALL user data (PINs, wallets, tickets) will be LOST")
+        print("on every redeploy!")
+        print("\nTo fix this on Railway:")
+        print("1. Add a PostgreSQL database to your Railway project")
+        print("2. The DATABASE_URL will be automatically set")
+        print("\nCurrent DATABASE_URL:", DATABASE_URL[:20] + "..." if DATABASE_URL else "NOT SET")
+        print("="*60 + "\n")
+        raise ValueError("DATABASE_URL is required. Cannot start without PostgreSQL database.")
+    else:
+        print("✅ PostgreSQL database connected - user data will persist")
+    
     # ===== REQUIRED SECRETS =====
     
     # Check BOT_TOKEN
