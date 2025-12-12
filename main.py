@@ -2224,17 +2224,27 @@ async def handle_bot_membership_change(update: types.ChatMemberUpdated):
         )
         print(f"[Bot] Added to {chat.type}: {chat.title} ({chat.id})")
         
-        # Send welcome message if we have permission
+        # Send welcome message with Play button
         try:
+            bot_info = await bot.get_me()
+            play_button = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="🎲 Play Now!", 
+                    url=f"https://t.me/{bot_info.username}?start=play"
+                )]
+            ])
             await bot.send_message(
                 chat.id,
                 f"👋 <b>Hello!</b>\n\n"
-                f"CryptoUnc Lotto Bot is now active in this {chat.type}!\n\n"
-                f"I'll post lottery announcements here:\n"
+                f"CryptoUnc Lotto Bot is now active here!\n\n"
+                f"🎫 Buy tickets for <b>{TICKET_PRICE} SOL</b>\n"
+                f"🎲 Pick 5 numbers (1-40)\n"
+                f"🏆 Match all 5 to win the ENTIRE jackpot!\n\n"
+                f"I'll post announcements here:\n"
                 f"• New ticket purchases\n"
                 f"• Round results & winners\n"
-                f"• Jackpot updates\n\n"
-                f"🎰 Start playing: @{(await bot.get_me()).username}",
+                f"• Jackpot updates",
+                reply_markup=play_button,
                 parse_mode="HTML"
             )
         except Exception as e:
@@ -3455,8 +3465,19 @@ async def inline_handler(query: types.CallbackQuery):
         )
 
     elif data == "check_active_rounds":
-        await query.answer()
-        rounds = get_active_rounds()
+        await query.answer("Loading...")
+        
+        # Fast query - just get basic round info without heavy joins
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("""
+            SELECT round_id, round_number, status, start_time
+            FROM scheduled_rounds 
+            WHERE status IN ('open', 'pending') 
+            ORDER BY scheduled_time ASC LIMIT 3
+        """)
+        rounds = c.fetchall()
+        conn.close()
         
         if not rounds:
             await bot.send_message(uid,
@@ -3468,52 +3489,34 @@ async def inline_handler(query: types.CallbackQuery):
             )
             return
         
-        for round_id, round_number, scheduled_time, start_time, end_time, status in rounds:
-            stakes = get_round_stakes_with_counts(round_id)
-            
-            text = f"🎰 <b>Round {round_id}</b>\n"
-            text += f"Status: {'🟢 OPEN' if status == 'open' else '🟡 Pending'}\n\n"
+        # Build quick summary without heavy database joins
+        text = "🎰 <b>Active Rounds</b>\n\n"
+        
+        for round_id, round_number, status, start_time in rounds:
+            text += f"<b>Round {round_id}</b> - {'🟢 OPEN' if status == 'open' else '🟡 Pending'}\n"
             
             if status == 'open' and start_time:
-                start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
-                if start_dt.tzinfo is None:
-                    start_dt = start_dt.replace(tzinfo=pytz.UTC)
-                now = datetime.now(pytz.UTC)
-                elapsed = (now - start_dt).total_seconds() / 60
-                remaining = max(0, ROUND_DURATION_MINUTES - elapsed)
-                text += f"⏰ Time Remaining: {int(remaining)} minutes\n\n"
-            
-            text += "💰 <b>Stake Options:</b>\n"
-            
-            stake_buttons = []
-            for stake_id, stake_amount, stake_status, player_count in stakes:
-                needed = max(0, MIN_PLAYERS_PER_STAKE - player_count)
-                status_icon = "✅" if player_count >= MIN_PLAYERS_PER_STAKE else "🎯"
-                
-                text += f"{status_icon} {stake_amount} SOL: {player_count}/{MIN_PLAYERS_PER_STAKE} players"
-                if needed > 0:
-                    text += f" ({needed} needed)"
-                text += "\n"
-                
-                if status == 'open':
-                    stake_buttons.append([InlineKeyboardButton(
-                        text=f"{status_icon} Join {stake_amount} SOL ({player_count}/{MIN_PLAYERS_PER_STAKE})",
-                        callback_data=f"join_stake_{stake_id}"
-                    )])
-            
-            if status == 'open':
-                stake_buttons.append([InlineKeyboardButton(
-                    text="🔄 Refresh",
-                    callback_data=f"check_round_{round_id}"
-                )])
-            
-            stake_buttons.append([InlineKeyboardButton(
-                text="🔙 Back to Menu",
-                callback_data="back_to_main"
-            )])
-            
-            keyboard = InlineKeyboardMarkup(inline_keyboard=stake_buttons)
-            await bot.send_message(uid, text, reply_markup=keyboard, parse_mode="HTML")
+                try:
+                    start_dt = datetime.fromisoformat(str(start_time).replace('Z', '+00:00'))
+                    if start_dt.tzinfo is None:
+                        start_dt = start_dt.replace(tzinfo=pytz.UTC)
+                    now = datetime.now(pytz.UTC)
+                    elapsed = (now - start_dt).total_seconds() / 60
+                    remaining = max(0, ROUND_DURATION_MINUTES - elapsed)
+                    text += f"⏰ {int(remaining)} min remaining\n"
+                except:
+                    pass
+            text += "\n"
+        
+        text += f"🎫 Ticket: {TICKET_PRICE} SOL\n"
+        text += "Pick 5 numbers (1-40) to win!\n"
+        
+        keyboard = create_keyboard_with_nav([
+            [InlineKeyboardButton(text=f"🎫 Buy Ticket ({TICKET_PRICE} SOL)", callback_data="buy_ticket")],
+            [InlineKeyboardButton(text="🔄 Refresh", callback_data="check_active_rounds")]
+        ])
+        
+        await bot.send_message(uid, text, reply_markup=keyboard, parse_mode="HTML")
     
     elif data.startswith("check_round_"):
         await query.answer("Refreshing...")
