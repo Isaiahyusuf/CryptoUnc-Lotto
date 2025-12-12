@@ -2606,13 +2606,26 @@ async def inline_handler(query: types.CallbackQuery):
             del user_states[uid]
             return
         
+        # FIRST: Check/create round BEFORE taking payment
+        # This prevents money being taken when no round is available
+        round_stake_id, round_id = get_or_create_active_round_stake(stake_amount)
+        
+        if not round_stake_id:
+            await bot.send_message(uid, 
+                f"❌ <b>No active lottery round!</b>\n\n"
+                f"No payment was made. Please try again later.",
+                parse_mode="HTML"
+            )
+            del user_states[uid]
+            return
+        
         # Update message to show processing
         try:
             await query.message.edit_text("⏳ <b>Processing payment...</b>\n\nPlease wait...", parse_mode="HTML")
         except:
             pass
         
-        # NOW process the payment
+        # NOW process the payment (round is confirmed available)
         team_fee = stake_amount * TEAM_FEE_PERCENTAGE
         owner_amount = stake_amount * WINNER_SHARE_PERCENTAGE
         
@@ -2620,9 +2633,11 @@ async def inline_handler(query: types.CallbackQuery):
         result = await send_sol(wallet, OWNER_WALLET, owner_amount, private_key)
         
         if not result["success"]:
+            error_msg = result.get('error', 'Unknown error')
+            print(f"[Ticket] Payment failed for user {uid}: {error_msg}")
             await bot.send_message(uid,
                 f"❌ <b>Transaction failed!</b>\n\n"
-                f"Error: {result.get('error', 'Unknown error')}\n\n"
+                f"Error: {error_msg}\n\n"
                 f"Your SOL was NOT deducted. Please try again.",
                 parse_mode="HTML"
             )
@@ -2630,12 +2645,13 @@ async def inline_handler(query: types.CallbackQuery):
             return
         
         tx_signature = result["signature"]
+        print(f"[Ticket] Payment successful for user {uid}: {tx_signature[:20]}...")
         
-        # Send 20% to team wallet
+        # Send 20% to team wallet (non-critical - log but continue if fails)
         if TEAM_WALLET and TEAM_WALLET != OWNER_WALLET:
             team_result = await send_sol(wallet, TEAM_WALLET, team_fee, private_key)
             if not team_result["success"]:
-                print(f"Warning: Team wallet payment failed: {team_result.get('error')}")
+                print(f"[Ticket] Warning: Team wallet payment failed: {team_result.get('error')}")
         
         # Log lottery stake transaction
         log_wallet_transaction(
@@ -2648,19 +2664,14 @@ async def inline_handler(query: types.CallbackQuery):
             status="completed"
         )
         
-        # Get round and register ticket
-        round_stake_id, round_id = get_or_create_active_round_stake(stake_amount)
-        
-        if not round_stake_id:
-            await bot.send_message(uid, 
-                f"❌ No active round, but payment was processed.\n"
-                f"Contact support with TX: <code>{tx_signature}</code>",
-                parse_mode="HTML"
-            )
-            del user_states[uid]
-            return
-        
-        add_result = add_round_participant(round_stake_id, uid, sorted(selected), tx_signature)
+        # Register ticket with retry logic
+        add_result = None
+        for attempt in range(3):
+            add_result = add_round_participant(round_stake_id, uid, sorted(selected), tx_signature)
+            if add_result["success"]:
+                break
+            print(f"[Ticket] Registration attempt {attempt+1} failed: {add_result.get('error')}")
+            await asyncio.sleep(0.5)  # Brief pause before retry
         
         del user_states[uid]
         
