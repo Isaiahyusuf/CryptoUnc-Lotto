@@ -1363,15 +1363,15 @@ def get_active_rounds():
 def get_round_stakes_with_counts(round_id: int):
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute("""
+    c.execute(q("""
         SELECT rs.id, rs.stake_amount, rs.status,
                COUNT(rp.id) as player_count
         FROM round_stakes rs
         LEFT JOIN round_participants rp ON rs.id = rp.round_stake_id AND rp.refunded = 0
         WHERE rs.round_id = ?
-        GROUP BY rs.id
+        GROUP BY rs.id, rs.stake_amount, rs.status
         ORDER BY rs.stake_amount ASC
-    """, (round_id,))
+    """), (round_id,))
     rows = c.fetchall()
     conn.close()
     return rows
@@ -1386,12 +1386,12 @@ def add_round_participant(round_stake_id: int, user_id: int, numbers: list, tx_s
     conn = get_db_conn()
     c = conn.cursor()
     
-    c.execute("""
+    c.execute(q("""
         SELECT rs.status, rs.round_id, sr.status as round_status, sr.end_time, rs.stake_amount
         FROM round_stakes rs
         JOIN scheduled_rounds sr ON rs.round_id = sr.round_id
         WHERE rs.id = ?
-    """, (round_stake_id,))
+    """), (round_stake_id,))
     stake_info = c.fetchone()
     
     if not stake_info:
@@ -1426,21 +1426,25 @@ def add_round_participant(round_stake_id: int, user_id: int, numbers: list, tx_s
             """, (round_stake_id, user_id, numbers_to_str(numbers), tx_signature))
             participant_id = c.lastrowid
         
-        c.execute("""
-            SELECT first_stake_time, COUNT(rp.id) as count
+        # Get first stake time and count - PostgreSQL compatible
+        c.execute(q("""
+            SELECT rs.first_stake_time, COUNT(rp.id) as count
             FROM round_stakes rs
             LEFT JOIN round_participants rp ON rs.id = rp.round_stake_id AND rp.refunded = 0
             WHERE rs.id = ?
-        """, (round_stake_id,))
-        first_time, count = c.fetchone()
+            GROUP BY rs.id, rs.first_stake_time
+        """), (round_stake_id,))
+        row = c.fetchone()
+        first_time = row[0] if row else None
+        count = row[1] if row else 0
         
         if not first_time and count == 1:
             now_utc = datetime.now(pytz.UTC).isoformat()
-            c.execute("""
+            c.execute(q("""
                 UPDATE round_stakes
                 SET first_stake_time = ?
                 WHERE id = ?
-            """, (now_utc, round_stake_id))
+            """), (now_utc, round_stake_id))
         
         conn.commit()
         conn.close()
