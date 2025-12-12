@@ -197,3 +197,13 @@ Preferred communication style: Simple, everyday language.
 - **Double Balance Check:** Balance checked before number picker AND before payment
 - **No More Lost Money:** If payment fails, users are told "Your SOL was NOT deducted"
 - **Clean Cancel:** Cancel button now correctly says "No payment was made"
+- **Round Check Before Payment:** Bot now verifies active round exists BEFORE taking payment
+- **Ticket Registration Retry:** 3 automatic retries if database insert fails after payment
+
+### Automatic Announcement Groups (December 12, 2025)
+- **Auto-Registration:** Bot automatically registers any group/channel it's added to
+- **Welcome Message:** Sends greeting when added to a group/channel
+- **Database Tracking:** Groups stored in `announcement_groups` table
+- **Broadcast to All:** Announcements now go to all registered groups/channels
+- **Auto-Removal:** When bot is removed from a group, it's automatically deactivated
+- **Backward Compatible:** Still supports ROUND_CHANNEL_ID and ANNOUNCEMENTS_GROUP_ID env vars

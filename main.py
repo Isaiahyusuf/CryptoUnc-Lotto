@@ -83,7 +83,7 @@ MAX_WALLETS_PER_USER,
 log_wallet_transaction
 )
 
-from db import get_db_conn, init_all_tables, q, USE_POSTGRES, DB_PATH, save_security_question, get_security_question, verify_security_answer, has_security_question
+from db import get_db_conn, init_all_tables, q, USE_POSTGRES, DB_PATH, save_security_question, get_security_question, verify_security_answer, has_security_question, add_announcement_group, remove_announcement_group, get_announcement_groups
 
 from wallet_buttons import router as wallet_router
 
@@ -2198,6 +2198,54 @@ async def mark_refund_completed(participant_id: int, tx_signature: str):
 # ---------------------------
 # Bot Handlers
 # ---------------------------
+
+@dp.my_chat_member()
+async def handle_bot_membership_change(update: types.ChatMemberUpdated):
+    """
+    Handle when the bot is added to or removed from a group/channel.
+    Automatically registers groups/channels for announcements.
+    """
+    chat = update.chat
+    new_status = update.new_chat_member.status
+    old_status = update.old_chat_member.status
+    added_by = update.from_user.id if update.from_user else None
+    
+    # Only handle groups and channels
+    if chat.type not in ["group", "supergroup", "channel"]:
+        return
+    
+    # Bot was added to a group/channel (now admin or member)
+    if new_status in ["administrator", "member"] and old_status in ["left", "kicked", None]:
+        add_announcement_group(
+            chat_id=chat.id,
+            chat_type=chat.type,
+            chat_title=chat.title,
+            added_by=added_by
+        )
+        print(f"[Bot] Added to {chat.type}: {chat.title} ({chat.id})")
+        
+        # Send welcome message if we have permission
+        try:
+            await bot.send_message(
+                chat.id,
+                f"👋 <b>Hello!</b>\n\n"
+                f"CryptoUnc Lotto Bot is now active in this {chat.type}!\n\n"
+                f"I'll post lottery announcements here:\n"
+                f"• New ticket purchases\n"
+                f"• Round results & winners\n"
+                f"• Jackpot updates\n\n"
+                f"🎰 Start playing: @{(await bot.get_me()).username}",
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            print(f"[Bot] Could not send welcome message: {e}")
+    
+    # Bot was removed from a group/channel
+    elif new_status in ["left", "kicked"] and old_status in ["administrator", "member"]:
+        remove_announcement_group(chat.id)
+        print(f"[Bot] Removed from {chat.type}: {chat.title} ({chat.id})")
+
+
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     save_user(message.from_user.id, message.from_user.username or "")
@@ -5111,7 +5159,8 @@ async def pay_team_fee(result: dict):
 
 async def send_to_announcements(message_text: str, keyboard=None):
     """
-    Helper function to send announcements to both channel and group.
+    Helper function to send announcements to all registered channels and groups.
+    Posts to: main channel, legacy ANNOUNCEMENTS_GROUP, and all groups/channels from database.
     All announcements include a bot redirect link for forwarded messages.
     """
     bot_info = await bot.get_me()
@@ -5120,16 +5169,31 @@ async def send_to_announcements(message_text: str, keyboard=None):
     redirect_text = f"\n\n🤖 <a href='https://t.me/{bot_username}'>Start playing now!</a>"
     full_message = message_text + redirect_text
     
-    targets = [ROUND_CHANNEL]
-    if ANNOUNCEMENTS_GROUP:
-        targets.append(ANNOUNCEMENTS_GROUP)
+    # Build list of targets: main channel + legacy group + all registered groups
+    targets = set()
     
+    # Main channel (always included if set)
+    if ROUND_CHANNEL:
+        targets.add(str(ROUND_CHANNEL))
+    
+    # Legacy ANNOUNCEMENTS_GROUP env var (backward compatibility)
+    if ANNOUNCEMENTS_GROUP:
+        targets.add(str(ANNOUNCEMENTS_GROUP))
+    
+    # All groups/channels registered in database
+    db_groups = get_announcement_groups()
+    for group in db_groups:
+        targets.add(str(group["chat_id"]))
+    
+    # Send to all targets
     for target in targets:
         try:
+            # Convert back to int if it's a numeric string
+            target_id = int(target) if target.lstrip('-').isdigit() else target
             if keyboard:
-                await bot.send_message(target, full_message, reply_markup=keyboard, parse_mode="HTML", disable_web_page_preview=True)
+                await bot.send_message(target_id, full_message, reply_markup=keyboard, parse_mode="HTML", disable_web_page_preview=True)
             else:
-                await bot.send_message(target, full_message, parse_mode="HTML", disable_web_page_preview=True)
+                await bot.send_message(target_id, full_message, parse_mode="HTML", disable_web_page_preview=True)
         except Exception as e:
             print(f"❌ Failed to send announcement to {target}: {e}")
 

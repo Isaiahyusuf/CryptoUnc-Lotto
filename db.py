@@ -647,6 +647,17 @@ def init_all_tables():
             )
         """)
         
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS announcement_groups (
+                chat_id BIGINT PRIMARY KEY,
+                chat_type TEXT NOT NULL,
+                chat_title TEXT,
+                added_by INTEGER,
+                is_active INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
         c.execute("INSERT OR IGNORE INTO meta (key, value) VALUES ('current_round', '1')")
         
         c.execute("CREATE INDEX IF NOT EXISTS idx_wallets_user ON wallets(user_id)")
@@ -778,6 +789,74 @@ def has_security_question(user_id: int) -> bool:
         conn = get_db_conn()
         c = conn.cursor()
         c.execute(q("SELECT 1 FROM security_questions WHERE user_id = ?"), (int(user_id),))
+        result = c.fetchone() is not None
+        conn.close()
+        return result
+    except:
+        return False
+
+
+# ===== Announcement Groups Functions =====
+
+def add_announcement_group(chat_id: int, chat_type: str, chat_title: str = None, added_by: int = None) -> bool:
+    """Add a group/channel to receive announcements"""
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        if USE_POSTGRES:
+            c.execute("""
+                INSERT INTO announcement_groups (chat_id, chat_type, chat_title, added_by, is_active)
+                VALUES (%s, %s, %s, %s, 1)
+                ON CONFLICT (chat_id) DO UPDATE SET 
+                    chat_title = EXCLUDED.chat_title,
+                    is_active = 1
+            """, (chat_id, chat_type, chat_title, added_by))
+        else:
+            c.execute("""
+                INSERT OR REPLACE INTO announcement_groups (chat_id, chat_type, chat_title, added_by, is_active)
+                VALUES (?, ?, ?, ?, 1)
+            """, (chat_id, chat_type, chat_title, added_by))
+        conn.commit()
+        conn.close()
+        print(f"[DB] Added announcement group: {chat_id} ({chat_title})")
+        return True
+    except Exception as e:
+        print(f"[DB] Error adding announcement group: {e}")
+        return False
+
+def remove_announcement_group(chat_id: int) -> bool:
+    """Deactivate a group/channel from announcements (soft delete)"""
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute(q("UPDATE announcement_groups SET is_active = 0 WHERE chat_id = ?"), (chat_id,))
+        conn.commit()
+        conn.close()
+        print(f"[DB] Removed announcement group: {chat_id}")
+        return True
+    except Exception as e:
+        print(f"[DB] Error removing announcement group: {e}")
+        return False
+
+def get_announcement_groups() -> list:
+    """Get all active announcement groups/channels"""
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute(q("SELECT chat_id, chat_type, chat_title FROM announcement_groups WHERE is_active = 1"))
+        rows = c.fetchall()
+        conn.close()
+        return [{"chat_id": row[0], "chat_type": row[1], "chat_title": row[2]} for row in rows]
+    except Exception as e:
+        print(f"[DB] Error getting announcement groups: {e}")
+        return []
+
+def is_announcement_group(chat_id: int) -> bool:
+    """Check if a chat is an active announcement group"""
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute(q("SELECT 1 FROM announcement_groups WHERE chat_id = ? AND is_active = 1"), (chat_id,))
         result = c.fetchone() is not None
         conn.close()
         return result
