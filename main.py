@@ -2624,17 +2624,23 @@ async def inline_handler(query: types.CallbackQuery):
         
         # NO PAYMENT YET - Just show number picker
         # Payment will be processed AFTER user confirms their numbers
-        picker_msg = await show_number_picker(uid, [])
         
-        # Store wallet info for payment after number confirmation
+        # Store wallet info BEFORE showing picker (so clicks don't fail)
         user_states[uid] = {
             "action": "picking_numbers",
             "selected_numbers": [],
             "stake_amount": float(TICKET_PRICE),
             "wallet": wallet,
             "private_key": private_key,
-            "picker_message_id": picker_msg.message_id if picker_msg else None
+            "picker_message_id": None
         }
+        
+        # Now show the picker
+        picker_msg = await show_number_picker(uid, [])
+        
+        # Update with message ID
+        if picker_msg and uid in user_states:
+            user_states[uid]["picker_message_id"] = picker_msg.message_id
 
     elif data.startswith("pick_num_"):
         await query.answer()
