@@ -5159,8 +5159,7 @@ async def pay_team_fee(result: dict):
 
 async def send_to_announcements(message_text: str, keyboard=None):
     """
-    Helper function to send announcements to all registered channels and groups.
-    Posts to: main channel, legacy ANNOUNCEMENTS_GROUP, and all groups/channels from database.
+    Helper function to send announcements to all groups/channels the bot is added to.
     All announcements include a bot redirect link for forwarded messages.
     """
     bot_info = await bot.get_me()
@@ -5169,33 +5168,23 @@ async def send_to_announcements(message_text: str, keyboard=None):
     redirect_text = f"\n\n🤖 <a href='https://t.me/{bot_username}'>Start playing now!</a>"
     full_message = message_text + redirect_text
     
-    # Build list of targets: main channel + legacy group + all registered groups
-    targets = set()
-    
-    # Main channel (always included if set)
-    if ROUND_CHANNEL:
-        targets.add(str(ROUND_CHANNEL))
-    
-    # Legacy ANNOUNCEMENTS_GROUP env var (backward compatibility)
-    if ANNOUNCEMENTS_GROUP:
-        targets.add(str(ANNOUNCEMENTS_GROUP))
-    
-    # All groups/channels registered in database
+    # Get all registered groups/channels from database
     db_groups = get_announcement_groups()
-    for group in db_groups:
-        targets.add(str(group["chat_id"]))
     
-    # Send to all targets
-    for target in targets:
+    if not db_groups:
+        print("⚠️ No announcement groups registered. Add the bot to a group/channel to enable announcements.")
+        return
+    
+    # Send to all registered groups/channels
+    for group in db_groups:
         try:
-            # Convert back to int if it's a numeric string
-            target_id = int(target) if target.lstrip('-').isdigit() else target
+            chat_id = group["chat_id"]
             if keyboard:
-                await bot.send_message(target_id, full_message, reply_markup=keyboard, parse_mode="HTML", disable_web_page_preview=True)
+                await bot.send_message(chat_id, full_message, reply_markup=keyboard, parse_mode="HTML", disable_web_page_preview=True)
             else:
-                await bot.send_message(target_id, full_message, parse_mode="HTML", disable_web_page_preview=True)
+                await bot.send_message(chat_id, full_message, parse_mode="HTML", disable_web_page_preview=True)
         except Exception as e:
-            print(f"❌ Failed to send announcement to {target}: {e}")
+            print(f"❌ Failed to send announcement to {group.get('chat_title', chat_id)}: {e}")
 
 
 async def announce_new_ticket(user_id: int, ticket_id: int, stake_amount, numbers: list, round_id: int, ticket_count: int):
