@@ -2395,6 +2395,32 @@ def get_current_open_round() -> Optional[int]:
     return row[0] if row else None
 
 
+async def show_security_question_picker(user_id: int):
+    """Show the security question selection menu"""
+    questions = [
+        "What is your mother's maiden name?",
+        "What was the name of your first pet?",
+        "What city were you born in?",
+        "What is your favorite movie?",
+        "What was your childhood nickname?"
+    ]
+    
+    buttons = []
+    for i, q_text in enumerate(questions):
+        buttons.append([InlineKeyboardButton(text=q_text, callback_data=f"sq_{i}")])
+    buttons.append([InlineKeyboardButton(text="✏️ Custom Question", callback_data="sq_custom")])
+    
+    keyboard = create_keyboard_with_nav(buttons)
+    await bot.send_message(
+        user_id,
+        "❓ <b>Set Security Question</b>\n\n"
+        "Choose a security question or create your own.\n"
+        "You'll use this to reset your PIN if you forget it.",
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+
 async def start_private_play(user_id: int):
     """Start lottery play session with new menu options"""
     wallet = get_active_wallet(user_id)
@@ -3217,30 +3243,24 @@ async def inline_handler(query: types.CallbackQuery):
         keyboard = create_keyboard_with_nav(buttons)
         await query.message.answer(text, reply_markup=keyboard, parse_mode="HTML")
 
-    elif data == "set_security_question" or data == "change_security_question":
+    elif data == "set_security_question":
         await query.answer()
-        
-        questions = [
-            "What is your mother's maiden name?",
-            "What was the name of your first pet?",
-            "What city were you born in?",
-            "What is your favorite movie?",
-            "What was your childhood nickname?"
-        ]
-        
-        buttons = []
-        for i, q_text in enumerate(questions):
-            buttons.append([InlineKeyboardButton(text=q_text, callback_data=f"sq_{i}")])
-        buttons.append([InlineKeyboardButton(text="✏️ Custom Question", callback_data="sq_custom")])
-        
-        keyboard = create_keyboard_with_nav(buttons)
-        await query.message.answer(
-            "❓ <b>Set Security Question</b>\n\n"
-            "Choose a security question or create your own.\n"
-            "You'll use this to reset your PIN if you forget it.",
-            reply_markup=keyboard,
-            parse_mode="HTML"
-        )
+        await show_security_question_picker(uid)
+    
+    elif data == "change_security_question":
+        await query.answer()
+        # Must verify current security answer before allowing change
+        sq = get_security_question(uid)
+        if sq['has_question']:
+            user_states[uid] = {"action": "verify_security_for_change"}
+            await query.message.answer(
+                f"🔐 <b>Verify Your Identity</b>\n\n"
+                f"To change your security question, please answer your current one:\n\n"
+                f"❓ <b>{sq['question']}</b>",
+                parse_mode="HTML"
+            )
+        else:
+            await show_security_question_picker(uid)
 
     elif data.startswith("sq_"):
         await query.answer()
@@ -4107,6 +4127,27 @@ async def generic_message_handler(message: types.Message):
                     "Please enter a new 4-digit PIN:",
                     parse_mode="HTML"
                 )
+            else:
+                del user_states[uid]
+                await bot.send_message(uid,
+                    "❌ <b>Incorrect Answer</b>\n\n"
+                    "The answer doesn't match. You can try again from Settings.",
+                    reply_markup=create_keyboard_with_nav([]),
+                    parse_mode="HTML"
+                )
+            return
+        
+        elif action == "verify_security_for_change":
+            answer = text.strip()
+            
+            if verify_security_answer(uid, answer):
+                del user_states[uid]
+                await bot.send_message(uid,
+                    "✅ <b>Answer Correct!</b>\n\n"
+                    "You can now set a new security question.",
+                    parse_mode="HTML"
+                )
+                await show_security_question_picker(uid)
             else:
                 del user_states[uid]
                 await bot.send_message(uid,

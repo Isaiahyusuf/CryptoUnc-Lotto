@@ -798,7 +798,7 @@ def has_security_question(user_id: int) -> bool:
 
 # ===== Announcement Groups Functions =====
 
-def add_announcement_group(chat_id: int, chat_type: str, chat_title: str = None, added_by: int = None) -> bool:
+def add_announcement_group(chat_id: int, chat_type: str, chat_title: str = None, added_by: int = None) -> bool:  # type: ignore
     """Add a group/channel to receive announcements"""
     try:
         conn = get_db_conn()

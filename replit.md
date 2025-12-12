@@ -206,4 +206,9 @@ Preferred communication style: Simple, everyday language.
 - **Database Tracking:** Groups stored in `announcement_groups` table
 - **Broadcast to All:** Announcements now go to all registered groups/channels
 - **Auto-Removal:** When bot is removed from a group, it's automatically deactivated
-- **Backward Compatible:** Still supports ROUND_CHANNEL_ID and ANNOUNCEMENTS_GROUP_ID env vars
+- **No Env Vars Needed:** Bot posts to ANY group/channel it's added to (no ROUND_CHANNEL_ID needed)
+
+### Security Question Protection (December 12, 2025)
+- **Verification Required:** To change security question, must answer current question first
+- **Prevents Unauthorized Changes:** Protects account recovery from being hijacked
+- **Same Flow for PIN Reset:** Existing flow already required answering security question
