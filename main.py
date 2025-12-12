@@ -796,9 +796,19 @@ def str_to_numbers(s):
 def save_user(user_id: int, username: str):
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute(q("INSERT OR IGNORE INTO users(user_id, username) VALUES (?, ?)"), (user_id, username))
-    # Also initialize user stats
-    c.execute(q("INSERT OR IGNORE INTO user_stats(user_id) VALUES (?)"), (user_id,))
+    # Always update username if it changed (users can change their Telegram username)
+    if USE_POSTGRES:
+        c.execute("""
+            INSERT INTO users(user_id, username) VALUES (%s, %s)
+            ON CONFLICT (user_id) DO UPDATE SET username = EXCLUDED.username
+        """, (user_id, username))
+        c.execute("""
+            INSERT INTO user_stats(user_id) VALUES (%s)
+            ON CONFLICT (user_id) DO NOTHING
+        """, (user_id,))
+    else:
+        c.execute("INSERT OR REPLACE INTO users(user_id, username) VALUES (?, ?)", (user_id, username))
+        c.execute("INSERT OR IGNORE INTO user_stats(user_id) VALUES (?)", (user_id,))
     conn.commit()
     conn.close()
 
@@ -3270,17 +3280,29 @@ async def inline_handler(query: types.CallbackQuery):
     elif data == "change_security_question":
         await query.answer()
         # Must verify current security answer before allowing change
-        sq = get_security_question(uid)
-        if sq['has_question']:
-            user_states[uid] = {"action": "verify_security_for_change"}
-            await query.message.answer(
-                f"🔐 <b>Verify Your Identity</b>\n\n"
-                f"To change your security question, please answer your current one:\n\n"
-                f"❓ <b>{sq['question']}</b>",
-                parse_mode="HTML"
-            )
-        else:
-            await show_security_question_picker(uid)
+        try:
+            sq = get_security_question(uid)
+            print(f"[SecurityQ] Change request from {uid}, has_question: {sq.get('has_question')}, question: {sq.get('question', 'N/A')[:30] if sq.get('question') else 'None'}")
+            
+            if sq.get('has_question'):
+                # Set state BEFORE sending message
+                user_states[uid] = {"action": "verify_security_for_change"}
+                print(f"[SecurityQ] Set state for {uid}: verify_security_for_change")
+                
+                await query.message.answer(
+                    f"🔐 <b>Verify Your Identity</b>\n\n"
+                    f"To change your security question, please answer your current one:\n\n"
+                    f"❓ <b>{sq['question']}</b>",
+                    parse_mode="HTML"
+                )
+            else:
+                print(f"[SecurityQ] No question found for {uid}, showing picker directly")
+                await show_security_question_picker(uid)
+        except Exception as e:
+            print(f"[SecurityQ] Error in change_security_question: {e}")
+            import traceback
+            traceback.print_exc()
+            await query.message.answer("❌ Error loading security question. Please try again.")
 
     elif data.startswith("sq_"):
         await query.answer()
