@@ -217,7 +217,6 @@ def migrate_remove_unique_constraint():
         try:
             conn = get_db_conn()
             c = conn.cursor()
-            # Check if the constraint exists
             c.execute("""
                 SELECT constraint_name FROM information_schema.table_constraints 
                 WHERE table_name = 'round_participants' 
@@ -226,6 +225,8 @@ def migrate_remove_unique_constraint():
             constraints = c.fetchall()
             for row in constraints:
                 constraint_name = row[0]
+                if 'tx_signature' in constraint_name or 'ticket_id' in constraint_name:
+                    continue
                 try:
                     c.execute(f"ALTER TABLE round_participants DROP CONSTRAINT {constraint_name}")
                     print(f"[Migration] Dropped UNIQUE constraint: {constraint_name}")
@@ -235,6 +236,41 @@ def migrate_remove_unique_constraint():
             conn.close()
         except Exception as e:
             print(f"[Migration] Error removing UNIQUE constraint: {e}")
+    else:
+        try:
+            conn = get_db_conn()
+            c = conn.cursor()
+            c.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='round_participants'")
+            result = c.fetchone()
+            if result and 'UNIQUE(round_stake_id, user_id)' in str(result[0]):
+                print("[Migration] Recreating round_participants table to remove UNIQUE constraint...")
+                c.execute("""
+                    CREATE TABLE IF NOT EXISTS round_participants_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        ticket_id TEXT,
+                        round_stake_id INTEGER NOT NULL,
+                        user_id INTEGER NOT NULL,
+                        numbers TEXT NOT NULL,
+                        tx_signature TEXT NOT NULL,
+                        refunded INTEGER DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                c.execute("""
+                    INSERT INTO round_participants_new (id, ticket_id, round_stake_id, user_id, numbers, tx_signature, refunded, created_at)
+                    SELECT id, ticket_id, round_stake_id, user_id, numbers, tx_signature, refunded, created_at
+                    FROM round_participants
+                """)
+                c.execute("DROP TABLE round_participants")
+                c.execute("ALTER TABLE round_participants_new RENAME TO round_participants")
+                c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_participants_tx_sig ON round_participants(tx_signature)")
+                c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_participants_ticket_id ON round_participants(ticket_id)")
+                c.execute("CREATE INDEX IF NOT EXISTS idx_participants_stake ON round_participants(round_stake_id)")
+                print("[Migration] Successfully recreated round_participants table without UNIQUE constraint")
+                conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"[Migration] Error removing UNIQUE constraint for SQLite: {e}")
 
 
 def migrate_add_ticket_id_column():

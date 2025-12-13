@@ -212,3 +212,9 @@ Preferred communication style: Simple, everyday language.
 - **Verification Required:** To change security question, must answer current question first
 - **Prevents Unauthorized Changes:** Protects account recovery from being hijacked
 - **Same Flow for PIN Reset:** Existing flow already required answering security question
+
+### Multiple Tickets Support Fix (December 13, 2025)
+- **SQLite Migration Fixed:** UNIQUE constraint on (round_stake_id, user_id) is now properly removed for SQLite databases
+- **Table Recreation:** For SQLite, the round_participants table is recreated without the constraint
+- **PostgreSQL Support:** Existing PostgreSQL constraint removal enhanced to skip tx_signature and ticket_id constraints
+- **Users Can Buy Multiple Tickets:** The "UNIQUE constraint failed" error is now fixed
