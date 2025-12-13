@@ -2775,12 +2775,13 @@ async def inline_handler(query: types.CallbackQuery):
         
         # Register ticket with retry logic
         add_result = None
+        selected_sorted = sorted(selected)
         for attempt in range(3):
-            add_result = add_round_participant(round_stake_id, uid, sorted(selected), tx_signature)
+            add_result = add_round_participant(round_stake_id, uid, selected_sorted, tx_signature)
             if add_result["success"]:
                 break
             print(f"[Ticket] Registration attempt {attempt+1} failed: {add_result.get('error')}")
-            await asyncio.sleep(0.5)  # Brief pause before retry
+            await asyncio.sleep(0.5)
         
         del user_states[uid]
         
@@ -2791,22 +2792,43 @@ async def inline_handler(query: types.CallbackQuery):
             await bot.send_message(uid,
                 f"✅ <b>Ticket Purchased Successfully!</b>\n\n"
                 f"🎫 Ticket #{participant_id}\n"
-                f"🎲 Your Numbers: <b>{', '.join(map(str, sorted(selected)))}</b>\n"
+                f"🎲 Your Numbers: <b>{', '.join(map(str, selected_sorted))}</b>\n"
                 f"💰 Stake: {stake_amount} SOL\n"
                 f"📝 TX: <code>{tx_signature[:20]}...</code>\n\n"
                 f"🍀 Good luck! Results will be announced when the round ends.",
                 parse_mode="HTML"
             )
             
-            await announce_new_ticket(uid, participant_id, stake_amount, sorted(selected), round_id, ticket_count)
+            await announce_new_ticket(uid, participant_id, stake_amount, selected_sorted, round_id, ticket_count)
         else:
-            await bot.send_message(uid,
-                f"❌ <b>Failed to register ticket</b>\n\n"
-                f"Error: {add_result.get('error')}\n\n"
-                f"Payment was processed. Contact support with TX:\n"
-                f"<code>{tx_signature}</code>",
-                parse_mode="HTML"
-            )
+            print(f"[CRITICAL] Ticket registration failed after payment for user {uid}. Attempting refund...")
+            refund_result = await send_sol(OWNER_WALLET, wallet, owner_amount, OWNER_WALLET_PRIVATE_KEY)
+            
+            if refund_result["success"]:
+                log_wallet_transaction(
+                    user_id=uid,
+                    wallet_address=wallet,
+                    tx_type="refund",
+                    amount=float(owner_amount),
+                    from_address=OWNER_WALLET,
+                    tx_signature=refund_result["signature"],
+                    status="completed"
+                )
+                await bot.send_message(uid,
+                    f"⚠️ <b>Ticket Registration Failed</b>\n\n"
+                    f"Your payment of {owner_amount} SOL has been automatically refunded.\n"
+                    f"Refund TX: <code>{refund_result['signature'][:20]}...</code>\n\n"
+                    f"Please try again.",
+                    parse_mode="HTML"
+                )
+            else:
+                await bot.send_message(uid,
+                    f"❌ <b>Failed to register ticket</b>\n\n"
+                    f"Error: {add_result.get('error')}\n\n"
+                    f"Payment was processed. Contact support for refund with TX:\n"
+                    f"<code>{tx_signature}</code>",
+                    parse_mode="HTML"
+                )
 
     elif data == "cancel_number_pick":
         await query.answer()
