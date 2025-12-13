@@ -13,7 +13,8 @@ import sqlite3
 from contextlib import contextmanager
 import threading
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+# Try DATABASE_URL first, then RAILWAY_DATABASE_URL as fallback
+DATABASE_URL = os.getenv("DATABASE_URL") or os.getenv("RAILWAY_DATABASE_URL")
 
 # Flag to track if constraint has been fixed
 _constraint_fixed = False
