@@ -5729,7 +5729,8 @@ async def main():
     # Start web server for keep-alive
     asyncio.create_task(start_web_server())
     
-    await dp.start_polling(bot)
+    # Include my_chat_member to receive events when bot is added/removed from groups
+    await dp.start_polling(bot, allowed_updates=["message", "callback_query", "my_chat_member", "chat_member"])
 
 
 if __name__ == "__main__":
