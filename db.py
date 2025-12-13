@@ -761,6 +761,18 @@ def init_all_tables():
                 )
             """)
         
+        if 'announcement_groups' not in existing_tables:
+            c.execute("""
+                CREATE TABLE announcement_groups (
+                    chat_id BIGINT PRIMARY KEY,
+                    chat_type TEXT NOT NULL,
+                    chat_title TEXT,
+                    added_by BIGINT,
+                    is_active INTEGER DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+        
         try:
             c.execute("INSERT INTO meta (key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING", ('current_round', '1'))
         except:

@@ -539,10 +539,19 @@ def cleanup_expired_number_selections():
 
 
 def create_number_picker_keyboard(selected_numbers: list) -> InlineKeyboardMarkup:
-    """Create a 8x5 grid of numbers 1-40 for selection"""
+    """Create a 8x5 grid of numbers 1-40 for selection with delete buttons for selected numbers"""
     buttons = []
-    row = []
     
+    # Show selected numbers with individual delete buttons at the top
+    if selected_numbers:
+        selected_row = []
+        for num in sorted(selected_numbers):
+            selected_row.append(InlineKeyboardButton(text=f"❌ {num}", callback_data=f"delete_num_{num}"))
+        buttons.append(selected_row)
+        # Add a separator label
+        buttons.append([InlineKeyboardButton(text=f"📝 Selected: {len(selected_numbers)}/5 — Tap number below to add", callback_data="noop")])
+    
+    row = []
     for num in range(1, 41):
         # Show selected numbers with checkmark
         if num in selected_numbers:
@@ -2816,12 +2825,14 @@ async def inline_handler(query: types.CallbackQuery):
                 ticket_id = add_result.get("ticket_id", "")
                 ticket_count = add_result.get("ticket_count", 1)
                 
+                network_fee = Decimal("0.00002")
                 await bot.send_message(uid,
                     f"✅ <b>Payment confirmed</b>\n"
                     f"🎟 <b>Ticket successfully added</b>\n\n"
                     f"🎫 Ticket #{participant_id}\n"
                     f"🎲 Your Numbers: <b>{', '.join(map(str, selected_sorted))}</b>\n"
                     f"💰 Stake: {stake_amount} SOL\n"
+                    f"⛽ Network Fee: ~{network_fee} SOL\n"
                     f"📝 TX: <code>{tx_signature[:20]}...</code>\n\n"
                     f"🎯 You can buy multiple tickets for this round.\n"
                     f"🍀 Good luck! Results will be announced when the round ends.",
@@ -3779,6 +3790,62 @@ async def inline_handler(query: types.CallbackQuery):
             )
         except:
             pass
+    
+    # Handle delete button for individual selected numbers (supports both state mechanisms)
+    elif data.startswith("delete_num_"):
+        num = int(data.split("_")[2])
+        
+        # Check which state mechanism is being used
+        if uid in user_selected_numbers:
+            # Using user_selected_numbers flow
+            selected = user_selected_numbers[uid]["numbers"]
+            stake_amount = user_selected_numbers[uid]["stake_amount"]
+            
+            if num in selected:
+                selected.remove(num)
+                await query.answer(f"Removed {num}")
+            else:
+                await query.answer("Number not in selection")
+                return
+            
+            user_selected_numbers[uid]["numbers"] = selected
+            
+        elif uid in user_states and user_states[uid].get("action") == "picking_numbers":
+            # Using user_states flow
+            selected = user_states[uid].get("selected_numbers", [])
+            stake_amount = user_states[uid].get("stake_amount", TICKET_PRICE)
+            
+            if num in selected:
+                selected.remove(num)
+                await query.answer(f"Removed {num}")
+            else:
+                await query.answer("Number not in selection")
+                return
+            
+            user_states[uid]["selected_numbers"] = selected
+        else:
+            await query.answer("Session expired. Please start again.")
+            return
+        
+        selected_str = ", ".join(map(str, sorted(selected))) if selected else "None"
+        keyboard = create_number_picker_keyboard(selected)
+        
+        try:
+            await query.message.edit_text(
+                f"🎯 <b>Pick Your Lucky Numbers!</b>\n\n"
+                f"Select <b>5 numbers</b> from 1-40\n"
+                f"Stake: <b>{stake_amount} SOL</b>\n\n"
+                f"Selected: <b>{selected_str}</b> ({len(selected)}/5)\n\n"
+                f"{'✅ Ready! Tap Confirm to proceed.' if len(selected) == 5 else 'Tap numbers to select them:'}",
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+        except:
+            pass
+    
+    # Handle noop button (info labels)
+    elif data == "noop":
+        await query.answer()
     
     elif data == "clear_numbers":
         if uid in user_selected_numbers:
