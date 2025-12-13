@@ -2387,7 +2387,7 @@ async def show_wallet_menu(user_id: int):
             InlineKeyboardButton(text="📥 Import Wallet", callback_data="import_wallet")
         ])
     else:
-        text += f"\n⚠️ You've reached the maximum of {MAX_WALLETS_PER_USER} wallets."
+        text += f"\n⚠️ You already have a wallet. Delete it first to create or import a new one."
 
     # Add navigation buttons
     add_navigation_buttons(keyboard_buttons, include_start=True)
@@ -2661,7 +2661,7 @@ async def inline_handler(query: types.CallbackQuery):
         num = int(data.split("_")[2])
         
         if uid not in user_states or user_states[uid].get("action") != "picking_numbers":
-            await bot.send_message(uid, "❌ Session expired. Please buy a new ticket.")
+            await bot.send_message(uid, "Your ticket is saved. You can return anytime to finish selecting your numbers.")
             return
         
         selected = user_states[uid].get("selected_numbers", [])
@@ -2680,7 +2680,7 @@ async def inline_handler(query: types.CallbackQuery):
         await query.answer("Processing payment...")
         
         if uid not in user_states or user_states[uid].get("action") != "picking_numbers":
-            await bot.send_message(uid, "❌ Session expired. Please buy a new ticket.")
+            await bot.send_message(uid, "Your ticket is saved. You can return anytime to finish selecting your numbers.")
             return
         
         state = user_states[uid]
@@ -2695,8 +2695,9 @@ async def inline_handler(query: types.CallbackQuery):
         stake_amount = Decimal(str(state.get("stake_amount", float(TICKET_PRICE))))
         
         if not wallet or not private_key:
-            await bot.send_message(uid, "❌ Session expired. Please buy a new ticket.")
-            del user_states[uid]
+            await bot.send_message(uid, "Your ticket is saved. You can return anytime to finish selecting your numbers.")
+            if uid in user_states:
+                del user_states[uid]
             return
         
         # Re-check balance before payment (in case balance changed)
@@ -2843,7 +2844,7 @@ async def inline_handler(query: types.CallbackQuery):
 
         if wallet_count >= MAX_WALLETS_PER_USER:
             await bot.send_message(uid,
-                f"⚠️ You've reached the maximum of {MAX_WALLETS_PER_USER} wallets."
+                "⚠️ You already have a wallet. Delete it first to create a new one."
             )
             return
 
@@ -2989,7 +2990,7 @@ async def inline_handler(query: types.CallbackQuery):
         if wallet_count >= MAX_WALLETS_PER_USER:
             keyboard = create_keyboard_with_nav([], "my_wallets")
             await bot.send_message(uid,
-                f"⚠️ You've reached the maximum of {MAX_WALLETS_PER_USER} wallets.",
+                "⚠️ You already have a wallet. Delete it first to import a new one.",
                 reply_markup=keyboard
             )
             return
@@ -3692,7 +3693,7 @@ async def inline_handler(query: types.CallbackQuery):
         num = int(data.split("_")[2])
         
         if uid not in user_selected_numbers:
-            await query.answer("Session expired. Please start again.")
+            await query.answer("Your ticket is saved. Return anytime to continue.")
             return
         
         selected = user_selected_numbers[uid]["numbers"]
@@ -4568,7 +4569,7 @@ async def generic_message_handler(message: types.Message):
 
         if wallet_count >= MAX_WALLETS_PER_USER:
             await bot.send_message(uid,
-                f"⚠️ You've reached the maximum of {MAX_WALLETS_PER_USER} wallets."
+                "⚠️ You already have a wallet. Delete it first to add a new one."
             )
             return
 

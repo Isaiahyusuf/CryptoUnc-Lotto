@@ -57,7 +57,7 @@ def _build_rpc_list() -> list:
 
 RPC_ENDPOINTS = _build_rpc_list()
 
-MAX_WALLETS_PER_USER = 3
+MAX_WALLETS_PER_USER = 1
 
 
 def get_rpc_list() -> list:
@@ -403,7 +403,7 @@ def import_wallet_from_private_key(user_id: int, private_key_input: str, wallet_
     
     # Check wallet limit
     if get_user_wallet_count(user_id) >= MAX_WALLETS_PER_USER:
-        return {"success": False, "error": f"Maximum {MAX_WALLETS_PER_USER} wallets allowed"}
+        return {"success": False, "error": "You already have a wallet. Delete it first to import a new one."}
     
     # Verify encryption is configured
     if not is_encryption_configured():
