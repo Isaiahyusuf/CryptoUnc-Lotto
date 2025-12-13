@@ -232,6 +232,23 @@ def migrate_remove_unique_constraint():
                     print(f"[Migration] Dropped UNIQUE constraint: {constraint_name}")
                 except Exception as e:
                     print(f"[Migration] Could not drop constraint {constraint_name}: {e}")
+            
+            c.execute("""
+                SELECT indexname FROM pg_indexes 
+                WHERE tablename = 'round_participants'
+            """)
+            indexes = c.fetchall()
+            for row in indexes:
+                index_name = row[0]
+                if 'tx_signature' in index_name or 'ticket_id' in index_name:
+                    continue
+                if 'round_stake_id' in index_name and 'user_id' in index_name:
+                    try:
+                        c.execute(f"DROP INDEX IF EXISTS {index_name}")
+                        print(f"[Migration] Dropped UNIQUE index: {index_name}")
+                    except Exception as e:
+                        print(f"[Migration] Could not drop index {index_name}: {e}")
+            
             conn.commit()
             conn.close()
         except Exception as e:
@@ -240,12 +257,33 @@ def migrate_remove_unique_constraint():
         try:
             conn = get_db_conn()
             c = conn.cursor()
+            
+            needs_migration = False
+            
             c.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='round_participants'")
             result = c.fetchone()
-            if result and 'UNIQUE(round_stake_id, user_id)' in str(result[0]):
+            if result:
+                table_sql = str(result[0])
+                if 'UNIQUE(round_stake_id, user_id)' in table_sql or 'UNIQUE (round_stake_id, user_id)' in table_sql:
+                    needs_migration = True
+            
+            c.execute("SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name='round_participants'")
+            indexes = c.fetchall()
+            for idx_row in indexes:
+                idx_name = idx_row[0]
+                idx_sql = str(idx_row[1]) if idx_row[1] else ''
+                if 'tx_signature' in idx_name or 'ticket_id' in idx_name:
+                    continue
+                if ('round_stake_id' in idx_sql and 'user_id' in idx_sql) or ('round_stake_id, user_id' in idx_sql):
+                    if 'UNIQUE' in idx_sql.upper():
+                        print(f"[Migration] Found problematic UNIQUE index: {idx_name}")
+                        needs_migration = True
+            
+            if needs_migration:
                 print("[Migration] Recreating round_participants table to remove UNIQUE constraint...")
+                c.execute("DROP TABLE IF EXISTS round_participants_new")
                 c.execute("""
-                    CREATE TABLE IF NOT EXISTS round_participants_new (
+                    CREATE TABLE round_participants_new (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         ticket_id TEXT,
                         round_stake_id INTEGER NOT NULL,
@@ -268,6 +306,21 @@ def migrate_remove_unique_constraint():
                 c.execute("CREATE INDEX IF NOT EXISTS idx_participants_stake ON round_participants(round_stake_id)")
                 print("[Migration] Successfully recreated round_participants table without UNIQUE constraint")
                 conn.commit()
+            else:
+                print("[Migration] No UNIQUE(round_stake_id, user_id) constraint found - checking for indexes to drop")
+                for idx_row in indexes:
+                    idx_name = idx_row[0]
+                    idx_sql = str(idx_row[1]) if idx_row[1] else ''
+                    if 'tx_signature' in idx_name or 'ticket_id' in idx_name or 'idx_participants_stake' in idx_name:
+                        continue
+                    if 'round_stake_id' in idx_sql and 'user_id' in idx_sql:
+                        try:
+                            c.execute(f"DROP INDEX IF EXISTS {idx_name}")
+                            print(f"[Migration] Dropped index: {idx_name}")
+                            conn.commit()
+                        except Exception as e:
+                            print(f"[Migration] Could not drop index {idx_name}: {e}")
+            
             conn.close()
         except Exception as e:
             print(f"[Migration] Error removing UNIQUE constraint for SQLite: {e}")
