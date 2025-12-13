@@ -32,3 +32,8 @@ outputType = "console"
 [[ports]]
 localPort = 5000
 externalPort = 80
+
+[userenv]
+
+[userenv.shared]
+RAILWAY_DATABASE_URL = "postgresql://postgres:BooQrYgKptKvTnXBLfdGVmDzJVRyWqLw@tramway.proxy.rlwy.net:51266/railway"
