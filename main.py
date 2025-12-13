@@ -2800,20 +2800,32 @@ async def inline_handler(query: types.CallbackQuery):
         del user_states[uid]
         
         if add_result["success"]:
-            participant_id = add_result["participant_id"]
-            ticket_count = add_result.get("ticket_count", 1)
-            
-            await bot.send_message(uid,
-                f"✅ <b>Ticket Purchased Successfully!</b>\n\n"
-                f"🎫 Ticket #{participant_id}\n"
-                f"🎲 Your Numbers: <b>{', '.join(map(str, selected_sorted))}</b>\n"
-                f"💰 Stake: {stake_amount} SOL\n"
-                f"📝 TX: <code>{tx_signature[:20]}...</code>\n\n"
-                f"🍀 Good luck! Results will be announced when the round ends.",
-                parse_mode="HTML"
-            )
-            
-            await announce_new_ticket(uid, participant_id, stake_amount, selected_sorted, round_id, ticket_count)
+            # Check if this was already processed (duplicate tx_signature)
+            if add_result.get("already_processed"):
+                await bot.send_message(uid,
+                    f"✅ <b>Payment confirmed</b>\n\n"
+                    f"This transaction was already processed.\n"
+                    f"📝 TX: <code>{tx_signature[:20]}...</code>",
+                    parse_mode="HTML"
+                )
+            else:
+                participant_id = add_result["participant_id"]
+                ticket_id = add_result.get("ticket_id", "")
+                ticket_count = add_result.get("ticket_count", 1)
+                
+                await bot.send_message(uid,
+                    f"✅ <b>Payment confirmed</b>\n"
+                    f"🎟 <b>Ticket successfully added</b>\n\n"
+                    f"🎫 Ticket #{participant_id}\n"
+                    f"🎲 Your Numbers: <b>{', '.join(map(str, selected_sorted))}</b>\n"
+                    f"💰 Stake: {stake_amount} SOL\n"
+                    f"📝 TX: <code>{tx_signature[:20]}...</code>\n\n"
+                    f"🎯 You can buy multiple tickets for this round.\n"
+                    f"🍀 Good luck! Results will be announced when the round ends.",
+                    parse_mode="HTML"
+                )
+                
+                await announce_new_ticket(uid, participant_id, stake_amount, selected_sorted, round_id, ticket_count)
         else:
             print(f"[CRITICAL] Ticket registration failed after payment for user {uid}. Attempting refund...")
             refund_result = await send_sol(OWNER_WALLET, wallet, owner_amount, OWNER_WALLET_PRIVATE_KEY)
@@ -2837,9 +2849,9 @@ async def inline_handler(query: types.CallbackQuery):
                 )
             else:
                 await bot.send_message(uid,
-                    f"❌ <b>Failed to register ticket</b>\n\n"
-                    f"Error: {add_result.get('error')}\n\n"
-                    f"Payment was processed. Contact support for refund with TX:\n"
+                    f"⚠️ <b>Processing Issue</b>\n\n"
+                    f"There was an issue registering your ticket.\n"
+                    f"Payment was processed. Contact support with TX:\n"
                     f"<code>{tx_signature}</code>",
                     parse_mode="HTML"
                 )
@@ -4477,12 +4489,14 @@ async def generic_message_handler(message: types.Message):
                     jackpot = Decimal("0")
                 
                 await message.answer(
-                    f"✅ <b>Stake Successful!</b>\n\n"
+                    f"✅ <b>Payment confirmed</b>\n"
+                    f"🎟 <b>Ticket successfully added</b>\n\n"
                     f"🎫 <b>Ticket ID:</b> #{participant_id}\n"
                     f"🎲 <b>Your Numbers:</b> {numbers_to_str(lottery_numbers)}\n"
                     f"💰 <b>Stake:</b> {amount} SOL\n"
                     f"🏆 <b>Current Jackpot:</b> {jackpot} SOL\n\n"
                     f"📝 Transaction:\n<code>{tx_signature[:20]}...</code>\n\n"
+                    f"🎯 You can buy multiple tickets for this round.\n"
                     f"🍀 <b>Good luck!</b> Winner will be announced in the channel.",
                     parse_mode="HTML"
                 )
@@ -4585,12 +4599,14 @@ async def generic_message_handler(message: types.Message):
                 jackpot = Decimal("0")
             
             await message.answer(
-                f"✅ <b>Stake Confirmed!</b>\n\n"
+                f"✅ <b>Payment confirmed</b>\n"
+                f"🎟 <b>Ticket successfully added</b>\n\n"
                 f"🎫 <b>Ticket ID:</b> #{participant_id}\n"
                 f"🎲 <b>Your Numbers:</b> {numbers_to_str(lottery_numbers)}\n"
                 f"💰 <b>Stake:</b> {stake_amount} SOL\n"
                 f"🏆 <b>Current Jackpot:</b> {jackpot} SOL\n\n"
                 f"📝 Transaction verified:\n<code>{tx_signature[:20]}...</code>\n\n"
+                f"🎯 You can buy multiple tickets for this round.\n"
                 f"🍀 <b>Good luck!</b> Winner will be announced in the channel.",
                 parse_mode="HTML"
             )
