@@ -1,4 +1,5 @@
 # Main.py — CryptoUnc Lotto with Real Solana Wallet Integration
+# SQLite fully removed. PostgreSQL only.
 
 import os
 import sys
@@ -14,43 +15,28 @@ import secrets
 import json
 
 # ==============================================================================
-# RAILWAY-ONLY EXECUTION RESTRICTION
+# SINGLE RUNTIME VERIFICATION
 # ==============================================================================
-# This bot is restricted to run ONLY on Railway platform.
-# Running on any other platform (including Replit) will immediately exit.
-# This prevents conflict errors from multiple bot instances.
+# Ensure only one instance of the bot is running at a time.
+# SQLite fully removed. PostgreSQL only.
 
-def verify_authorized_environment():
+_bot_instance_started = False
+
+def verify_single_runtime():
     """
-    Verify that the bot is running ONLY on Railway.
-    Any other platform will be blocked to prevent conflicts.
+    Verify that only one bot instance is running.
+    Prevents duplicate workers and polling conflicts.
     """
-    # Railway-specific environment variables (automatically set by Railway)
-    railway_env = os.getenv("RAILWAY_ENVIRONMENT")
-    railway_project = os.getenv("RAILWAY_PROJECT_ID")
-    
-    # Check if running on Railway
-    is_railway = railway_env is not None or railway_project is not None
-    
-    if not is_railway:
+    global _bot_instance_started
+    if _bot_instance_started:
         print("=" * 60)
-        print("RAILWAY-ONLY BOT - EXECUTION BLOCKED")
-        print("=" * 60)
-        print("")
-        print("This bot runs ONLY on Railway to prevent conflicts.")
-        print("Running multiple instances causes Telegram polling errors.")
-        print("")
-        print("To run this bot:")
-        print("1. Deploy to Railway")
-        print("2. Set all required environment variables in Railway")
-        print("3. The bot will start automatically")
-        print("")
+        print("BOT ALREADY RUNNING - BLOCKING DUPLICATE INSTANCE")
         print("=" * 60)
         sys.exit(1)
-    
-    print(f"Railway environment verified (project: {railway_project[:8] if railway_project else 'N/A'}...)")
+    _bot_instance_started = True
+    print("✅ Single runtime verified - no duplicate instances")
 
-verify_authorized_environment()
+verify_single_runtime()
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
@@ -83,7 +69,7 @@ MAX_WALLETS_PER_USER,
 log_wallet_transaction
 )
 
-from db import get_db_conn, init_all_tables, migrate_remove_unique_constraint, migrate_add_referral_column, migrate_add_ticket_id_column, force_fix_participants_constraint, q, USE_POSTGRES, DB_PATH, save_security_question, get_security_question, verify_security_answer, has_security_question, add_announcement_group, remove_announcement_group, get_announcement_groups
+from db import get_db_conn, init_all_tables, migrate_remove_unique_constraint, migrate_add_referral_column, migrate_add_ticket_id_column, force_fix_participants_constraint, q, USE_POSTGRES, save_security_question, get_security_question, verify_security_answer, has_security_question, add_announcement_group, remove_announcement_group, get_announcement_groups
 
 from wallet_buttons import router as wallet_router
 
@@ -587,153 +573,15 @@ pending_pins = {}  # Stores PIN attempts: {user_id: {"pin": "1234", "action": "v
 # Database helpers
 # ---------------------------
 def migrate_database():
-    """Safely migrate existing database to new schema with pending_refund status"""
-    # Skip for PostgreSQL - schema is managed by init_all_tables
-    if USE_POSTGRES:
-        print("✅ PostgreSQL: Schema managed by init_all_tables")
-        return
-    
-    import sqlite3  # Only import when using SQLite
-    
-    if not os.path.exists(DB_PATH):
-        return
-    
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    
-    try:
-        # Check if round_stakes exists and needs migration
-        c.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='round_stakes'")
-        table_def = c.fetchone()
-        
-        if table_def and 'pending_refund' not in table_def[0]:
-            print("🔄 Migrating database schema to add 'pending_refund' status...")
-            
-            # Create new table with updated schema
-            c.execute("""
-                CREATE TABLE round_stakes_new (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    round_id INTEGER NOT NULL,
-                    stake_amount REAL NOT NULL,
-                    status TEXT DEFAULT 'open' CHECK(status IN ('open', 'closed', 'drawn', 'pending_refund', 'refunded')),
-                    winner_user_id INTEGER,
-                    prize_amount REAL,
-                    tx_signature TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(round_id, stake_amount),
-                    FOREIGN KEY (round_id) REFERENCES scheduled_rounds(round_id) ON DELETE CASCADE,
-                    FOREIGN KEY (winner_user_id) REFERENCES users(user_id)
-                )
-            """)
-            
-            # Copy existing data
-            c.execute("""
-                INSERT INTO round_stakes_new 
-                SELECT * FROM round_stakes
-            """)
-            
-            # Drop old table
-            c.execute("DROP TABLE round_stakes")
-            
-            # Rename new table
-            c.execute("ALTER TABLE round_stakes_new RENAME TO round_stakes")
-            
-            # Recreate indexes
-            c.execute("CREATE INDEX IF NOT EXISTS idx_round_stakes_round ON round_stakes(round_id, status)")
-            
-            conn.commit()
-            print("✅ Database migration completed successfully!")
-        else:
-            print("✅ Database schema is up to date (pending_refund supported)")
-    
-    except Exception as e:
-        print(f"⚠️ Migration error: {e}")
-        conn.rollback()
-    finally:
-        conn.close()
+    """PostgreSQL schema is managed by init_all_tables - no migration needed"""
+    # SQLite fully removed. PostgreSQL only.
+    print("✅ PostgreSQL: Schema managed by init_all_tables")
 
 
 def migrate_timestamps_to_iso():
-    """Migrate legacy CURRENT_TIMESTAMP values to UTC ISO format strings"""
-    # Skip for PostgreSQL - timestamps are handled correctly
-    if USE_POSTGRES:
-        print("✅ PostgreSQL: Timestamps are UTC by default")
-        return
-    
-    import sqlite3  # Only import when using SQLite
-    
-    if not os.path.exists(DB_PATH):
-        return
-    
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    
-    try:
-        print("🔄 Migrating timestamps to UTC ISO format...")
-        
-        # Check if scheduled_rounds table exists
-        c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='scheduled_rounds'")
-        if not c.fetchone():
-            print("✅ No scheduled_rounds table, skipping timestamp migration")
-            conn.close()
-            return
-        
-        # Get all rows with timestamps that need conversion
-        c.execute("""
-            SELECT round_id, scheduled_time, start_time, end_time 
-            FROM scheduled_rounds
-        """)
-        rows = c.fetchall()
-        
-        migrated_count = 0
-        for round_id, scheduled_time, start_time, end_time in rows:
-            # Only update start_time and end_time, NOT scheduled_time
-            # (scheduled_time is part of UNIQUE constraint and shouldn't change)
-            updates = []
-            params = []
-            
-            # Convert start_time if needed
-            if start_time and 'T' not in start_time:
-                try:
-                    dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
-                    if dt.tzinfo is None:
-                        dt = dt.replace(tzinfo=pytz.UTC)
-                    updates.append("start_time = ?")
-                    params.append(dt.isoformat())
-                except:
-                    pass
-            
-            # Convert end_time if needed
-            if end_time and 'T' not in end_time:
-                try:
-                    dt = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
-                    if dt.tzinfo is None:
-                        dt = dt.replace(tzinfo=pytz.UTC)
-                    updates.append("end_time = ?")
-                    params.append(dt.isoformat())
-                except:
-                    pass
-            
-            # Update if any conversions were made
-            if updates:
-                params.append(round_id)
-                query = f"UPDATE scheduled_rounds SET {', '.join(updates)} WHERE round_id = ?"
-                c.execute(query, params)
-                migrated_count += 1
-        
-        conn.commit()
-        if migrated_count > 0:
-            print(f"✅ Migrated {migrated_count} rounds to UTC ISO format")
-        else:
-            print("✅ All timestamps already in ISO format")
-    
-    except Exception as e:
-        print(f"⚠️ Timestamp migration error: {e}")
-        import traceback
-        traceback.print_exc()
-        conn.rollback()
-    finally:
-        conn.close()
+    """PostgreSQL timestamps are UTC by default - no migration needed"""
+    # SQLite fully removed. PostgreSQL only.
+    print("✅ PostgreSQL: Timestamps are UTC by default")
 
 
 def init_db():
@@ -843,6 +691,7 @@ def generate_referral_code(user_id: int) -> str:
 
 def get_user_referral_code(user_id: int) -> str:
     """Get or create referral code for user"""
+    # SQLite fully removed. PostgreSQL only.
     conn = get_db_conn()
     c = conn.cursor()
     c.execute(q("SELECT referral_code FROM referrals WHERE referrer_id = ? LIMIT 1"), (user_id,))
@@ -853,13 +702,9 @@ def get_user_referral_code(user_id: int) -> str:
     
     # Create new code
     code = generate_referral_code(user_id)
-    # Store in meta table for lookup
-    if USE_POSTGRES:
-        c.execute("INSERT INTO meta(key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", 
-                  (f"ref_code_{user_id}", code))
-    else:
-        c.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", 
-                  (f"ref_code_{user_id}", code))
+    # Store in meta table for lookup (PostgreSQL only)
+    c.execute("INSERT INTO meta(key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", 
+              (f"ref_code_{user_id}", code))
     conn.commit()
     conn.close()
     return code
@@ -867,13 +712,10 @@ def get_user_referral_code(user_id: int) -> str:
 
 def get_referrer_by_code(code: str) -> Optional[int]:
     """Get referrer user_id from referral code"""
+    # SQLite fully removed. PostgreSQL only.
     conn = get_db_conn()
     c = conn.cursor()
-    # Handle PostgreSQL vs SQLite separately due to LIKE pattern with %
-    if USE_POSTGRES:
-        c.execute("SELECT key, value FROM meta WHERE key LIKE 'ref_code_%%' AND value = %s", (code.upper(),))
-    else:
-        c.execute("SELECT key, value FROM meta WHERE key LIKE 'ref_code_%' AND value = ?", (code.upper(),))
+    c.execute("SELECT key, value FROM meta WHERE key LIKE 'ref_code_%%' AND value = %s", (code.upper(),))
     row = c.fetchone()
     conn.close()
     if row:

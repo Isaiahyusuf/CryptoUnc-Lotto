@@ -1,14 +1,13 @@
 # Wallet.py - Real Solana Mainnet Wallet Management
+# SQLite fully removed. PostgreSQL only.
+
 import os
-import sqlite3
 import time
 from db import get_db_conn, q, USE_POSTGRES
 
-if USE_POSTGRES:
-    import psycopg2
-    DBIntegrityError = psycopg2.IntegrityError
-else:
-    DBIntegrityError = sqlite3.IntegrityError
+# PostgreSQL only - no SQLite fallback
+import psycopg2
+DBIntegrityError = psycopg2.IntegrityError
 from decimal import Decimal
 from typing import Optional, List, Dict
 import asyncio
