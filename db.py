@@ -39,15 +39,25 @@ def is_valid_database_url(url):
 
 USE_POSTGRES = is_valid_database_url(DATABASE_URL)
 
+# Always import psycopg2 if available (for type hints and consistent behavior)
+psycopg2 = None
+pool = None
+RealDictCursor = None
+
 if USE_POSTGRES:
-    import psycopg2
-    from psycopg2 import pool
-    from psycopg2.extras import RealDictCursor
-    # Print connection info (hide password)
-    if DATABASE_URL:
-        safe_url = DATABASE_URL.split("@")[-1] if "@" in DATABASE_URL else "configured"
-        print(f"[Database] Using PostgreSQL with pooling: ...@{safe_url}")
-else:
+    try:
+        import psycopg2
+        from psycopg2 import pool
+        from psycopg2.extras import RealDictCursor
+        # Print connection info (hide password)
+        if DATABASE_URL:
+            safe_url = DATABASE_URL.split("@")[-1] if "@" in DATABASE_URL else "configured"
+            print(f"[Database] Using PostgreSQL with pooling: ...@{safe_url}")
+    except ImportError:
+        print("[Database] psycopg2 not installed, falling back to SQLite")
+        USE_POSTGRES = False
+
+if not USE_POSTGRES:
     print(f"[Database] Using SQLite (local)")
     if DATABASE_URL:
         print(f"[Database] Note: DATABASE_URL was set but invalid, falling back to SQLite")
