@@ -237,6 +237,51 @@ def migrate_remove_unique_constraint():
             print(f"[Migration] Error removing UNIQUE constraint: {e}")
 
 
+def migrate_add_ticket_id_column():
+    """Migration: Add ticket_id column to round_participants for multiple tickets support"""
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        
+        if USE_POSTGRES:
+            # Check if ticket_id column exists
+            c.execute("""
+                SELECT column_name FROM information_schema.columns 
+                WHERE table_name = 'round_participants' AND column_name = 'ticket_id'
+            """)
+            if not c.fetchone():
+                c.execute("ALTER TABLE round_participants ADD COLUMN ticket_id TEXT")
+                print("[Migration] Added ticket_id column to round_participants table")
+                # Create unique index on ticket_id
+                try:
+                    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_participants_ticket_id ON round_participants(ticket_id)")
+                except:
+                    pass
+            # Create unique index on tx_signature if not exists
+            try:
+                c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_participants_tx_sig ON round_participants(tx_signature)")
+            except:
+                pass
+        else:
+            # SQLite - check if column exists
+            c.execute("PRAGMA table_info(round_participants)")
+            columns = [row[1] for row in c.fetchall()]
+            if 'ticket_id' not in columns:
+                c.execute("ALTER TABLE round_participants ADD COLUMN ticket_id TEXT")
+                print("[Migration] Added ticket_id column to round_participants table")
+            # Create unique indexes if not exists
+            try:
+                c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_participants_ticket_id ON round_participants(ticket_id)")
+                c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_participants_tx_sig ON round_participants(tx_signature)")
+            except:
+                pass
+        
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[Migration] Error adding ticket_id column: {e}")
+
+
 def migrate_add_referral_column():
     """Migration: Add tickets_from_referral column to referrals table if missing"""
     try:
@@ -376,10 +421,11 @@ def init_all_tables():
             c.execute("""
                 CREATE TABLE round_participants (
                     id SERIAL PRIMARY KEY,
+                    ticket_id TEXT UNIQUE,
                     round_stake_id INTEGER NOT NULL,
                     user_id BIGINT NOT NULL,
                     numbers TEXT NOT NULL,
-                    tx_signature TEXT NOT NULL,
+                    tx_signature TEXT NOT NULL UNIQUE,
                     refunded INTEGER DEFAULT 0,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
@@ -596,10 +642,11 @@ def init_all_tables():
         c.execute("""
             CREATE TABLE IF NOT EXISTS round_participants (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticket_id TEXT UNIQUE,
                 round_stake_id INTEGER NOT NULL,
                 user_id INTEGER NOT NULL,
                 numbers TEXT NOT NULL,
-                tx_signature TEXT NOT NULL,
+                tx_signature TEXT NOT NULL UNIQUE,
                 refunded INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )

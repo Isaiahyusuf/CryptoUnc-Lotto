@@ -83,7 +83,7 @@ MAX_WALLETS_PER_USER,
 log_wallet_transaction
 )
 
-from db import get_db_conn, init_all_tables, migrate_remove_unique_constraint, migrate_add_referral_column, q, USE_POSTGRES, DB_PATH, save_security_question, get_security_question, verify_security_answer, has_security_question, add_announcement_group, remove_announcement_group, get_announcement_groups
+from db import get_db_conn, init_all_tables, migrate_remove_unique_constraint, migrate_add_referral_column, migrate_add_ticket_id_column, q, USE_POSTGRES, DB_PATH, save_security_question, get_security_question, verify_security_answer, has_security_question, add_announcement_group, remove_announcement_group, get_announcement_groups
 
 from wallet_buttons import router as wallet_router
 
@@ -734,6 +734,7 @@ def init_db():
     # Run migrations
     migrate_remove_unique_constraint()  # Allow unlimited tickets per user
     migrate_add_referral_column()  # Add missing referral tracking column
+    migrate_add_ticket_id_column()  # Add ticket_id column for multiple tickets per user
     
     # Verify database connection and show stats
     try:
@@ -1395,8 +1396,12 @@ def add_round_participant(round_stake_id: int, user_id: int, numbers: list, tx_s
     """
     Add a participant to a round stake.
     ALLOWS MULTIPLE TICKETS: Users can buy as many tickets as they want.
-    Each ticket counts as 1 player for the minimum player requirement.
+    Each ticket is its own row with a unique ticket_id.
+    Same user may insert multiple rows for the same round.
+    Duplicates are only blocked by tx_signature (must be UNIQUE).
     """
+    import uuid
+    
     conn = get_db_conn()
     c = conn.cursor()
     
@@ -1426,21 +1431,24 @@ def add_round_participant(round_stake_id: int, user_id: int, numbers: list, tx_s
             conn.close()
             return {"success": False, "error": "Round has ended"}
     
+    # Generate unique ticket_id
+    ticket_id = str(uuid.uuid4())
+    
     try:
         if USE_POSTGRES:
             c.execute("""
-                INSERT INTO round_participants (round_stake_id, user_id, numbers, tx_signature)
-                VALUES (%s, %s, %s, %s) RETURNING id
-            """, (round_stake_id, user_id, numbers_to_str(numbers), tx_signature))
+                INSERT INTO round_participants (ticket_id, round_stake_id, user_id, numbers, tx_signature)
+                VALUES (%s, %s, %s, %s, %s) RETURNING id
+            """, (ticket_id, round_stake_id, user_id, numbers_to_str(numbers), tx_signature))
             participant_id = c.fetchone()[0]
         else:
             c.execute("""
-                INSERT INTO round_participants (round_stake_id, user_id, numbers, tx_signature)
-                VALUES (?, ?, ?, ?)
-            """, (round_stake_id, user_id, numbers_to_str(numbers), tx_signature))
+                INSERT INTO round_participants (ticket_id, round_stake_id, user_id, numbers, tx_signature)
+                VALUES (?, ?, ?, ?, ?)
+            """, (ticket_id, round_stake_id, user_id, numbers_to_str(numbers), tx_signature))
             participant_id = c.lastrowid
         
-        # Get first stake time and count - PostgreSQL compatible
+        # Get first stake time and count - counts all tickets (not distinct users)
         c.execute(q("""
             SELECT rs.first_stake_time, COUNT(rp.id) as count
             FROM round_stakes rs
@@ -1469,8 +1477,14 @@ def add_round_participant(round_stake_id: int, user_id: int, numbers: list, tx_s
         # Referral bonus tracking disabled - coming soon
         # apply_referral_bonus(user_id, Decimal(str(stake_amount)))
         
-        return {"success": True, "participant_id": participant_id, "round_id": round_id, "stake_amount": stake_amount, "ticket_count": count}
+        return {"success": True, "participant_id": participant_id, "ticket_id": ticket_id, "round_id": round_id, "stake_amount": stake_amount, "ticket_count": count}
     except Exception as e:
+        error_str = str(e).lower()
+        # Handle tx_signature uniqueness - treat as already processed
+        if "unique" in error_str or "duplicate" in error_str:
+            conn.rollback()
+            conn.close()
+            return {"success": True, "already_processed": True, "error": "Transaction already processed"}
         conn.rollback()
         conn.close()
         return {"success": False, "error": str(e)}
