@@ -720,24 +720,24 @@ async def send_sol(from_address: str, to_address: str, amount_sol: Decimal, priv
 
 
 def delete_wallet(user_id: int, wallet_address: str) -> bool:
-    """Soft delete a wallet (mark as inactive)"""
+    """Permanently delete a wallet from database"""
     conn = get_db_conn()
     c = conn.cursor()
 
-    c.execute(q("""
-        UPDATE wallets 
-        SET is_active = 0 
-        WHERE user_id = ? AND wallet_address = ?
-    """), (user_id, wallet_address))
-
-    # If this was the active wallet, clear it
+    # Clear active wallet reference first
     c.execute(q("""
         DELETE FROM user_active_wallet 
         WHERE user_id = ? AND active_wallet_address = ?
     """), (user_id, wallet_address))
 
-    conn.commit()
+    # Permanently delete the wallet record from database
+    c.execute(q("""
+        DELETE FROM wallets 
+        WHERE user_id = ? AND wallet_address = ?
+    """), (user_id, wallet_address))
+
     affected = c.rowcount > 0
+    conn.commit()
     conn.close()
     return affected
 

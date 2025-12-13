@@ -15,6 +15,9 @@ import threading
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+# Flag to track if constraint has been fixed
+_constraint_fixed = False
+
 # Connection pool for PostgreSQL (reduces connection overhead)
 _pg_pool = None
 _pool_lock = threading.Lock()
@@ -324,6 +327,128 @@ def migrate_remove_unique_constraint():
             conn.close()
         except Exception as e:
             print(f"[Migration] Error removing UNIQUE constraint for SQLite: {e}")
+
+
+def force_fix_participants_constraint():
+    """
+    FORCE FIX: Aggressively remove any unique constraint on (round_stake_id, user_id).
+    This runs every time and ensures users can buy unlimited tickets.
+    """
+    global _constraint_fixed
+    if _constraint_fixed:
+        return
+    
+    print("[ForceFix] Checking for problematic constraints on round_participants...")
+    
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        
+        if USE_POSTGRES:
+            # PostgreSQL: Check for and drop all unique constraints except tx_signature and ticket_id
+            c.execute("""
+                SELECT conname, pg_get_constraintdef(c.oid)
+                FROM pg_constraint c
+                JOIN pg_class t ON c.conrelid = t.oid
+                WHERE t.relname = 'round_participants' AND c.contype = 'u'
+            """)
+            constraints = c.fetchall()
+            for row in constraints:
+                constraint_name = row[0]
+                constraint_def = str(row[1]) if row[1] else ''
+                if 'tx_signature' in constraint_def or 'ticket_id' in constraint_def:
+                    continue
+                if 'round_stake_id' in constraint_def or 'user_id' in constraint_def:
+                    try:
+                        c.execute(f"ALTER TABLE round_participants DROP CONSTRAINT IF EXISTS {constraint_name}")
+                        print(f"[ForceFix] Dropped constraint: {constraint_name}")
+                    except Exception as e:
+                        print(f"[ForceFix] Could not drop {constraint_name}: {e}")
+            
+            # Also check for unique indexes
+            c.execute("""
+                SELECT indexname, indexdef FROM pg_indexes 
+                WHERE tablename = 'round_participants'
+            """)
+            indexes = c.fetchall()
+            for row in indexes:
+                idx_name = row[0]
+                idx_def = str(row[1]) if row[1] else ''
+                if 'tx_signature' in idx_name or 'ticket_id' in idx_name or 'idx_participants_stake' in idx_name:
+                    continue
+                if 'UNIQUE' in idx_def.upper() and ('round_stake_id' in idx_def or 'user_id' in idx_def):
+                    if 'round_stake_id' in idx_def and 'user_id' in idx_def:
+                        try:
+                            c.execute(f"DROP INDEX IF EXISTS {idx_name}")
+                            print(f"[ForceFix] Dropped unique index: {idx_name}")
+                        except Exception as e:
+                            print(f"[ForceFix] Could not drop index {idx_name}: {e}")
+            
+            conn.commit()
+        else:
+            # SQLite: Check for unique index and recreate table if needed
+            c.execute("SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name='round_participants'")
+            indexes = c.fetchall()
+            needs_rebuild = False
+            
+            for idx_row in indexes:
+                idx_name = idx_row[0] if idx_row[0] else ''
+                idx_sql = str(idx_row[1]) if idx_row[1] else ''
+                if 'tx_signature' in idx_name or 'ticket_id' in idx_name:
+                    continue
+                if 'UNIQUE' in idx_sql.upper() and 'round_stake_id' in idx_sql and 'user_id' in idx_sql:
+                    print(f"[ForceFix] Found problematic unique index: {idx_name}")
+                    try:
+                        c.execute(f"DROP INDEX IF EXISTS \"{idx_name}\"")
+                        print(f"[ForceFix] Dropped index: {idx_name}")
+                        conn.commit()
+                    except Exception as e:
+                        print(f"[ForceFix] Could not drop index, will rebuild table: {e}")
+                        needs_rebuild = True
+            
+            # Also check table definition
+            c.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='round_participants'")
+            result = c.fetchone()
+            if result:
+                table_sql = str(result[0])
+                if 'UNIQUE' in table_sql and 'round_stake_id' in table_sql and 'user_id' in table_sql:
+                    needs_rebuild = True
+            
+            if needs_rebuild:
+                print("[ForceFix] Rebuilding round_participants table...")
+                c.execute("DROP TABLE IF EXISTS round_participants_rebuild")
+                c.execute("""
+                    CREATE TABLE round_participants_rebuild (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        ticket_id TEXT,
+                        round_stake_id INTEGER NOT NULL,
+                        user_id INTEGER NOT NULL,
+                        numbers TEXT NOT NULL,
+                        tx_signature TEXT NOT NULL,
+                        refunded INTEGER DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                c.execute("""
+                    INSERT INTO round_participants_rebuild 
+                    SELECT id, ticket_id, round_stake_id, user_id, numbers, tx_signature, refunded, created_at
+                    FROM round_participants
+                """)
+                c.execute("DROP TABLE round_participants")
+                c.execute("ALTER TABLE round_participants_rebuild RENAME TO round_participants")
+                c.execute("CREATE UNIQUE INDEX idx_participants_tx_sig ON round_participants(tx_signature)")
+                c.execute("CREATE UNIQUE INDEX idx_participants_ticket_id ON round_participants(ticket_id)")
+                c.execute("CREATE INDEX idx_participants_stake ON round_participants(round_stake_id)")
+                conn.commit()
+                print("[ForceFix] Table rebuilt successfully!")
+        
+        conn.close()
+        _constraint_fixed = True
+        print("[ForceFix] Constraint check complete - users can now buy unlimited tickets")
+    except Exception as e:
+        print(f"[ForceFix] Error: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 def migrate_add_ticket_id_column():

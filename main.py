@@ -83,7 +83,7 @@ MAX_WALLETS_PER_USER,
 log_wallet_transaction
 )
 
-from db import get_db_conn, init_all_tables, migrate_remove_unique_constraint, migrate_add_referral_column, migrate_add_ticket_id_column, q, USE_POSTGRES, DB_PATH, save_security_question, get_security_question, verify_security_answer, has_security_question, add_announcement_group, remove_announcement_group, get_announcement_groups
+from db import get_db_conn, init_all_tables, migrate_remove_unique_constraint, migrate_add_referral_column, migrate_add_ticket_id_column, force_fix_participants_constraint, q, USE_POSTGRES, DB_PATH, save_security_question, get_security_question, verify_security_answer, has_security_question, add_announcement_group, remove_announcement_group, get_announcement_groups
 
 from wallet_buttons import router as wallet_router
 
@@ -735,6 +735,9 @@ def init_db():
     migrate_remove_unique_constraint()  # Allow unlimited tickets per user
     migrate_add_referral_column()  # Add missing referral tracking column
     migrate_add_ticket_id_column()  # Add ticket_id column for multiple tickets per user
+    
+    # FORCE FIX: Ensure the unique constraint is removed - runs every startup
+    force_fix_participants_constraint()
     
     # Verify database connection and show stats
     try:
