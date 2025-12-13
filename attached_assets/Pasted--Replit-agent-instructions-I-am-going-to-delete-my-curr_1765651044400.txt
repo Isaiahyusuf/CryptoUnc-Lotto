@@ -1,0 +1,49 @@
+
+⸻
+
+Replit agent instructions:
+
+I am going to delete my current Railway PostgreSQL database and create a new one.
+Before that, update the code so that when the new database is connected and tables are recreated, users can buy multiple tickets per round without any UNIQUE constraint blocking them.
+
+Do the following carefully:
+	1.	Locate all database schema creation code or migrations in the project.
+This includes any CREATE TABLE statements for ticket-related tables, especially the table named round_participants or similar.
+	2.	Modify the round_participants (tickets) table schema so that:
+	•	Each ticket is stored as its own row.
+	•	Only the primary key (id) is unique.
+	•	There is NO UNIQUE constraint on:
+	•	(user_id, round_id)
+	•	(user_id, round_stake_id)
+	•	(round_stake_id, user_id)
+	•	Do not add composite UNIQUE constraints related to users or rounds.
+	3.	The correct logic should be:
+	•	Same user can appear multiple times in the same round.
+	•	Same user can buy unlimited tickets for the same stake.
+	•	Each successful payment creates a new row, not an update.
+	4.	Review all INSERT logic for tickets:
+	•	Remove any UPSERT logic.
+	•	Remove any ON CONFLICT, INSERT OR IGNORE, or REPLACE statements.
+	•	Ensure ticket creation always uses a plain INSERT that creates a new row every time.
+	5.	If ticket numbers are generated:
+	•	Ticket number uniqueness should be handled by randomness or ticket id, not by database UNIQUE constraints tied to user_id.
+	•	Do not enforce uniqueness at the database level unless it is only on the ticket id.
+	6.	Ensure no code recreates the old UNIQUE constraint automatically:
+	•	Check startup scripts.
+	•	Check database initialization code.
+	•	Check any ORM models that may auto-generate constraints.
+	7.	After making these changes:
+	•	Push the updated code to GitHub.
+	•	Do NOT deploy yet.
+	8.	Once I confirm the code changes are complete:
+	•	I will delete the existing Railway PostgreSQL database.
+	•	I will create a fresh PostgreSQL service.
+	•	I will redeploy the bot so the new database is initialized using the corrected schema.
+	9.	After redeploy:
+	•	Verify by inserting multiple tickets for the same user, same round, same stake.
+	•	Confirm no UNIQUE constraint errors occur.
+
+Important notes for safety:
+	•	Assume the database will start empty.
+	•	Do not attempt to migrate old data.
+	•	This change must permanently prevent the UNIQUE constraint error from ever returning.
