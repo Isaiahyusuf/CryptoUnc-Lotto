@@ -3,7 +3,7 @@
 
 import os
 import time
-from db import get_db_conn, q, USE_POSTGRES
+from db import get_db_conn, q
 
 # PostgreSQL only - no SQLite fallback
 import psycopg2

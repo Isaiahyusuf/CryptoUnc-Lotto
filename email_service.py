@@ -9,7 +9,7 @@ import time
 from datetime import datetime, timedelta
 from typing import Optional, Dict
 
-from db import get_db_conn, q, USE_POSTGRES
+from db import get_db_conn, q
 
 SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
 FROM_EMAIL = os.getenv("FROM_EMAIL", "noreply@cryptounc.com")

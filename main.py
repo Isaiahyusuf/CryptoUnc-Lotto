@@ -69,7 +69,7 @@ MAX_WALLETS_PER_USER,
 log_wallet_transaction
 )
 
-from db import get_db_conn, init_all_tables, migrate_remove_unique_constraint, migrate_add_referral_column, migrate_add_ticket_id_column, force_fix_participants_constraint, q, USE_POSTGRES, save_security_question, get_security_question, verify_security_answer, has_security_question, add_announcement_group, remove_announcement_group, get_announcement_groups
+from db import get_db_conn, init_all_tables, migrate_remove_unique_constraint, migrate_add_referral_column, migrate_add_ticket_id_column, force_fix_participants_constraint, q, save_security_question, get_security_question, verify_security_answer, has_security_question, add_announcement_group, remove_announcement_group, get_announcement_groups
 
 from wallet_buttons import router as wallet_router
 
@@ -290,24 +290,8 @@ def validate_environment():
     warnings = []
     
     # ===== CRITICAL: DATABASE_URL IS REQUIRED =====
-    # Without PostgreSQL, user data will be lost on every redeploy!
-    from db import USE_POSTGRES, DATABASE_URL
-    
-    if not USE_POSTGRES:
-        print("\n" + "="*60)
-        print("❌ CRITICAL: DATABASE_URL NOT CONFIGURED!")
-        print("="*60)
-        print("\nThe bot REQUIRES PostgreSQL to persist user data.")
-        print("Without it, ALL user data (PINs, wallets, tickets) will be LOST")
-        print("on every redeploy!")
-        print("\nTo fix this on Railway:")
-        print("1. Add a PostgreSQL database to your Railway project")
-        print("2. The DATABASE_URL will be automatically set")
-        print("\nCurrent DATABASE_URL:", DATABASE_URL[:20] + "..." if DATABASE_URL else "NOT SET")
-        print("="*60 + "\n")
-        raise ValueError("DATABASE_URL is required. Cannot start without PostgreSQL database.")
-    else:
-        print("✅ PostgreSQL database connected - user data will persist")
+    # PostgreSQL only - db.py will raise an error if DATABASE_URL is not set
+    print("✅ PostgreSQL database connected - user data will persist")
     
     # ===== REQUIRED SECRETS =====
     
@@ -472,8 +456,8 @@ def set_current_pot(amount: Decimal):
     conn = get_db_conn()
     c = conn.cursor()
     c.execute("""
-        INSERT INTO meta (key, value) VALUES ('current_pot', ?)
-        ON CONFLICT(key) DO UPDATE SET value = ?
+        INSERT INTO meta (key, value) VALUES ('current_pot', %s)
+        ON CONFLICT(key) DO UPDATE SET value = %s
     """, (str(amount), str(amount)))
     conn.commit()
     conn.close()
@@ -644,7 +628,7 @@ def increment_round():
     conn = get_db_conn()
     c = conn.cursor()
     new_round = get_current_round() + 1
-    c.execute("UPDATE meta SET value = ? WHERE key='current_round'", (str(new_round),))
+    c.execute("UPDATE meta SET value = %s WHERE key='current_round'", (str(new_round),))
     conn.commit()
     conn.close()
     return new_round
@@ -662,18 +646,15 @@ def save_user(user_id: int, username: str):
     conn = get_db_conn()
     c = conn.cursor()
     # Always update username if it changed (users can change their Telegram username)
-    if USE_POSTGRES:
-        c.execute("""
-            INSERT INTO users(user_id, username) VALUES (%s, %s)
-            ON CONFLICT (user_id) DO UPDATE SET username = EXCLUDED.username
-        """, (user_id, username))
-        c.execute("""
-            INSERT INTO user_stats(user_id) VALUES (%s)
-            ON CONFLICT (user_id) DO NOTHING
-        """, (user_id,))
-    else:
-        c.execute("INSERT OR REPLACE INTO users(user_id, username) VALUES (?, ?)", (user_id, username))
-        c.execute("INSERT OR IGNORE INTO user_stats(user_id) VALUES (?)", (user_id,))
+    # PostgreSQL only - no SQLite fallback
+    c.execute("""
+        INSERT INTO users(user_id, username) VALUES (%s, %s)
+        ON CONFLICT (user_id) DO UPDATE SET username = EXCLUDED.username
+    """, (user_id, username))
+    c.execute("""
+        INSERT INTO user_stats(user_id) VALUES (%s)
+        ON CONFLICT (user_id) DO NOTHING
+    """, (user_id,))
     conn.commit()
     conn.close()
 
@@ -827,7 +808,7 @@ def update_user_stats(user_id: int, tickets: int = 0, spent: Decimal = Decimal("
     c = conn.cursor()
     
     # Ensure user stats exist
-    c.execute(q("INSERT OR IGNORE INTO user_stats(user_id) VALUES (?)"), (user_id,))
+    c.execute("INSERT INTO user_stats(user_id) VALUES (%s) ON CONFLICT DO NOTHING", (user_id,))
     
     # Get current stats
     c.execute(q("SELECT total_tickets, biggest_win FROM user_stats WHERE user_id = ?"), (user_id,))
@@ -861,7 +842,7 @@ def get_user_stats(user_id: int) -> Dict:
     conn = get_db_conn()
     c = conn.cursor()
     
-    c.execute(q("INSERT OR IGNORE INTO user_stats(user_id) VALUES (?)"), (user_id,))
+    c.execute("INSERT INTO user_stats(user_id) VALUES (%s) ON CONFLICT DO NOTHING", (user_id,))
     c.execute(q("SELECT * FROM user_stats WHERE user_id = ?"), (user_id,))
     row = c.fetchone()
     conn.close()
@@ -1058,7 +1039,7 @@ def toggle_notifications(user_id: int) -> bool:
     """Toggle notification preference for user. Returns new state."""
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute(q("INSERT OR IGNORE INTO user_stats(user_id) VALUES (?)"), (user_id,))
+    c.execute("INSERT INTO user_stats(user_id) VALUES (%s) ON CONFLICT DO NOTHING", (user_id,))
     c.execute(q("SELECT notification_enabled FROM user_stats WHERE user_id = ?"), (user_id,))
     row = c.fetchone()
     current = row[0] if row else 1
@@ -1102,7 +1083,7 @@ def get_user_last_entry(user_id: int):
     conn = get_db_conn()
     c = conn.cursor()
     c.execute(
-        "SELECT round, numbers, paid FROM entries WHERE user_id = ? ORDER BY created_at DESC LIMIT 1",
+        "SELECT round, numbers, paid FROM entries WHERE user_id = %s ORDER BY created_at DESC LIMIT 1",
         (user_id,)
     )
     row = c.fetchone()
@@ -1113,16 +1094,11 @@ def get_user_last_entry(user_id: int):
 def save_draw(round_num: int, winning_numbers):
     conn = get_db_conn()
     c = conn.cursor()
-    if USE_POSTGRES:
-        c.execute(
-            "INSERT INTO draws(round, winning_numbers) VALUES (%s, %s) ON CONFLICT (round) DO UPDATE SET winning_numbers = EXCLUDED.winning_numbers",
-            (round_num, numbers_to_str(winning_numbers))
-        )
-    else:
-        c.execute(
-            "INSERT OR REPLACE INTO draws(round, winning_numbers) VALUES (?, ?)",
-            (round_num, numbers_to_str(winning_numbers))
-        )
+    # PostgreSQL only - no SQLite fallback
+    c.execute(
+        "INSERT INTO draws(round, winning_numbers) VALUES (%s, %s) ON CONFLICT (round) DO UPDATE SET winning_numbers = EXCLUDED.winning_numbers",
+        (round_num, numbers_to_str(winning_numbers))
+    )
     conn.commit()
     conn.close()
 
@@ -1138,7 +1114,7 @@ def set_round_winning_numbers(round_id: int, winning_numbers: List[int]):
     conn = get_db_conn()
     c = conn.cursor()
     c.execute("""
-        UPDATE scheduled_rounds SET winning_numbers = ? WHERE round_id = ?
+        UPDATE scheduled_rounds SET winning_numbers = %s WHERE round_id = %s
     """, (numbers_to_str(winning_numbers), round_id))
     conn.commit()
     conn.close()
@@ -1148,7 +1124,7 @@ def get_round_winning_numbers(round_id: int) -> Optional[List[int]]:
     """Get winning numbers for a round (only if they exist)"""
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute("SELECT winning_numbers FROM scheduled_rounds WHERE round_id = ?", (round_id,))
+    c.execute("SELECT winning_numbers FROM scheduled_rounds WHERE round_id = %s", (round_id,))
     row = c.fetchone()
     conn.close()
     if row and row[0]:
@@ -1176,23 +1152,17 @@ def create_scheduled_round(round_number: int, scheduled_time: datetime):
     c = conn.cursor()
     try:
         scheduled_time_str = scheduled_time.isoformat() if hasattr(scheduled_time, 'isoformat') else scheduled_time
-        if USE_POSTGRES:
-            c.execute("""
-                INSERT INTO scheduled_rounds (round_number, scheduled_time, status)
-                VALUES (%s, %s, 'pending') RETURNING round_id
-            """, (round_number, scheduled_time_str))
-            round_id = c.fetchone()[0]
-        else:
-            c.execute("""
-                INSERT INTO scheduled_rounds (round_number, scheduled_time, status)
-                VALUES (?, ?, 'pending')
-            """, (round_number, scheduled_time_str))
-            round_id = c.lastrowid
+        # PostgreSQL only - no SQLite fallback
+        c.execute("""
+            INSERT INTO scheduled_rounds (round_number, scheduled_time, status)
+            VALUES (%s, %s, 'pending') RETURNING round_id
+        """, (round_number, scheduled_time_str))
+        round_id = c.fetchone()[0]
         
         for stake in STAKE_PACKAGES:
             c.execute("""
                 INSERT INTO round_stakes (round_id, stake_amount, status)
-                VALUES (?, ?, 'open')
+                VALUES (%s, %s, 'open')
             """, (round_id, float(stake)))
         
         conn.commit()
@@ -1289,18 +1259,12 @@ def add_round_participant(round_stake_id: int, user_id: int, numbers: list, tx_s
     ticket_id = str(uuid.uuid4())
     
     try:
-        if USE_POSTGRES:
-            c.execute("""
-                INSERT INTO round_participants (ticket_id, round_stake_id, user_id, numbers, tx_signature)
-                VALUES (%s, %s, %s, %s, %s) RETURNING id
-            """, (ticket_id, round_stake_id, user_id, numbers_to_str(numbers), tx_signature))
-            participant_id = c.fetchone()[0]
-        else:
-            c.execute("""
-                INSERT INTO round_participants (ticket_id, round_stake_id, user_id, numbers, tx_signature)
-                VALUES (?, ?, ?, ?, ?)
-            """, (ticket_id, round_stake_id, user_id, numbers_to_str(numbers), tx_signature))
-            participant_id = c.lastrowid
+        # PostgreSQL only - no SQLite fallback
+        c.execute("""
+            INSERT INTO round_participants (ticket_id, round_stake_id, user_id, numbers, tx_signature)
+            VALUES (%s, %s, %s, %s, %s) RETURNING id
+        """, (ticket_id, round_stake_id, user_id, numbers_to_str(numbers), tx_signature))
+        participant_id = c.fetchone()[0]
         
         # Get first stake time and count - counts all tickets (not distinct users)
         c.execute(q("""
@@ -1349,7 +1313,7 @@ def get_round_stake_by_amount(round_id: int, stake_amount: Decimal):
     c = conn.cursor()
     c.execute("""
         SELECT id, status FROM round_stakes
-        WHERE round_id = ? AND stake_amount = ?
+        WHERE round_id = %s AND stake_amount = %s
     """, (round_id, float(stake_amount)))
     row = c.fetchone()
     conn.close()
@@ -1383,26 +1347,20 @@ def get_or_create_active_round_stake(stake_amount: Decimal):
         
         if not pending_row:
             # No rounds at all - create one
+            # PostgreSQL only - no SQLite fallback
             now_utc = datetime.now(pytz.UTC)
-            if USE_POSTGRES:
-                c.execute("""
-                    INSERT INTO scheduled_rounds (round_number, scheduled_time, status, start_time)
-                    VALUES (%s, %s, 'open', %s) RETURNING round_id
-                """, (get_current_round(), now_utc.isoformat(), now_utc.isoformat()))
-                round_id = c.fetchone()[0]
-            else:
-                c.execute("""
-                    INSERT INTO scheduled_rounds (round_number, scheduled_time, status, start_time)
-                    VALUES (?, ?, 'open', ?)
-                """, (get_current_round(), now_utc.isoformat(), now_utc.isoformat()))
-                round_id = c.lastrowid
+            c.execute("""
+                INSERT INTO scheduled_rounds (round_number, scheduled_time, status, start_time)
+                VALUES (%s, %s, 'open', %s) RETURNING round_id
+            """, (get_current_round(), now_utc.isoformat(), now_utc.isoformat()))
+            round_id = c.fetchone()[0]
         else:
             round_id = pending_row[0]
             # Open the pending round
             now_utc = datetime.now(pytz.UTC).isoformat()
             c.execute("""
-                UPDATE scheduled_rounds SET status = 'open', start_time = ?
-                WHERE round_id = ?
+                UPDATE scheduled_rounds SET status = 'open', start_time = %s
+                WHERE round_id = %s
             """, (now_utc, round_id))
     else:
         round_id = round_row[0]
@@ -1410,7 +1368,7 @@ def get_or_create_active_round_stake(stake_amount: Decimal):
     # Check if stake exists for this round
     c.execute("""
         SELECT id, status FROM round_stakes 
-        WHERE round_id = ? AND stake_amount = ?
+        WHERE round_id = %s AND stake_amount = %s
     """, (round_id, float(stake_amount)))
     stake_row = c.fetchone()
     
@@ -1420,19 +1378,12 @@ def get_or_create_active_round_stake(stake_amount: Decimal):
             conn.close()
             return None, None  # Stake is not open
     else:
-        # Create the stake
-        if USE_POSTGRES:
-            c.execute("""
-                INSERT INTO round_stakes (round_id, stake_amount, status)
-                VALUES (%s, %s, 'open') RETURNING id
-            """, (round_id, float(stake_amount)))
-            stake_id = c.fetchone()[0]
-        else:
-            c.execute("""
-                INSERT INTO round_stakes (round_id, stake_amount, status)
-                VALUES (?, ?, 'open')
-            """, (round_id, float(stake_amount)))
-            stake_id = c.lastrowid
+        # Create the stake - PostgreSQL only - no SQLite fallback
+        c.execute("""
+            INSERT INTO round_stakes (round_id, stake_amount, status)
+            VALUES (%s, %s, 'open') RETURNING id
+        """, (round_id, float(stake_amount)))
+        stake_id = c.fetchone()[0]
     
     conn.commit()
     conn.close()
@@ -1571,31 +1522,31 @@ def update_round_status(round_id: int, status: str):
     
     # Check if we need to set start_time
     if status == 'open':
-        c.execute("SELECT start_time FROM scheduled_rounds WHERE round_id = ?", (round_id,))
+        c.execute("SELECT start_time FROM scheduled_rounds WHERE round_id = %s", (round_id,))
         row = c.fetchone()
         if row and not row[0]:
             c.execute("""
                 UPDATE scheduled_rounds
-                SET status = ?, start_time = ?
-                WHERE round_id = ?
+                SET status = %s, start_time = %s
+                WHERE round_id = %s
             """, (status, now_utc, round_id))
         else:
             c.execute("""
                 UPDATE scheduled_rounds
-                SET status = ?
-                WHERE round_id = ?
+                SET status = %s
+                WHERE round_id = %s
             """, (status, round_id))
     elif status in ('closed', 'completed'):
         c.execute("""
             UPDATE scheduled_rounds
-            SET status = ?, end_time = ?
-            WHERE round_id = ?
+            SET status = %s, end_time = %s
+            WHERE round_id = %s
         """, (status, now_utc, round_id))
     else:
         c.execute("""
             UPDATE scheduled_rounds
-            SET status = ?
-            WHERE round_id = ?
+            SET status = %s
+            WHERE round_id = %s
         """, (status, round_id))
     
     conn.commit()
@@ -1624,7 +1575,8 @@ async def send_winner_payout(winner_user_id: int, prize_amount: Decimal, round_s
             SELECT rs.stake_amount, COUNT(rp.id) as player_count
             FROM round_stakes rs
             LEFT JOIN round_participants rp ON rs.id = rp.round_stake_id AND rp.refunded = 0
-            WHERE rs.id = ?
+            WHERE rs.id = %s
+            GROUP BY rs.stake_amount
         """, (round_stake_id,))
         result = c.fetchone()
         conn.close()
@@ -1722,7 +1674,7 @@ def process_round_draw(round_id: int):
         SELECT rp.id, rp.user_id, rp.numbers, rp.tx_signature, rs.stake_amount
         FROM round_participants rp
         JOIN round_stakes rs ON rp.round_stake_id = rs.id
-        WHERE rs.round_id = ? AND rp.refunded = 0
+        WHERE rs.round_id = %s AND rp.refunded = 0
         ORDER BY rp.id ASC
     """, (round_id,))
     participants = c.fetchall()
@@ -1788,8 +1740,8 @@ def process_round_draw(round_id: int):
         # Update database
         c.execute("""
             UPDATE round_stakes
-            SET status = 'drawn', winner_user_id = ?
-            WHERE round_id = ?
+            SET status = 'drawn', winner_user_id = %s
+            WHERE round_id = %s
         """, (winner[1], round_id))
         conn.commit()
         
@@ -1803,7 +1755,7 @@ def process_round_draw(round_id: int):
         c.execute("""
             UPDATE round_stakes
             SET status = 'drawn'
-            WHERE round_id = ?
+            WHERE round_id = %s
         """, (round_id,))
         conn.commit()
         
@@ -1819,7 +1771,7 @@ def process_round_stake_draw(round_stake_id: int):
     """Legacy wrapper for compatibility - redirects to new process_round_draw"""
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute("SELECT round_id FROM round_stakes WHERE id = ?", (round_stake_id,))
+    c.execute("SELECT round_id FROM round_stakes WHERE id = %s", (round_stake_id,))
     row = c.fetchone()
     conn.close()
     if row:
@@ -1840,7 +1792,7 @@ async def process_refunds_for_stake(round_stake_id: int):
         SELECT rp.id, rp.user_id, rs.stake_amount
         FROM round_participants rp
         JOIN round_stakes rs ON rp.round_stake_id = rs.id
-        WHERE rp.round_stake_id = ? AND rp.refunded = 0
+        WHERE rp.round_stake_id = %s AND rp.refunded = 0
     """, (round_stake_id,))
     participants = c.fetchall()
     
@@ -1850,7 +1802,7 @@ async def process_refunds_for_stake(round_stake_id: int):
         return []
     
     # Calculate refund amount (stake minus network fee)
-    c.execute("SELECT stake_amount FROM round_stakes WHERE id = ?", (round_stake_id,))
+    c.execute("SELECT stake_amount FROM round_stakes WHERE id = %s", (round_stake_id,))
     stake_row = c.fetchone()
     if not stake_row:
         print(f"❌ Stake {round_stake_id} not found")
@@ -1864,7 +1816,7 @@ async def process_refunds_for_stake(round_stake_id: int):
     c.execute("""
         UPDATE round_stakes
         SET status = 'pending_refund'
-        WHERE id = ?
+        WHERE id = %s
     """, (round_stake_id,))
     conn.commit()
     
@@ -1931,8 +1883,8 @@ async def process_refunds_for_stake(round_stake_id: int):
             # Mark as refunded in database
             c.execute("""
                 UPDATE round_participants
-                SET refunded = 1, refund_tx = ?
-                WHERE id = ?
+                SET refunded = 1, refund_tx = %s
+                WHERE id = %s
             """, (tx_signature, participant_id))
             conn.commit()
             
@@ -2010,7 +1962,7 @@ async def process_refunds_for_stake(round_stake_id: int):
         c.execute("""
             UPDATE round_stakes
             SET status = 'refunded'
-            WHERE id = ?
+            WHERE id = %s
         """, (round_stake_id,))
         conn.commit()
         print(f"✅ All refunds completed successfully for stake {round_stake_id}")
@@ -2037,11 +1989,11 @@ async def mark_refund_completed(participant_id: int, tx_signature: str):
     
     c.execute("""
         UPDATE round_participants
-        SET refunded = 1, refund_tx = ?
-        WHERE id = ?
+        SET refunded = 1, refund_tx = %s
+        WHERE id = %s
     """, (tx_signature, participant_id))
     
-    c.execute("SELECT user_id, round_stake_id FROM round_participants WHERE id = ?", (participant_id,))
+    c.execute("SELECT user_id, round_stake_id FROM round_participants WHERE id = %s", (participant_id,))
     participant_row = c.fetchone()
     
     if participant_row:
@@ -2049,7 +2001,7 @@ async def mark_refund_completed(participant_id: int, tx_signature: str):
         
         c.execute("""
             SELECT COUNT(*) FROM round_participants
-            WHERE round_stake_id = ? AND refunded = 0
+            WHERE round_stake_id = %s AND refunded = 0
         """, (stake_id,))
         pending_count = c.fetchone()[0]
         
@@ -2057,7 +2009,7 @@ async def mark_refund_completed(participant_id: int, tx_signature: str):
             c.execute("""
                 UPDATE round_stakes
                 SET status = 'refunded'
-                WHERE id = ?
+                WHERE id = %s
             """, (stake_id,))
             print(f"✅ Stake {stake_id} marked as fully refunded (all participants processed)")
         
@@ -2273,7 +2225,7 @@ def get_user_tickets_for_current_round(user_id: int) -> List[Dict]:
         FROM round_participants rp
         JOIN round_stakes rs ON rp.round_stake_id = rs.id
         JOIN scheduled_rounds sr ON rs.round_id = sr.round_id
-        WHERE rp.user_id = ? AND sr.status = 'open' AND rp.refunded = 0
+        WHERE rp.user_id = %s AND sr.status = 'open' AND rp.refunded = 0
         ORDER BY rp.created_at DESC
     """, (user_id,))
     rows = c.fetchall()
@@ -3046,21 +2998,14 @@ async def inline_handler(query: types.CallbackQuery):
         number_seed = generate_provable_seed(uid, round_num, tx_signature, "player_numbers")
         lottery_numbers = generate_lottery_numbers(number_seed, count=5, min_val=1, max_val=40)
         
-        # Add entry and get ticket ID
+        # Add entry and get ticket ID - PostgreSQL only
         conn = get_db_conn()
         c = conn.cursor()
-        if USE_POSTGRES:
-            c.execute(
-                "INSERT INTO entries(user_id, round, numbers, stake_amount, tx_signature, paid) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
-                (uid, round_num, numbers_to_str(lottery_numbers), float(amount), tx_signature, 1)
-            )
-            ticket_id = c.fetchone()[0]
-        else:
-            c.execute(
-                "INSERT INTO entries(user_id, round, numbers, stake_amount, tx_signature, paid) VALUES (?, ?, ?, ?, ?, ?)",
-                (uid, round_num, numbers_to_str(lottery_numbers), float(amount), tx_signature, 1)
-            )
-            ticket_id = c.lastrowid
+        c.execute(
+            "INSERT INTO entries(user_id, round, numbers, stake_amount, tx_signature, paid) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+            (uid, round_num, numbers_to_str(lottery_numbers), float(amount), tx_signature, 1)
+        )
+        ticket_id = c.fetchone()[0]
         conn.commit()
         conn.close()
 
@@ -3465,7 +3410,7 @@ async def inline_handler(query: types.CallbackQuery):
         
         conn = get_db_conn()
         c = conn.cursor()
-        c.execute("SELECT round_number, status, start_time FROM scheduled_rounds WHERE round_id = ?", (round_id,))
+        c.execute("SELECT round_number, status, start_time FROM scheduled_rounds WHERE round_id = %s", (round_id,))
         round_data = c.fetchone()
         conn.close()
         
@@ -3534,7 +3479,7 @@ async def inline_handler(query: types.CallbackQuery):
         
         conn = get_db_conn()
         c = conn.cursor()
-        c.execute("SELECT stake_amount, round_id FROM round_stakes WHERE id = ?", (stake_id,))
+        c.execute("SELECT stake_amount, round_id FROM round_stakes WHERE id = %s", (stake_id,))
         stake_row = c.fetchone()
         conn.close()
         
@@ -4669,7 +4614,7 @@ async def cmd_refund(message: types.Message):
             SELECT rp.id, rp.user_id, rs.stake_amount
             FROM round_participants rp
             JOIN round_stakes rs ON rp.round_stake_id = rs.id
-            WHERE rp.round_stake_id = ? AND rp.refunded = 0
+            WHERE rp.round_stake_id = %s AND rp.refunded = 0
         """, (stake_id,))
         participants = c.fetchall()
         conn.close()
@@ -4776,7 +4721,7 @@ async def cmd_force_draw(message: types.Message):
             
             conn = get_db_conn()
             c = conn.cursor()
-            c.execute("SELECT round_id, stake_amount FROM round_stakes WHERE id = ?", (stake_id,))
+            c.execute("SELECT round_id, stake_amount FROM round_stakes WHERE id = %s", (stake_id,))
             round_data = c.fetchone()
             conn.close()
             
@@ -4910,9 +4855,9 @@ async def schedule_daily_rounds():
                 if scheduled_dt > now:
                     conn = get_db_conn()
                     c = conn.cursor()
-                    # Convert timezone-aware datetime to ISO string for SQLite
+                    # Convert timezone-aware datetime to ISO string for PostgreSQL
                     scheduled_dt_str = scheduled_dt.isoformat()
-                    c.execute("SELECT round_id FROM scheduled_rounds WHERE scheduled_time = ?", (scheduled_dt_str,))
+                    c.execute("SELECT round_id FROM scheduled_rounds WHERE scheduled_time = %s", (scheduled_dt_str,))
                     existing = c.fetchone()
                     
                     if not existing:
@@ -5039,7 +4984,7 @@ async def announce_draw_result(round_id: int, result: dict):
             
             conn = get_db_conn()
             c = conn.cursor()
-            c.execute("SELECT username FROM users WHERE user_id = ?", (winner_id,))
+            c.execute("SELECT username FROM users WHERE user_id = %s", (winner_id,))
             user_row = c.fetchone()
             winner_name = user_row[0] if user_row and user_row[0] else f"User {winner_id}"
             conn.close()
@@ -5087,7 +5032,7 @@ async def dm_round_results_to_players(round_id: int, result: dict):
             SELECT rp.user_id, rp.numbers
             FROM round_participants rp
             JOIN round_stakes rs ON rp.round_stake_id = rs.id
-            WHERE rs.round_id = ? AND rp.refunded = 0
+            WHERE rs.round_id = %s AND rp.refunded = 0
         """, (round_id,))
         participants = c.fetchall()
         conn.close()
@@ -5240,7 +5185,7 @@ async def announce_new_ticket(user_id: int, ticket_id: int, stake_amount, number
     try:
         conn = get_db_conn()
         c = conn.cursor()
-        c.execute("SELECT username FROM users WHERE user_id = ?", (user_id,))
+        c.execute("SELECT username FROM users WHERE user_id = %s", (user_id,))
         user_row = c.fetchone()
         username = user_row[0] if user_row and user_row[0] else None
         conn.close()
@@ -5305,7 +5250,7 @@ async def announce_round_opened(round_id: int):
             SELECT COUNT(rp.id)
             FROM round_participants rp
             JOIN round_stakes rs ON rp.round_stake_id = rs.id
-            WHERE rs.round_id = ? AND rp.refunded = 0
+            WHERE rs.round_id = %s AND rp.refunded = 0
         """, (round_id,))
         player_count = c.fetchone()[0] or 0
         conn.close()
@@ -5346,7 +5291,7 @@ async def announce_winner(round_id: int, stake_amount: float, result: dict):
         
         conn = get_db_conn()
         c = conn.cursor()
-        c.execute("SELECT username FROM users WHERE user_id = ?", (winner_id,))
+        c.execute("SELECT username FROM users WHERE user_id = %s", (winner_id,))
         user_row = c.fetchone()
         winner_name = user_row[0] if user_row and user_row[0] else f"User {winner_id}"
         conn.close()
@@ -5412,7 +5357,7 @@ async def distribute_prize(stake_id: int, result: dict):
                         conn = get_db_conn()
                         c = conn.cursor()
                         c.execute("""
-                            UPDATE round_stakes SET tx_signature = ? WHERE id = ?
+                            UPDATE round_stakes SET tx_signature = %s WHERE id = %s
                         """, (prize_result["signature"], stake_id))
                         conn.commit()
                         conn.close()
