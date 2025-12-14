@@ -16,6 +16,7 @@ A Telegram-based cryptocurrency lottery bot with real Solana wallet integration.
 - **Bot Framework**: aiogram 3.4.1 (Telegram Bot API)
 - **Blockchain**: Solana mainnet via solana-py/solders
 - **Database**: PostgreSQL (required, no SQLite)
+- **AI Assistant**: GPT4All local model for user help and FAQ
 - **Encryption**: cryptography library for wallet private key encryption
 - **Caching**: In-memory cache layer for reduced DB/RPC reads
 - **Rate Limiting**: Per-user rate limits for spam prevention
@@ -26,12 +27,23 @@ A Telegram-based cryptocurrency lottery bot with real Solana wallet integration.
 - `db.py` - PostgreSQL-only database layer
 - `wallet.py` - Solana wallet management
 - `wallet_buttons.py` - Wallet action button handlers
+- `ai/ai_client.py` - AI assistant client with GPT4All integration
+- `ai/prompts.py` - AI prompts and FAQ responses
 - `email_service.py` - Email verification service
 - `encryption.py` - Private key encryption
 - `rpc_manager.py` - Centralized RPC with load balancing and failover
 - `cache_layer.py` - In-memory cache with TTL for reducing reads
 - `rate_limiter.py` - Per-user rate limiting and duplicate callback prevention
 - `tx_verification_queue.py` - Async transaction verification queue
+
+## AI Assistant Features
+- **How to Play** - Step-by-step gameplay guide
+- **Fairness Explanation** - How lottery ensures transparency
+- **Wallet Help** - Creating, importing, securing wallets
+- **Stats & VIP** - Statistics and VIP tier explanations
+- **Ask Questions** - Free-form Q&A with fallback FAQ
+
+Access via "AI Assistant" button in main menu.
 
 ## Required Environment Variables
 - `BOT_TOKEN` - Telegram Bot API token
@@ -50,6 +62,7 @@ A Telegram-based cryptocurrency lottery bot with real Solana wallet integration.
 - `ANNOUNCEMENTS_GROUP_ID` - Additional announcement group
 
 ## Recent Changes (December 2025)
+- **AI Assistant Added** - GPT4All-powered help system with FAQ fallback
 - **Production-ready refactoring** - Added caching, rate limiting, RPC load balancing
 - **RPC Manager** - Centralized RPC with Helius primary, round-robin reads, automatic failover
 - **Cache Layer** - In-memory cache for pot, round info, balances (10-60s TTL)
@@ -69,4 +82,5 @@ The bot will:
 - Initialize the PostgreSQL connection pool
 - Create all necessary tables
 - Initialize cache and rate limiter
+- Load AI model (lazy loading on first use)
 - Start listening for Telegram commands
