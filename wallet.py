@@ -1,5 +1,6 @@
 # Wallet.py - Real Solana Mainnet Wallet Management
 # SQLite fully removed. PostgreSQL only.
+# Now uses centralized RPC manager for load balancing and failover.
 
 import os
 import time
@@ -12,12 +13,8 @@ from decimal import Decimal
 from typing import Optional, List, Dict
 import asyncio
 
-# Balance cache for faster responses (especially for jackpot display)
-_balance_cache = {}
-BALANCE_CACHE_TTL = 30  # Cache balance for 30 seconds
-RPC_TIMEOUT = 5  # Timeout per RPC request in seconds
-
 from encryption import encrypt_private_key, decrypt_private_key, is_encryption_configured
+from cache_layer import get_cache
 
 try:
     from solders.keypair import Keypair
@@ -33,56 +30,43 @@ from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed
 
 # ==============================================================================
-# SOLANA RPC CONFIGURATION WITH AUTOMATIC FALLBACK
+# RPC CONFIGURATION - Uses centralized RPC Manager
 # ==============================================================================
-# Uses SOLANA_RPC as primary with public Solana RPC as automatic fallback.
+from rpc_manager import get_rpc_manager
 
-FALLBACK_RPC = "https://api.mainnet-beta.solana.com"
-SOLANA_RPC = os.getenv("SOLANA_RPC", FALLBACK_RPC)
-
-# Build the ordered list of RPC endpoints for failover
-def _build_rpc_list() -> list:
-    """Build ordered list of distinct RPC endpoints for failover."""
-    endpoints = []
-    
-    # Priority 1: SOLANA_RPC (your configured endpoint)
-    if SOLANA_RPC and SOLANA_RPC != FALLBACK_RPC:
-        endpoints.append(SOLANA_RPC)
-    
-    # Priority 2: Public Solana fallback (always available)
-    endpoints.append(FALLBACK_RPC)
-    
-    return endpoints
-
-RPC_ENDPOINTS = _build_rpc_list()
-
+RPC_TIMEOUT = 10  # Timeout per RPC request in seconds
 MAX_WALLETS_PER_USER = 1
+
+# Get singleton instances
+_rpc_manager = None
+_cache = None
+
+def _get_rpc():
+    global _rpc_manager
+    if _rpc_manager is None:
+        _rpc_manager = get_rpc_manager()
+    return _rpc_manager
+
+def _get_cache():
+    global _cache
+    if _cache is None:
+        _cache = get_cache()
+    return _cache
 
 
 def get_rpc_list() -> list:
-    """
-    Get the ordered list of RPC endpoints for failover.
-    Always returns at least the public fallback RPC.
-    """
-    return RPC_ENDPOINTS.copy()
+    """Get the list of RPC endpoints from the RPC manager."""
+    rpc = _get_rpc()
+    return [ep.url for ep in rpc._endpoints]
 
 
 async def get_working_rpc() -> str:
-    """
-    Get a working RPC endpoint, trying each in order until one succeeds.
-    Returns the RPC URL that successfully connects.
-    """
-    for rpc in RPC_ENDPOINTS:
-        try:
-            async with AsyncClient(rpc) as client:
-                response = await client.get_health()
-                if response:
-                    return rpc
-        except Exception as e:
-            print(f"RPC {rpc[:30]}... failed: {e}")
-            continue
-    
-    return FALLBACK_RPC
+    """Get a working RPC endpoint using RPC manager."""
+    rpc = _get_rpc()
+    for ep in rpc._endpoints:
+        if ep.is_healthy:
+            return ep.url
+    return "https://api.mainnet-beta.solana.com"
 
 
 
@@ -94,56 +78,35 @@ def init_wallet_db():
 async def get_real_balance(wallet_address: str, use_cache: bool = True) -> Decimal:
     """
     Fetch real balance from Solana mainnet using lamports conversion.
-    Uses all configured RPC endpoints with automatic failover.
+    Uses centralized RPC manager with load balancing and failover.
     Returns balance in SOL.
     
     Args:
         wallet_address: Solana wallet address
         use_cache: If True, uses cached balance if available (default: True)
     """
-    global _balance_cache
+    cache = _get_cache()
     
     # Check cache first (for faster button responses)
-    if use_cache and wallet_address in _balance_cache:
-        cached_time, cached_balance = _balance_cache[wallet_address]
-        if time.time() - cached_time < BALANCE_CACHE_TTL:
+    if use_cache:
+        cached_balance = cache.get_balance(wallet_address)
+        if cached_balance is not None:
             return cached_balance
     
-    last_error = None
-    for rpc in RPC_ENDPOINTS:
-        try:
-            print(f"Checking balance for {wallet_address[:8]}... using RPC: {rpc[:30]}...")
-            
-            async def fetch_balance():
-                async with AsyncClient(rpc) as client:
-                    pubkey = Pubkey.from_string(wallet_address)
-                    return await client.get_balance(pubkey, commitment=Confirmed)
-            
-            # Add timeout to prevent slow RPC from blocking
-            response = await asyncio.wait_for(fetch_balance(), timeout=RPC_TIMEOUT)
-
-            if response.value is not None:
-                lamports = response.value
-                sol_balance = Decimal(lamports) / Decimal(1_000_000_000)
-                print(f"Balance: {sol_balance} SOL ({lamports} lamports)")
-                # Cache the result
-                _balance_cache[wallet_address] = (time.time(), sol_balance)
-                return sol_balance
-            _balance_cache[wallet_address] = (time.time(), Decimal("0"))
-            return Decimal("0")
-        except asyncio.TimeoutError:
-            print(f"RPC timeout ({rpc[:30]}...) after {RPC_TIMEOUT}s, trying next endpoint...")
-            continue
-        except Exception as e:
-            last_error = e
-            print(f"RPC error ({rpc[:30]}...): {e}, trying next endpoint...")
-            continue
-    
-    print(f"Error fetching balance for {wallet_address}: {last_error}")
-    # Return cached value if available, even if expired (better than 0)
-    if wallet_address in _balance_cache:
-        return _balance_cache[wallet_address][1]
-    return Decimal("0")
+    try:
+        rpc = _get_rpc()
+        lamports = await rpc.get_balance(wallet_address)
+        sol_balance = Decimal(lamports) / Decimal(1_000_000_000)
+        print(f"[Wallet] Balance for {wallet_address[:8]}...: {sol_balance} SOL")
+        cache.set_balance(wallet_address, sol_balance)
+        return sol_balance
+    except Exception as e:
+        print(f"[Wallet] Error fetching balance for {wallet_address[:8]}...: {e}")
+        # Return cached value if available (even expired)
+        cached = cache.get_balance(wallet_address)
+        if cached is not None:
+            return cached
+        return Decimal("0")
 
 
 def get_user_wallets(user_id: int) -> List[Dict]:

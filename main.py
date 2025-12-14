@@ -2388,6 +2388,23 @@ async def inline_handler(query: types.CallbackQuery):
     data = query.data
     uid = query.from_user.id
 
+    # Prevent duplicate callback processing (double-clicks)
+    callback_id = f"{uid}:{data}:{query.message.message_id if query.message else ''}"
+    if is_duplicate_callback(callback_id, window_seconds=1.5):
+        try:
+            await query.answer()
+        except:
+            pass
+        return
+
+    # Rate limiting for button clicks
+    if not rate_limiter.is_allowed(uid, RateLimitAction.BUTTON_CLICK):
+        try:
+            await query.answer("Please slow down!", show_alert=False)
+        except:
+            pass
+        return
+
     if data == "play_now":
         await query.answer()
         await start_private_play(uid)
