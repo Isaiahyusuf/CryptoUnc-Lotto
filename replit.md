@@ -10,12 +10,16 @@ A Telegram-based cryptocurrency lottery bot with real Solana wallet integration.
 - Connected via `DATABASE_URL` environment variable
 - All tables recreated cleanly without old constraints
 - Users can buy multiple tickets per round (no UNIQUE constraint on user_id, round_stake_id)
+- Optimized indexes for round_id, user_id+round_stake_id, transaction_signature
 
 ## Architecture
 - **Bot Framework**: aiogram 3.4.1 (Telegram Bot API)
 - **Blockchain**: Solana mainnet via solana-py/solders
 - **Database**: PostgreSQL (required, no SQLite)
 - **Encryption**: cryptography library for wallet private key encryption
+- **Caching**: In-memory cache layer for reduced DB/RPC reads
+- **Rate Limiting**: Per-user rate limits for spam prevention
+- **RPC Management**: Centralized RPC manager with load balancing and failover
 
 ## Key Files
 - `main.py` - Main bot logic and handlers
@@ -24,6 +28,10 @@ A Telegram-based cryptocurrency lottery bot with real Solana wallet integration.
 - `wallet_buttons.py` - Wallet action button handlers
 - `email_service.py` - Email verification service
 - `encryption.py` - Private key encryption
+- `rpc_manager.py` - Centralized RPC with load balancing and failover
+- `cache_layer.py` - In-memory cache with TTL for reducing reads
+- `rate_limiter.py` - Per-user rate limiting and duplicate callback prevention
+- `tx_verification_queue.py` - Async transaction verification queue
 
 ## Required Environment Variables
 - `BOT_TOKEN` - Telegram Bot API token
@@ -36,19 +44,21 @@ A Telegram-based cryptocurrency lottery bot with real Solana wallet integration.
 
 ## Optional Environment Variables
 - `SOLANA_RPC` - Custom Solana RPC endpoint
+- `HELIUS_RPC` - Helius RPC endpoint (primary for writes)
 - `TEAM_WALLET` - Team Solana wallet for fees
 - `SUPPORT_USERNAME` - Support contact
 - `ANNOUNCEMENTS_GROUP_ID` - Additional announcement group
 
 ## Recent Changes (December 2025)
+- **Production-ready refactoring** - Added caching, rate limiting, RPC load balancing
+- **RPC Manager** - Centralized RPC with Helius primary, round-robin reads, automatic failover
+- **Cache Layer** - In-memory cache for pot, round info, balances (10-60s TTL)
+- **Rate Limiter** - Per-user rate limits for buttons, purchases, commands
+- **Duplicate Callback Prevention** - Prevents double-click processing
+- **Async TX Verification Queue** - Background transaction verification (not yet fully integrated)
+- **Database Indexes** - Added indexes for (user_id, round_stake_id), tx_signature
 - **SQLite fully removed** - PostgreSQL is now mandatory
-- **Clean database reset** - All tables dropped and recreated
 - **Multiple tickets per user** - No UNIQUE constraint on (user_id, round_stake_id)
-- **Single runtime verification** - Prevents duplicate bot instances
-- **Railway restriction removed** - Bot can run on any platform with DATABASE_URL
-- **Security question answers now hidden** - Answers are deleted immediately after typing (like PIN)
-- **Double confirmation for security answers** - Users must enter answer twice (like PIN confirmation)
-- **Improved number selection UX** - Replaced "session expired" errors with friendly guidance messages
 
 ## Running the Bot
 1. Set all required environment variables
@@ -58,4 +68,5 @@ A Telegram-based cryptocurrency lottery bot with real Solana wallet integration.
 The bot will:
 - Initialize the PostgreSQL connection pool
 - Create all necessary tables
+- Initialize cache and rate limiter
 - Start listening for Telegram commands
