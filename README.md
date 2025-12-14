@@ -160,11 +160,11 @@ Tech Stack 🛠
 Component
 Description
 Language
-Python 3.10+
+Python 3.11+
 Framework
 Aiogram 3.x
 Database
-SQLite (Phase 2 can upgrade to PostgreSQL)
+PostgreSQL (required)
 Blockchain
 Solana (Mainnet)
 Wallet
@@ -192,7 +192,7 @@ STAKE_AMOUNT_SOL=0.1
 Initialize database
 python main.py
 
-This will automatically create the SQLite database and tables.
+This will automatically connect to PostgreSQL and create all required tables.
 
 
 Usage

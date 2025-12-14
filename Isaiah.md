@@ -29,7 +29,7 @@ A decentralized lottery bot for Telegram with **real Solana mainnet integration*
 - **Language**: Python 3.11
 - **Framework**: Aiogram 2.25.1 (Telegram Bot)
 - **Blockchain**: Solana Mainnet
-- **Database**: SQLite (local file-based database)
+- **Database**: PostgreSQL (required, no local files)
 - **Hosting**: Replit
 
 ## Recent Changes (Nov 9, 2025)
@@ -69,7 +69,7 @@ A decentralized lottery bot for Telegram with **real Solana mainnet integration*
 ├── requirements.txt     # Python dependencies
 ├── .gitignore          # Git ignore rules for Python
 ├── .env                # Local environment variables (not used, use Replit Secrets)
-└── cryptounc_lotto.db  # SQLite database (auto-created)
+└── (PostgreSQL database - external, no local files)
 ```
 
 ### Database Tables

@@ -147,7 +147,7 @@ MIN_PLAYERS_PER_STAKE = 10  # Line 146
 #### 8. ✅ Database Persistence
 **Status:** IMPLEMENTED  
 **Features:**
-- SQLite database with comprehensive schema
+- PostgreSQL database with comprehensive schema
 - Stores: users, wallets, entries, draws, rounds, participants, refunds
 - Transaction signatures tracked
 - Wallet encryption with AES

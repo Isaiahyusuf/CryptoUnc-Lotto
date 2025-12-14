@@ -191,7 +191,7 @@ In Replit:
 
 ### Database
 
-Your bot uses SQLite database: `cryptounc_lotto.db`
+Your bot uses PostgreSQL database (DATABASE_URL environment variable).
 
 **Tables:**
 - `users` - All Telegram users
