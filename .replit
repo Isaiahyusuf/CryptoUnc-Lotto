@@ -1,4 +1,4 @@
-modules = ["python-3.12", "web"]
+modules = ["web", "python-3.11"]
 [agent]
 expertMode = true
 
@@ -37,12 +37,12 @@ outputType = "console"
 name = "telegram-bot"
 author = "agent"
 
+[workflows.workflow.metadata]
+outputType = "console"
+
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "python main.py"
-
-[workflows.workflow.metadata]
-outputType = "console"
 
 [[ports]]
 localPort = 5000
