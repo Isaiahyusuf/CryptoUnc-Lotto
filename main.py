@@ -90,6 +90,16 @@ from cache_layer import get_cache
 from rate_limiter import get_rate_limiter, RateLimitAction, is_duplicate_callback
 from tx_verification_queue import get_tx_queue
 
+from ai.ai_client import (
+    get_ai_help,
+    get_fairness_explanation,
+    get_how_to_play,
+    get_wallet_help,
+    get_stats_explanation,
+    get_support_guidance,
+    is_ai_available
+)
+
 load_dotenv()
 
 cache = get_cache()
@@ -2151,8 +2161,9 @@ async def cmd_start(message: types.Message):
          InlineKeyboardButton(text="🎁 Invite Friends", callback_data="referral")],
         [InlineKeyboardButton(text="📊 Results", callback_data="view_results"),
          InlineKeyboardButton(text="📘 Rules", callback_data="rules")],
-        [InlineKeyboardButton(text="⚙️ Settings", callback_data="settings"),
-         InlineKeyboardButton(text="🛠 Support", callback_data="support")]
+        [InlineKeyboardButton(text="🤖 AI Assistant", callback_data="ai_menu"),
+         InlineKeyboardButton(text="🛠 Support", callback_data="support")],
+        [InlineKeyboardButton(text="⚙️ Settings", callback_data="settings")]
     ])
     await message.answer(
         f"🎟️ <b>Welcome to CryptoUnc Lotto!</b> {vip_badge}\n\n"
@@ -3138,6 +3149,92 @@ async def inline_handler(query: types.CallbackQuery):
         keyboard = create_keyboard_with_nav([])
         await query.message.answer(support_text, reply_markup=keyboard, parse_mode="HTML")
 
+    elif data == "ai_menu":
+        await query.answer()
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📖 How to Play", callback_data="ai_how_to_play")],
+            [InlineKeyboardButton(text="⚖️ Is It Fair?", callback_data="ai_fairness")],
+            [InlineKeyboardButton(text="💼 Wallet Help", callback_data="ai_wallet_help")],
+            [InlineKeyboardButton(text="📊 Stats & VIP Explained", callback_data="ai_stats")],
+            [InlineKeyboardButton(text="❓ Ask a Question", callback_data="ai_ask_question")],
+            [InlineKeyboardButton(text="🔙 Back", callback_data="back_to_main")]
+        ])
+        await bot.send_message(uid,
+            "🤖 <b>AI Assistant</b>\n\n"
+            "I'm here to help you understand CryptoUnc Lotto!\n\n"
+            "Choose a topic below or ask me anything:",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+
+    elif data == "ai_how_to_play":
+        await query.answer("Loading...")
+        try:
+            response = await get_how_to_play()
+            keyboard = create_keyboard_with_nav([], "ai_menu")
+            await bot.send_message(uid,
+                f"📖 <b>How to Play CryptoUnc Lotto</b>\n\n{response}",
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            await bot.send_message(uid, "Sorry, I couldn't load the guide. Please try again.")
+
+    elif data == "ai_fairness":
+        await query.answer("Loading...")
+        try:
+            response = await get_fairness_explanation()
+            keyboard = create_keyboard_with_nav([], "ai_menu")
+            await bot.send_message(uid,
+                f"⚖️ <b>Fairness & Transparency</b>\n\n{response}",
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            await bot.send_message(uid, "Sorry, I couldn't load the explanation. Please try again.")
+
+    elif data == "ai_wallet_help":
+        await query.answer("Loading...")
+        try:
+            response = await get_wallet_help()
+            keyboard = create_keyboard_with_nav([], "ai_menu")
+            await bot.send_message(uid,
+                f"💼 <b>Wallet Help</b>\n\n{response}",
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            await bot.send_message(uid, "Sorry, I couldn't load wallet help. Please try again.")
+
+    elif data == "ai_stats":
+        await query.answer("Loading...")
+        try:
+            response = await get_stats_explanation()
+            keyboard = create_keyboard_with_nav([], "ai_menu")
+            await bot.send_message(uid,
+                f"📊 <b>Stats & VIP System</b>\n\n{response}",
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            await bot.send_message(uid, "Sorry, I couldn't load stats info. Please try again.")
+
+    elif data == "ai_ask_question":
+        await query.answer()
+        user_states[uid] = {"action": "ai_question"}
+        keyboard = create_keyboard_with_nav([], "ai_menu")
+        await bot.send_message(uid,
+            "❓ <b>Ask the AI Assistant</b>\n\n"
+            "Type your question about CryptoUnc Lotto and I'll do my best to help!\n\n"
+            "Examples:\n"
+            "• How do I buy a ticket?\n"
+            "• What happens if no one wins?\n"
+            "• How are winners selected?\n"
+            "• Is my wallet secure?",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+
     elif data == "settings":
         await query.answer()
         has_pin = has_user_pin(uid)
@@ -3746,6 +3843,26 @@ async def generic_message_handler(message: types.Message):
     if uid in user_states:
         state = user_states[uid]
         action = state.get("action")
+        
+        # Handle AI question
+        if action == "ai_question":
+            del user_states[uid]
+            try:
+                await message.delete()
+            except:
+                pass
+            thinking_msg = await bot.send_message(uid, "🤔 Thinking...")
+            try:
+                response = await get_ai_help(text)
+                keyboard = create_keyboard_with_nav([], "ai_menu")
+                await thinking_msg.edit_text(
+                    f"🤖 <b>AI Assistant</b>\n\n{response}",
+                    reply_markup=keyboard,
+                    parse_mode="HTML"
+                )
+            except Exception as e:
+                await thinking_msg.edit_text("Sorry, I couldn't process your question. Please try again.")
+            return
         
         # Handle PIN setting
         if action == "set_pin_after_wallet":
