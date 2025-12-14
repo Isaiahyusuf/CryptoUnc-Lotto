@@ -46,6 +46,9 @@ A Telegram-based cryptocurrency lottery bot with real Solana wallet integration.
 - **Multiple tickets per user** - No UNIQUE constraint on (user_id, round_stake_id)
 - **Single runtime verification** - Prevents duplicate bot instances
 - **Railway restriction removed** - Bot can run on any platform with DATABASE_URL
+- **Security question answers now hidden** - Answers are deleted immediately after typing (like PIN)
+- **Double confirmation for security answers** - Users must enter answer twice (like PIN confirmation)
+- **Improved number selection UX** - Replaced "session expired" errors with friendly guidance messages
 
 ## Running the Bot
 1. Set all required environment variables
