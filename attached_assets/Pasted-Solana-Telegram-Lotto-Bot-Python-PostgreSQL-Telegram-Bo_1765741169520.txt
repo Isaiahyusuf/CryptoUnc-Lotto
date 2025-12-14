@@ -1,0 +1,250 @@
+Solana Telegram Lotto Bot (Python, PostgreSQL, Telegram Bot API)
+
+OBJECTIVE
+
+Make the bot production-safe for high traffic by fixing concurrency, RPC usage, database logic, and background processing.
+No UI or feature changes.
+
+⸻
+
+1️⃣ INSTANCE CONTROL (CRITICAL)
+	1.	Ensure only ONE bot instance runs.
+	2.	Disable or remove:
+	•	Any Replit deployments
+	•	Any Vercel deployments
+	3.	Railway must be the single source of execution.
+	4.	Verify only one process is bound to the Telegram bot token.
+
+⸻
+
+2️⃣ DATABASE (POSTGRESQL ONLY)
+	1.	Remove all SQLite code and imports.
+	2.	PostgreSQL must be accessed only via DATABASE_URL.
+	3.	Ensure tickets table:
+	•	Allows multiple tickets per user per round
+	•	No UNIQUE constraint on (user_id, round_id)
+	4.	Add or verify indexes:
+	•	round_id
+	•	(user_id, round_id)
+	•	transaction_signature
+	5.	Ticket creation must happen only after transaction confirmation.
+
+⸻
+
+3️⃣ RPC ARCHITECTURE
+	1.	Centralize all RPC logic into a single RPC manager.
+	2.	Define RPC endpoints:
+	•	Primary: Helius RPC (write + read)
+	•	Secondary: Helius RPC (read)
+	•	Fallback: Solana public RPC
+	3.	Use round-robin selection for READ calls.
+	4.	Use primary Helius ONLY for WRITE calls.
+	5.	Implement timeout + retry:
+	•	Retry once using next endpoint
+	•	Max retries = 2
+	6.	Remove direct RPC usage elsewhere in code.
+
+⸻
+
+4️⃣ TRANSACTION VERIFICATION (ASYNC ONLY)
+	1.	Remove transaction confirmation logic from:
+	•	Telegram callbacks
+	•	Command handlers
+	2.	Implement a background verification queue.
+	3.	Flow:
+	•	User submits tx
+	•	Bot responds instantly
+	•	Tx signature is queued
+	•	Worker verifies tx asynchronously
+	•	On success → tickets inserted
+	4.	Ignore duplicate transaction signatures.
+
+⸻
+
+5️⃣ CACHING
+	1.	Add cache abstraction layer.
+	2.	Redis preferred, in-memory fallback allowed.
+	3.	Cache:
+	•	Active round data
+	•	Ticket price
+	•	Prize pool
+	•	User ticket count
+	4.	Cache TTL:
+	•	Round info: 10–30s
+	•	Ticket price: 60s
+	•	Prize pool: 15–30s
+	5.	Reads must check cache first.
+
+⸻
+
+6️⃣ TELEGRAM CONCURRENCY SAFETY
+	1.	Ensure handlers are async-safe.
+	2.	Remove blocking RPC or DB calls from handlers.
+	3.	Heavy operations must run in background tasks.
+	4.	Prevent duplicate callback execution.
+
+⸻
+
+7️⃣ RATE LIMITING
+	1.	Add per-user rate limiting:
+	•	Button clicks
+	•	Ticket purchases
+	2.	Ignore spam requests silently.
+	3.	Log abuse events.
+
+⸻
+
+8️⃣ LOGGING & VALIDATION
+	1.	Log:
+	•	RPC endpoint usage
+	•	Tx verification results
+	•	Ticket creation
+	2.	Test:
+	•	Multiple users concurrently
+	•	Same user buying multiple tickets
+	3.	Confirm:
+	•	No UNIQUE constraint errors
+	•	Fast bot responses
+	•	Async tx verification works
+
+⸻
+
+✅ PART 2: STRICT EXECUTION CHECKLIST
+
+Agent must confirm ALL:
+	•	Only one bot instance running
+	•	SQLite fully removed
+	•	PostgreSQL only
+	•	User can buy multiple tickets per round
+	•	RPC calls centralized
+	•	Helius used for writes only
+	•	RPC fallback works
+	•	Tx verification is async
+	•	Cache reduces RPC reads
+	•	No blocking calls in handlers
+	•	Rate limiting enabled
+	•	Logs show tx → ticket lifecycle
+	•	Bot responds instantly under load
+
+⸻
+
+🧩 PART 3: COMMIT-BY-COMMIT TASK BREAKDOWN
+
+🔹 COMMIT 1: Database Cleanup
+	•	Remove SQLite
+	•	Fix constraints
+	•	Add indexes
+
+Message:
+fix(db): remove sqlite, allow multiple tickets per round
+
+⸻
+
+🔹 COMMIT 2: RPC Manager
+	•	Centralize RPC
+	•	Add round-robin + fallback
+
+Message:
+feat(rpc): add rpc manager with load balancing and fallback
+
+⸻
+
+🔹 COMMIT 3: Async Tx Verification
+	•	Add queue
+	•	Add worker
+	•	Remove blocking verification
+
+Message:
+feat(tx): async transaction verification queue
+
+⸻
+
+🔹 COMMIT 4: Cache Layer
+	•	Add cache abstraction
+	•	Cache round + pricing + counts
+
+Message:
+feat(cache): add caching for round and ticket reads
+
+⸻
+
+🔹 COMMIT 5: Bot Concurrency Safety
+	•	Remove blocking calls
+	•	Add background tasks
+	•	Prevent duplicate callbacks
+
+Message:
+fix(bot): async-safe handlers and task offloading
+
+⸻
+
+🔹 COMMIT 6: Rate Limiting & Logging
+	•	Add per-user limits
+	•	Improve logs
+
+Message:
+feat(security): rate limiting and improved logging
+
+
+STRICT INSTRUCTION — DO NOT CHANGE BOT FLOW OR DATA
+
+VERY IMPORTANT
+	•	Do NOT create a new database
+	•	Do NOT delete, reset, truncate, or recreate any tables
+	•	Do NOT modify existing user flows, commands, or UI
+	•	Do NOT change how users interact with the bot
+	•	Do NOT change payment flow or wallet logic
+
+The bot must behave exactly the same from the user’s perspective.
+
+⸻
+
+WHAT IS ALLOWED (SAFE CHANGES ONLY)
+	•	Refactor internal logic only
+	•	Move blocking operations to background tasks
+	•	Add caching for read operations
+	•	Add RPC load balancing and fallback
+	•	Remove UNIQUE constraint that blocks multiple ticket purchases
+	•	Add indexes (non-destructive)
+	•	Improve logging and error handling
+	•	Add rate limiting (silent, no UX change)
+
+⸻
+
+FLOW PRESERVATION REQUIREMENT
+
+The following flow must remain UNCHANGED:
+	1.	User joins bot
+	2.	User selects round
+	3.	User buys ticket
+	4.	User sends transaction
+	5.	Bot confirms and assigns ticket
+
+Only the internal execution timing may change (async instead of blocking).
+
+⸻
+
+TRANSACTION HANDLING RULE
+	•	User must receive immediate response after submitting a transaction
+	•	Ticket creation must still happen only after on-chain confirmation
+	•	No duplicate tickets for the same transaction
+	•	No loss of existing transaction history
+
+⸻
+
+DATABASE SAFETY RULE
+	•	Use the current PostgreSQL database
+	•	Use the existing DATABASE_URL
+	•	Apply non-destructive changes only
+	•	Existing rows must remain untouched
+
+⸻
+
+FINAL CONFIRMATION REQUIRED FROM AGENT
+
+Before deploying, agent must confirm:
+
+“All changes are internal refactors only.
+No database was recreated.
+No user flow was changed.
+Existing data remains intact.”

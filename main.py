@@ -86,7 +86,15 @@ from email_service import (
     is_email_available
 )
 
+from cache_layer import get_cache
+from rate_limiter import get_rate_limiter, RateLimitAction, is_duplicate_callback
+from tx_verification_queue import get_tx_queue
+
 load_dotenv()
+
+cache = get_cache()
+rate_limiter = get_rate_limiter()
+tx_queue = get_tx_queue()
 
 # ==============================================================================
 # KEYBOARD HELPERS - Start and Back buttons for every prompt
@@ -440,15 +448,19 @@ STAKE_PACKAGES = [TICKET_PRICE]  # Single fixed price
 # If no one wins, 20% goes to team and 80% carries forward.
 
 def get_current_pot() -> Decimal:
-    """Get the current accumulated pot amount from database"""
+    """Get the current accumulated pot amount from database with caching"""
+    cached = cache.get_prize_pool()
+    if cached is not None:
+        return cached
+    
     conn = get_db_conn()
     c = conn.cursor()
     c.execute("SELECT value FROM meta WHERE key = 'current_pot'")
     row = c.fetchone()
     conn.close()
-    if row:
-        return Decimal(row[0])
-    return Decimal("0")
+    pot_value = Decimal(row[0]) if row else Decimal("0")
+    cache.set_prize_pool(pot_value)
+    return pot_value
 
 
 def set_current_pot(amount: Decimal):
@@ -461,6 +473,7 @@ def set_current_pot(amount: Decimal):
     """, (str(amount), str(amount)))
     conn.commit()
     conn.close()
+    cache.set_prize_pool(amount)
 
 
 def add_to_pot(amount: Decimal):
@@ -474,6 +487,12 @@ def add_to_pot(amount: Decimal):
 def reset_pot():
     """Reset pot to zero after a winner claims it"""
     set_current_pot(Decimal("0"))
+    cache.invalidate_prize_pool()
+
+
+async def check_rate_limit(user_id: int, action: RateLimitAction) -> bool:
+    """Check if user action is allowed. Returns True if allowed."""
+    return rate_limiter.is_allowed(user_id, action)
 
 
 bot = Bot(token=BOT_TOKEN)

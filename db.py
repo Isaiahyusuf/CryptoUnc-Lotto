@@ -478,7 +478,7 @@ def init_all_tables():
     except Exception as e:
         print(f"[Database] Meta init note: {e}")
     
-    # Create indexes
+    # Create indexes for performance optimization
     try:
         c.execute("CREATE INDEX IF NOT EXISTS idx_wallets_user ON wallets(user_id)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_entries_user ON entries(user_id)")
@@ -487,9 +487,13 @@ def init_all_tables():
         c.execute("CREATE INDEX IF NOT EXISTS idx_round_stakes ON round_stakes(round_id)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_participants_stake ON round_participants(round_stake_id)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_participants_user ON round_participants(user_id)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_participants_user_stake ON round_participants(user_id, round_stake_id)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_participants_tx ON round_participants(tx_signature)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_id)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_draw_history_round ON draw_history(round_id)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_email_codes_user ON email_verification_codes(user_id)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_wallet_tx_user ON wallet_transactions(user_id)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_wallet_tx_sig ON wallet_transactions(tx_signature)")
     except Exception as e:
         print(f"[Database] Index creation note: {e}")
     
