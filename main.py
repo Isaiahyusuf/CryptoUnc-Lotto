@@ -3542,7 +3542,17 @@ async def inline_handler(query: types.CallbackQuery):
         num = int(data.split("_")[2])
         
         if uid not in user_selected_numbers:
-            await query.answer("Your ticket is saved. Return anytime to continue.")
+            # No active session - guide user to start fresh
+            await query.answer("Please start a new ticket purchase.", show_alert=False)
+            try:
+                await query.message.edit_text(
+                    "🎫 <b>Ready to Buy a Ticket?</b>\n\n"
+                    "Your previous selection session has ended.\n"
+                    "Use /start to return to the main menu and buy a new ticket.",
+                    parse_mode="HTML"
+                )
+            except:
+                pass
             return
         
         selected = user_selected_numbers[uid]["numbers"]
@@ -3611,7 +3621,17 @@ async def inline_handler(query: types.CallbackQuery):
             
             user_states[uid]["selected_numbers"] = selected
         else:
-            await query.answer("Session expired. Please start again.")
+            # No active session - guide user to start fresh instead of showing error
+            await query.answer("Please start a new ticket purchase.", show_alert=False)
+            try:
+                await query.message.edit_text(
+                    "🎫 <b>Ready to Buy a Ticket?</b>\n\n"
+                    "Your previous selection session has ended.\n"
+                    "Use /start to return to the main menu and buy a new ticket.",
+                    parse_mode="HTML"
+                )
+            except:
+                pass
             return
         
         selected_str = ", ".join(map(str, sorted(selected))) if selected else "None"
@@ -3652,7 +3672,19 @@ async def inline_handler(query: types.CallbackQuery):
                 )
             except:
                 pass
-        await query.answer("Cleared!")
+            await query.answer("Cleared!")
+        else:
+            # No active session
+            await query.answer("Please start a new ticket purchase.", show_alert=False)
+            try:
+                await query.message.edit_text(
+                    "🎫 <b>Ready to Buy a Ticket?</b>\n\n"
+                    "Your previous selection session has ended.\n"
+                    "Use /start to return to the main menu and buy a new ticket.",
+                    parse_mode="HTML"
+                )
+            except:
+                pass
     
     elif data == "cancel_number_selection":
         if uid in user_selected_numbers:
@@ -4038,30 +4070,80 @@ async def generic_message_handler(message: types.Message):
         
         elif action == "enter_security_answer":
             answer = text.strip()
+            
+            # Validate length first before deleting
             if len(answer) < 2:
-                await message.answer("❌ Answer is too short. Please enter a longer answer:")
+                # Delete message even on error (security)
+                try:
+                    await message.delete()
+                except:
+                    pass
+                await bot.send_message(uid, "❌ Answer is too short. Please enter a longer answer:")
                 return
             
+            # Delete answer message for security (like PIN)
+            try:
+                await message.delete()
+            except:
+                pass
+            
+            # First time entering - ask to confirm (like PIN double entry)
             question = state.get("question")
-            if save_security_question(uid, question, answer):
-                del user_states[uid]
-                await bot.send_message(uid,
-                    "✅ <b>Security Question Saved!</b>\n\n"
-                    "You can now use this to reset your PIN if you forget it.\n\n"
-                    f"❓ Question: {question}\n"
-                    f"💡 Tip: Remember your answer!",
-                    reply_markup=create_keyboard_with_nav([]),
-                    parse_mode="HTML"
-                )
+            user_states[uid] = {"action": "confirm_security_answer", "question": question, "first_answer": answer}
+            await bot.send_message(uid,
+                f"🔐 <b>Confirm Your Answer</b>\n\n"
+                f"❓ Question: {question}\n\n"
+                f"Please enter your answer again to confirm:",
+                parse_mode="HTML"
+            )
+            return
+        
+        elif action == "confirm_security_answer":
+            answer = text.strip()
+            first_answer = state.get("first_answer")
+            question = state.get("question")
+            
+            # Delete answer message for security (like PIN)
+            try:
+                await message.delete()
+            except:
+                pass
+            
+            if answer == first_answer:
+                if save_security_question(uid, question, answer):
+                    del user_states[uid]
+                    await bot.send_message(uid,
+                        "✅ <b>Security Question Saved!</b>\n\n"
+                        "You can now use this to reset your PIN if you forget it.\n\n"
+                        f"❓ Question: {question}\n"
+                        f"💡 Tip: Remember your answer!",
+                        reply_markup=create_keyboard_with_nav([]),
+                        parse_mode="HTML"
+                    )
+                else:
+                    del user_states[uid]
+                    await bot.send_message(uid,
+                        "❌ Failed to save security question. Please try again.",
+                        reply_markup=create_keyboard_with_nav([])
+                    )
             else:
-                del user_states[uid]
+                # Answers don't match - start over
+                user_states[uid] = {"action": "enter_security_answer", "question": question}
                 await bot.send_message(uid,
-                    "❌ Failed to save security question. Please try again.",
-                    reply_markup=create_keyboard_with_nav([])
+                    f"❌ <b>Answers don't match!</b>\n\n"
+                    f"❓ Question: {question}\n\n"
+                    f"Please enter your answer again:",
+                    parse_mode="HTML"
                 )
             return
         
         elif action == "verify_security_answer_for_reset":
+            # Delete answer message immediately for security (like PIN)
+            try:
+                await message.delete()
+            except:
+                pass
+            
             answer = text.strip()
             
             if verify_security_answer(uid, answer):
@@ -4083,6 +4165,12 @@ async def generic_message_handler(message: types.Message):
             return
         
         elif action == "verify_security_for_change":
+            # Delete answer message immediately for security (like PIN)
+            try:
+                await message.delete()
+            except:
+                pass
+            
             answer = text.strip()
             
             if verify_security_answer(uid, answer):
