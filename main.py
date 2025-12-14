@@ -5197,6 +5197,9 @@ async def announce_new_ticket(user_id: int, ticket_id: int, stake_amount, number
         except:
             jackpot = Decimal("0")
         
+        bot_info = await bot.get_me()
+        bot_username = bot_info.username
+        
         message_text = (
             f"🎫 <b>New Ticket Purchased!</b>\n\n"
             f"👤 {player_display}\n"
@@ -5208,7 +5211,11 @@ async def announce_new_ticket(user_id: int, ticket_id: int, stake_amount, number
             f"🏆 Current Jackpot: <b>{jackpot} SOL</b>"
         )
         
-        await send_to_announcements(message_text)
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🎲 Play Now", url=f"https://t.me/{bot_username}?start=play")]
+        ])
+        
+        await send_to_announcements(message_text, keyboard)
     except Exception as e:
         print(f"❌ Ticket announcement error: {e}")
 
@@ -5221,6 +5228,9 @@ async def announce_round_cancelled(round_id: int, player_count: int, refund_coun
         except:
             jackpot = Decimal("0")
         
+        bot_info = await bot.get_me()
+        bot_username = bot_info.username
+        
         message_text = (
             f"⚠️ <b>Round {round_id} Cancelled</b>\n\n"
             f"👥 Players: {player_count}\n"
@@ -5230,7 +5240,11 @@ async def announce_round_cancelled(round_id: int, player_count: int, refund_coun
             f"Join the next round for a chance to win!"
         )
         
-        await send_to_announcements(message_text)
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🎲 Join Next Round", url=f"https://t.me/{bot_username}?start=play")]
+        ])
+        
+        await send_to_announcements(message_text, keyboard)
     except Exception as e:
         print(f"❌ Round cancelled announcement error: {e}")
 
@@ -5238,6 +5252,9 @@ async def announce_round_cancelled(round_id: int, player_count: int, refund_coun
 async def announce_round_opened(round_id: int):
     """Announce when a new round opens with current pot information"""
     try:
+        bot_info = await bot.get_me()
+        bot_username = bot_info.username
+        
         try:
             jackpot = await get_real_balance(OWNER_WALLET)
         except:
@@ -5256,8 +5273,8 @@ async def announce_round_opened(round_id: int):
         conn.close()
         
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=f"🎟️ Join Round ({player_count} players)", callback_data=f"join_round_{round_id}")],
-            [InlineKeyboardButton(text="🔄 Refresh", callback_data=f"check_round_{round_id}")]
+            [InlineKeyboardButton(text=f"🎟️ Join Round ({player_count} players)", url=f"https://t.me/{bot_username}?start=play")],
+            [InlineKeyboardButton(text="💰 Check Jackpot", url=f"https://t.me/{bot_username}?start=jackpot")]
         ])
         
         message_text = (
@@ -5296,6 +5313,9 @@ async def announce_winner(round_id: int, stake_amount: float, result: dict):
         winner_name = user_row[0] if user_row and user_row[0] else f"User {winner_id}"
         conn.close()
         
+        bot_info = await bot.get_me()
+        bot_username = bot_info.username
+        
         message_text = (
             f"🏆 <b>WINNER ANNOUNCEMENT!</b>\n\n"
             f"🎰 Round: {round_id}\n"
@@ -5307,13 +5327,21 @@ async def announce_winner(round_id: int, stake_amount: float, result: dict):
             f"Congratulations! 🎉"
         )
         
-        await send_to_announcements(message_text)
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🎲 Play Now", url=f"https://t.me/{bot_username}?start=play")],
+            [InlineKeyboardButton(text="📊 View Results", url=f"https://t.me/{bot_username}?start=results")]
+        ])
+        
+        await send_to_announcements(message_text, keyboard)
     except Exception as e:
         print(f"❌ Winner announcement error: {e}")
 
 
 async def announce_refunds(round_id: int, stake_amount: float, refund_count: int):
     try:
+        bot_info = await bot.get_me()
+        bot_username = bot_info.username
+        
         if refund_count > 0:
             message_text = (
                 f"💸 <b>Refund Processed</b>\n\n"
@@ -5324,7 +5352,11 @@ async def announce_refunds(round_id: int, stake_amount: float, refund_count: int
                 f"✅ All participants refunded (minus {float(NETWORK_FEE_PERCENTAGE * 100)}% network fee)"
             )
             
-            await send_to_announcements(message_text)
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🎲 Try Again", url=f"https://t.me/{bot_username}?start=play")]
+            ])
+            
+            await send_to_announcements(message_text, keyboard)
     except Exception as e:
         print(f"❌ Refund announcement error: {e}")
 
