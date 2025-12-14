@@ -97,7 +97,10 @@ from ai.ai_client import (
     get_wallet_help,
     get_stats_explanation,
     get_support_guidance,
-    is_ai_available
+    is_ai_available,
+    chat_with_ai,
+    get_interactive_response,
+    clear_history
 )
 
 load_dotenv()
@@ -3152,17 +3155,39 @@ async def inline_handler(query: types.CallbackQuery):
     elif data == "ai_menu":
         await query.answer()
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💬 Chat with AI", callback_data="ai_ask_question")],
             [InlineKeyboardButton(text="📖 How to Play", callback_data="ai_how_to_play")],
             [InlineKeyboardButton(text="⚖️ Is It Fair?", callback_data="ai_fairness")],
             [InlineKeyboardButton(text="💼 Wallet Help", callback_data="ai_wallet_help")],
-            [InlineKeyboardButton(text="📊 Stats & VIP Explained", callback_data="ai_stats")],
-            [InlineKeyboardButton(text="❓ Ask a Question", callback_data="ai_ask_question")],
+            [InlineKeyboardButton(text="📊 Stats & VIP", callback_data="ai_stats")],
             [InlineKeyboardButton(text="🔙 Back", callback_data="back_to_main")]
         ])
         await bot.send_message(uid,
             "🤖 <b>AI Assistant</b>\n\n"
-            "I'm here to help you understand CryptoUnc Lotto!\n\n"
-            "Choose a topic below or ask me anything:",
+            "Hey there! I'm your CryptoUnc Lotto AI assistant.\n\n"
+            "I can help you with:\n"
+            "• Understanding how the lottery works\n"
+            "• Wallet setup and security\n"
+            "• Ticket prices and draws\n"
+            "• Prize distribution\n"
+            "• Any other questions!\n\n"
+            "Tap <b>Chat with AI</b> to start a conversation, or pick a topic below:",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+    
+    elif data == "ai_clear_history":
+        await query.answer("Chat history cleared!")
+        clear_history(uid)
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💬 Start Fresh Chat", callback_data="ai_ask_question")],
+            [InlineKeyboardButton(text="🔙 Back to AI Menu", callback_data="ai_menu")],
+            [InlineKeyboardButton(text="🏠 Main Menu", callback_data="back_to_main")]
+        ])
+        await bot.send_message(uid,
+            "🔄 <b>Chat History Cleared!</b>\n\n"
+            "I've reset our conversation. Ready for a fresh start!\n\n"
+            "What would you like to chat about?",
             reply_markup=keyboard,
             parse_mode="HTML"
         )
@@ -3222,15 +3247,19 @@ async def inline_handler(query: types.CallbackQuery):
     elif data == "ai_ask_question":
         await query.answer()
         user_states[uid] = {"action": "ai_question"}
-        keyboard = create_keyboard_with_nav([], "ai_menu")
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Cancel", callback_data="ai_menu")]
+        ])
         await bot.send_message(uid,
-            "❓ <b>Ask the AI Assistant</b>\n\n"
-            "Type your question about CryptoUnc Lotto and I'll do my best to help!\n\n"
-            "Examples:\n"
-            "• How do I buy a ticket?\n"
-            "• What happens if no one wins?\n"
-            "• How are winners selected?\n"
-            "• Is my wallet secure?",
+            "💬 <b>Chat with AI</b>\n\n"
+            "Just type your message and I'll respond! I remember our conversation, so feel free to ask follow-up questions.\n\n"
+            "Try asking me things like:\n"
+            "• <i>How do I get started?</i>\n"
+            "• <i>What's the ticket price?</i>\n"
+            "• <i>How does the jackpot work?</i>\n"
+            "• <i>Is this lottery fair?</i>\n"
+            "• <i>Help me with my wallet</i>\n\n"
+            "Go ahead, type your question below! 👇",
             reply_markup=keyboard,
             parse_mode="HTML"
         )
@@ -3844,24 +3873,38 @@ async def generic_message_handler(message: types.Message):
         state = user_states[uid]
         action = state.get("action")
         
-        # Handle AI question
+        # Handle AI question - use conversational AI
         if action == "ai_question":
             del user_states[uid]
             try:
                 await message.delete()
             except:
                 pass
-            thinking_msg = await bot.send_message(uid, "🤔 Thinking...")
+            thinking_msg = await bot.send_message(uid, "🤔 Let me think about that...")
             try:
-                response = await get_ai_help(text)
-                keyboard = create_keyboard_with_nav([], "ai_menu")
+                # Use conversational AI with user context
+                response = await chat_with_ai(uid, text)
+                
+                # Build response keyboard with continue chat option
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="💬 Ask Another Question", callback_data="ai_ask_question")],
+                    [InlineKeyboardButton(text="🔄 Start New Chat", callback_data="ai_clear_history")],
+                    [InlineKeyboardButton(text="🔙 Back to AI Menu", callback_data="ai_menu")],
+                    [InlineKeyboardButton(text="🏠 Main Menu", callback_data="back_to_main")]
+                ])
                 await thinking_msg.edit_text(
                     f"🤖 <b>AI Assistant</b>\n\n{response}",
                     reply_markup=keyboard,
                     parse_mode="HTML"
                 )
             except Exception as e:
-                await thinking_msg.edit_text("Sorry, I couldn't process your question. Please try again.")
+                print(f"[AI] Error in chat: {e}")
+                keyboard = create_keyboard_with_nav([], "ai_menu")
+                await thinking_msg.edit_text(
+                    "Sorry, I couldn't process your question right now. Please try again!",
+                    reply_markup=keyboard,
+                    parse_mode="HTML"
+                )
             return
         
         # Handle PIN setting

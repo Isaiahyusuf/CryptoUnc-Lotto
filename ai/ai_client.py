@@ -1,6 +1,8 @@
 import asyncio
+import os
 import re
-from typing import Optional
+from typing import Optional, List, Dict
+from openai import OpenAI
 from .prompts import (
     AI_SYSTEM_PROMPT, 
     FAIRNESS_PROMPT, 
@@ -12,34 +14,80 @@ from .prompts import (
     FAQ_KEYWORDS
 )
 
-_model = None
-_model_loading = False
-_model_error = None
+# the newest OpenAI model is "gpt-5" which was released August 7, 2025.
+# do not change this unless explicitly requested by the user
+OPENAI_MODEL = "gpt-5"
 
-def get_model():
-    """Lazy load the GPT4All model to avoid startup delays"""
-    global _model, _model_loading, _model_error
-    
-    if _model is not None:
-        return _model
-    
-    if _model_error:
-        return None
-        
-    if not _model_loading:
-        _model_loading = True
-        try:
-            from gpt4all import GPT4All
-            _model = GPT4All("ggml-gpt4all-j-v1.3-groovy", allow_download=True)
-            print("[AI] Model loaded successfully")
-        except Exception as e:
-            _model_error = str(e)
-            print(f"[AI] Model loading failed: {e}")
-            _model = None
-        finally:
-            _model_loading = False
-    
-    return _model
+_openai_client = None
+
+def get_openai_client():
+    """Get or create OpenAI client"""
+    global _openai_client
+    if _openai_client is None:
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if api_key:
+            _openai_client = OpenAI(api_key=api_key)
+            print("[AI] OpenAI client initialized successfully")
+        else:
+            print("[AI] OPENAI_API_KEY not found - using fallback responses")
+    return _openai_client
+
+CRYPTOUNC_SYSTEM_PROMPT = """You are CryptoUnc Lotto's friendly AI assistant! You're a helpful, conversational AI that helps users with everything about the CryptoUnc Lotto lottery system on Solana blockchain.
+
+Your personality:
+- Friendly, approachable, and enthusiastic
+- Clear and easy to understand
+- Helpful and patient with all questions
+- Responsible - never encourage gambling or promise winnings
+
+Key facts about CryptoUnc Lotto:
+- Ticket price: 0.025 SOL
+- Pick 5 numbers from 1-40
+- Match all 5 to win the entire jackpot
+- 24 draws per day (every hour on the hour)
+- 80% of ticket sales go to prize pool, 20% to team
+- If no winner, jackpot rolls over to next round
+- Uses cryptographic blockchain randomness - provably fair
+- Maximum 3 wallets per user
+- 4-digit PIN required for security
+- Private keys are encrypted and auto-delete after 30 seconds
+
+VIP Tiers (by SOL spent):
+- Bronze: 0-1 SOL
+- Silver: 1-5 SOL
+- Gold: 5-20 SOL
+- Platinum: 20-50 SOL
+- Diamond: 50+ SOL
+
+When answering:
+- Be conversational and natural
+- Give helpful, specific answers
+- Use emojis sparingly for friendliness
+- Keep responses concise but complete
+- For technical issues, provide clear troubleshooting steps
+- Always remind users to play responsibly when appropriate
+- Never reveal private wallet information or help bypass security
+- Never predict lottery outcomes or guarantee winnings"""
+
+conversation_history: Dict[int, List[Dict]] = {}
+MAX_HISTORY = 10
+
+def get_user_history(user_id: int) -> List[Dict]:
+    """Get conversation history for a user"""
+    if user_id not in conversation_history:
+        conversation_history[user_id] = []
+    return conversation_history[user_id]
+
+def add_to_history(user_id: int, role: str, content: str):
+    """Add a message to user's conversation history"""
+    history = get_user_history(user_id)
+    history.append({"role": role, "content": content})
+    if len(history) > MAX_HISTORY * 2:
+        conversation_history[user_id] = history[-MAX_HISTORY * 2:]
+
+def clear_history(user_id: int):
+    """Clear a user's conversation history"""
+    conversation_history[user_id] = []
 
 def normalize_text(text: str) -> str:
     """Normalize text for better matching"""
@@ -49,7 +97,7 @@ def normalize_text(text: str) -> str:
     return text
 
 def find_best_faq_match(question: str) -> Optional[str]:
-    """Find the best FAQ match using keyword matching and fuzzy logic"""
+    """Find the best FAQ match using keyword matching"""
     question_lower = normalize_text(question)
     words = set(question_lower.split())
     
@@ -65,39 +113,29 @@ def find_best_faq_match(question: str) -> Optional[str]:
         for kw in keywords:
             kw_normalized = normalize_text(kw)
             if kw_normalized in question_lower:
-                if category == "play":
-                    return FAQ_RESPONSES.get("how to play")
-                elif category == "ticket":
-                    return FAQ_RESPONSES.get("ticket price")
-                elif category == "draw":
-                    return FAQ_RESPONSES.get("when is draw")
-                elif category == "win":
-                    return FAQ_RESPONSES.get("how to win")
-                elif category == "jackpot":
-                    return FAQ_RESPONSES.get("jackpot")
-                elif category == "rollover":
-                    return FAQ_RESPONSES.get("rollover")
-                elif category == "fair":
-                    return FAQ_RESPONSES.get("is it fair")
-                elif category == "wallet":
-                    return FAQ_RESPONSES.get("wallet")
-                elif category == "security":
-                    return FAQ_RESPONSES.get("wallet security")
-                elif category == "help":
-                    return FAQ_RESPONSES.get("help")
-                elif category == "vip":
-                    return FAQ_RESPONSES.get("vip")
-                elif category == "greeting":
-                    return FAQ_RESPONSES.get("hello")
-                elif category == "thanks":
-                    return FAQ_RESPONSES.get("thanks")
-                elif category == "solana":
-                    return FAQ_RESPONSES.get("solana")
+                category_responses = {
+                    "play": "how to play",
+                    "ticket": "ticket price",
+                    "draw": "when is draw",
+                    "win": "how to win",
+                    "jackpot": "jackpot",
+                    "rollover": "rollover",
+                    "fair": "is it fair",
+                    "wallet": "wallet",
+                    "security": "wallet security",
+                    "help": "help",
+                    "vip": "vip",
+                    "greeting": "hello",
+                    "thanks": "thanks",
+                    "solana": "solana",
+                }
+                if category in category_responses:
+                    return FAQ_RESPONSES.get(category_responses[category])
     
     return None
 
 def get_smart_response(question: str) -> str:
-    """Get an intelligent response without using the AI model"""
+    """Get an intelligent response without using OpenAI"""
     question_lower = normalize_text(question)
     
     faq_match = find_best_faq_match(question)
@@ -114,195 +152,205 @@ def get_smart_response(question: str) -> str:
             "maybe": "Take your time! I'm here when you're ready.",
             "cool": "Awesome! What else would you like to know?",
             "nice": "Glad you like it! Any other questions?",
-            "wow": "Right? It's pretty exciting! What else interests you?",
             "what": "I can help with:\n- How to play\n- Ticket prices & draws\n- Wallet setup\n- Prize distribution\n- VIP tiers\n\nWhat would you like to know?",
             "why": "Good question! What specifically would you like me to explain?",
             "how": "I'd be happy to explain! What process are you curious about?",
-            "huh": "Let me clarify! What would you like me to explain better?",
         }
         for word, response in common_short.items():
             if word in question_lower:
                 return response
     
-    if any(word in question_lower for word in ["who", "what is", "what's", "tell me about"]):
-        if "cryptounc" in question_lower or "lotto" in question_lower:
-            return ("CryptoUnc Lotto is a fair, blockchain-powered lottery on Solana!\n\n"
-                    "Key features:\n"
-                    "- Tickets cost 0.025 SOL\n"
-                    "- Pick 5 numbers from 1-40\n"
-                    "- Draws every hour (24 per day)\n"
-                    "- Match all 5 to win the jackpot\n"
-                    "- Provably fair using blockchain randomness\n\n"
-                    "Would you like to know how to get started?")
-    
     return (
-        "Great question! I'm here to help with CryptoUnc Lotto.\n\n"
+        "I'm here to help with CryptoUnc Lotto!\n\n"
         "I can answer questions about:\n"
         "- How to play and buy tickets\n"
         "- Ticket prices and draw times\n"
         "- Wallet setup and security\n"
         "- Prizes and jackpot system\n"
-        "- VIP tiers and stats\n"
-        "- Troubleshooting issues\n\n"
-        "Just ask me anything specific, or use the menu buttons for quick access!"
+        "- VIP tiers and stats\n\n"
+        "Just ask me anything!"
     )
 
-def ask_ai(system_prompt: str, user_prompt: str, max_tokens: int = 500) -> str:
+async def chat_with_ai(user_id: int, message: str, context: str = "") -> str:
     """
-    Generate a response from the AI model.
-    Falls back to smart responses if model unavailable.
+    Have a conversational chat with the AI.
+    This is the main entry point for interactive AI conversations.
     """
-    smart_response = find_best_faq_match(user_prompt)
-    if smart_response:
-        return smart_response
+    client = get_openai_client()
     
-    model = get_model()
+    if client is None:
+        faq_match = find_best_faq_match(message)
+        if faq_match:
+            return faq_match
+        return get_smart_response(message)
     
-    if model is None:
+    try:
+        history = get_user_history(user_id)
+        
+        messages = [{"role": "system", "content": CRYPTOUNC_SYSTEM_PROMPT}]
+        
+        if context:
+            messages.append({
+                "role": "system", 
+                "content": f"Additional context: {context}"
+            })
+        
+        for msg in history[-MAX_HISTORY * 2:]:
+            messages.append(msg)
+        
+        messages.append({"role": "user", "content": message})
+        
+        response = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: client.chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=messages,  # type: ignore
+                max_completion_tokens=500
+            )
+        )
+        
+        ai_response = response.choices[0].message.content or ""
+        
+        add_to_history(user_id, "user", message)
+        add_to_history(user_id, "assistant", ai_response)
+        
+        return ai_response
+        
+    except Exception as e:
+        print(f"[AI] OpenAI error: {e}")
+        faq_match = find_best_faq_match(message)
+        if faq_match:
+            return faq_match
+        return get_smart_response(message)
+
+async def ask_ai_async(system_prompt: str, user_prompt: str, max_tokens: int = 500) -> str:
+    """Async AI request with OpenAI"""
+    client = get_openai_client()
+    
+    if client is None:
+        faq_match = find_best_faq_match(user_prompt)
+        if faq_match:
+            return faq_match
         return get_smart_response(user_prompt)
     
     try:
-        combined_prompt = f"{system_prompt}\n\nUser: {user_prompt}\n\nAssistant:"
-        response = model.generate(combined_prompt, max_tokens=max_tokens)
-        return response.strip() if response else get_smart_response(user_prompt)
+        response = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: client.chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                max_completion_tokens=max_tokens
+            )
+        )
+        return response.choices[0].message.content or ""
     except Exception as e:
-        print(f"[AI] Generation error: {e}")
+        print(f"[AI] OpenAI error: {e}")
+        faq_match = find_best_faq_match(user_prompt)
+        if faq_match:
+            return faq_match
         return get_smart_response(user_prompt)
 
-async def ask_ai_async(system_prompt: str, user_prompt: str, max_tokens: int = 500) -> str:
-    """Async wrapper for ask_ai to prevent blocking the event loop"""
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, ask_ai, system_prompt, user_prompt, max_tokens)
+def ask_ai(system_prompt: str, user_prompt: str, max_tokens: int = 500) -> str:
+    """Synchronous AI request"""
+    client = get_openai_client()
+    
+    if client is None:
+        faq_match = find_best_faq_match(user_prompt)
+        if faq_match:
+            return faq_match
+        return get_smart_response(user_prompt)
+    
+    try:
+        response = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            max_completion_tokens=max_tokens
+        )
+        return response.choices[0].message.content or ""
+    except Exception as e:
+        print(f"[AI] OpenAI error: {e}")
+        faq_match = find_best_faq_match(user_prompt)
+        if faq_match:
+            return faq_match
+        return get_smart_response(user_prompt)
 
 def get_fallback_response(user_prompt: str) -> str:
-    """Provide fallback responses when AI model is unavailable"""
+    """Provide fallback responses"""
     return get_smart_response(user_prompt)
 
 def get_quick_answer(question: str) -> Optional[str]:
-    """Get quick FAQ answer without using AI model"""
+    """Get quick FAQ answer"""
     return find_best_faq_match(question)
 
-async def get_ai_help(question: str) -> str:
-    """Get AI help for a general question - responds instantly"""
+async def get_ai_help(question: str, user_id: int = 0) -> str:
+    """Get AI help for a general question - uses conversational AI"""
+    if user_id > 0:
+        return await chat_with_ai(user_id, question)
+    
     quick = get_quick_answer(question)
     if quick:
         return quick
     
-    smart = get_smart_response(question)
-    if smart:
-        return smart
-    
-    return await ask_ai_async(AI_SYSTEM_PROMPT, question)
+    return await ask_ai_async(CRYPTOUNC_SYSTEM_PROMPT, question)
 
 async def get_fairness_explanation() -> str:
     """Get AI explanation of lottery fairness"""
-    instant_response = FAQ_RESPONSES.get("is it fair")
-    if instant_response:
-        return (
-            f"{instant_response}\n\n"
-            "Technical details:\n"
-            "- Winning numbers use cryptographic hashes\n"
-            "- Seeds come from Solana block data\n"
-            "- All results are publicly verifiable\n"
-            "- No one can predict or manipulate outcomes\n\n"
-            "Play with confidence knowing the system is mathematically fair!"
-        )
-    return await ask_ai_async(FAIRNESS_PROMPT, "Explain how CryptoUnc Lotto ensures fair and transparent draws.")
+    return await ask_ai_async(
+        CRYPTOUNC_SYSTEM_PROMPT,
+        "Explain in detail how CryptoUnc Lotto ensures fair and transparent draws. "
+        "Cover the blockchain randomness, verification process, and why users can trust the system."
+    )
 
 async def get_how_to_play() -> str:
     """Get AI explanation of how to play"""
-    instant_response = FAQ_RESPONSES.get("how to play")
-    if instant_response:
-        return (
-            f"{instant_response}\n\n"
-            "Quick tips:\n"
-            "- Buy multiple tickets for better odds\n"
-            "- Check draws every hour\n"
-            "- Keep enough SOL for fees\n"
-            "- Set up wallet security with PIN\n\n"
-            "Good luck and play responsibly!"
-        )
-    return await ask_ai_async(HOW_TO_PLAY_PROMPT, "Walk me through how to play CryptoUnc Lotto step by step.")
+    return await ask_ai_async(
+        CRYPTOUNC_SYSTEM_PROMPT,
+        "Walk me through how to play CryptoUnc Lotto step by step, from creating a wallet to buying tickets to checking results."
+    )
 
 async def get_wallet_help(question: str = "") -> str:
     """Get AI help for wallet-related questions"""
     if not question:
-        return (
-            "Wallet Help\n\n"
-            "Creating a Wallet:\n"
-            "- 'Create Bot Wallet' - We generate a secure wallet for you\n"
-            "- 'Import Wallet' - Use your existing private key\n"
-            "- 'Connect External' - Link Phantom or Solflare\n\n"
-            "Security Features:\n"
-            "- 4-digit PIN protects sensitive operations\n"
-            "- Private keys are encrypted\n"
-            "- Messages auto-delete after 30 seconds\n"
-            "- Security question for PIN recovery\n\n"
-            "Max 3 wallets per user. Never share your private key!"
-        )
-    quick = find_best_faq_match(question)
-    if quick:
-        return quick
+        question = "Explain all the wallet options, how to set them up, and security features."
     return await ask_ai_async(WALLET_HELP_PROMPT, question)
 
 async def get_stats_explanation() -> str:
     """Get AI explanation of stats and VIP system"""
-    return (
-        "Your Stats & VIP System\n\n"
-        "VIP Tiers (based on total SOL spent):\n"
-        "- Bronze: 0-1 SOL\n"
-        "- Silver: 1-5 SOL\n"
-        "- Gold: 5-20 SOL\n"
-        "- Platinum: 20-50 SOL\n"
-        "- Diamond: 50+ SOL\n\n"
-        "Statistics Tracked:\n"
-        "- Total tickets purchased\n"
-        "- Total SOL spent\n"
-        "- Total winnings\n"
-        "- Win rate percentage\n"
-        "- Current VIP tier\n\n"
-        "Check 'My Stats' to see your full profile and leaderboard position!"
+    return await ask_ai_async(
+        CRYPTOUNC_SYSTEM_PROMPT,
+        "Explain the user statistics tracking and VIP tier system in CryptoUnc Lotto."
     )
 
 async def get_support_guidance(issue: str = "") -> str:
     """Get AI support guidance for common issues"""
     if not issue:
-        return (
-            "Support Guide\n\n"
-            "Common Issues & Solutions:\n\n"
-            "Transaction Failed?\n"
-            "- Check wallet balance (need 0.026+ SOL)\n"
-            "- Wait a minute and try again\n"
-            "- Solana network might be congested\n\n"
-            "Balance Not Updating?\n"
-            "- Network may be slow\n"
-            "- Wait 1-2 minutes\n"
-            "- Try refreshing\n\n"
-            "Forgot PIN?\n"
-            "- Use security question recovery\n"
-            "- Or contact admin for help\n\n"
-            "Can't Find Tickets?\n"
-            "- Tickets are per round\n"
-            "- Check 'My Tickets' for current round\n\n"
-            "Still need help? Use the Support button to contact an admin!"
-        )
-    quick = find_best_faq_match(issue)
-    if quick:
-        return quick
+        issue = "What are the most common issues users face and how can they be resolved?"
     return await ask_ai_async(SUPPORT_PROMPT, issue)
 
 def is_ai_available() -> bool:
-    """Check if AI model is available - returns True since we have smart responses"""
-    return True
+    """Check if AI is available"""
+    return get_openai_client() is not None or True
 
-async def get_interactive_response(message: str, context: dict = None) -> str:
+async def get_interactive_response(message: str, user_id: int = 0, context: dict = None) -> str:
     """
     Get an interactive AI response based on message and optional context.
-    This is the main entry point for conversational AI.
+    This is the main entry point for conversational AI in the bot.
     """
+    context_str = ""
+    if context:
+        context_str = ", ".join([f"{k}: {v}" for k, v in context.items()])
+    
+    if user_id > 0:
+        return await chat_with_ai(user_id, message, context_str)
+    
     quick = find_best_faq_match(message)
     if quick:
         return quick
     
-    smart = get_smart_response(message)
-    return smart
+    return await ask_ai_async(CRYPTOUNC_SYSTEM_PROMPT, message)
