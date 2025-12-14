@@ -20,7 +20,7 @@
   - ENCRYPTION_KEY: Configured
 
 ### 2. Database Status
-- ✅ SQLite database initialized: cryptounc_lotto.db (92KB)
+- ✅ PostgreSQL database connected via DATABASE_URL
 - ✅ All tables created successfully:
   - users
   - wallets  
@@ -232,7 +232,7 @@ If you encounter any issues:
 4. Check Solana network status (solscan.io)
 
 **Technical Issues:**
-- Database: Check cryptounc_lotto.db file exists
+- Database: Verify DATABASE_URL is set and PostgreSQL is connected
 - Transactions: Verify OWNER_WALLET and TEAM_WALLET are valid
 - RPC: Test SOLANA_RPC endpoint connectivity
 
