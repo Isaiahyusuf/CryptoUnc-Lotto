@@ -11,3 +11,16 @@ pytz
 psycopg2-binary
 sendgrid
 openai
+aiogram
+aiohttp
+base58
+construct
+cryptography
+openai
+psycopg2-binary
+python-dotenv
+pytz
+requests
+sendgrid
+solana
+solders

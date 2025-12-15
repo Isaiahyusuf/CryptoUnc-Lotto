@@ -37,6 +37,19 @@ from rpc_manager import get_rpc_manager
 RPC_TIMEOUT = 10  # Timeout per RPC request in seconds
 MAX_WALLETS_PER_USER = 1
 
+# RPC Endpoints - will be populated from environment
+FALLBACK_RPC = "https://api.mainnet-beta.solana.com"
+_solana_rpc = os.getenv("SOLANA_RPC", "")
+_helius_rpc = os.getenv("HELIUS_RPC", "")
+
+# Build RPC_ENDPOINTS list with fallbacks
+RPC_ENDPOINTS = []
+if _helius_rpc:
+    RPC_ENDPOINTS.append(_helius_rpc)
+if _solana_rpc and _solana_rpc != FALLBACK_RPC:
+    RPC_ENDPOINTS.append(_solana_rpc)
+RPC_ENDPOINTS.append(FALLBACK_RPC)  # Always have fallback
+
 # Get singleton instances
 _rpc_manager = None
 _cache = None
