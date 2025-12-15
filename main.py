@@ -5053,7 +5053,13 @@ async def cmd_seed_jackpot(message: types.Message):
         
         await message.reply(f"⏳ Seeding jackpot with {amount} SOL...")
         
-        result = await send_sol(team_wallet, OWNER_WALLET, float(amount))
+        # Need the team wallet private key to transfer funds
+        team_wallet_private_key = os.getenv("TEAM_WALLET_PRIVATE_KEY", OWNER_WALLET_PRIVATE_KEY)
+        if not team_wallet_private_key:
+            await message.reply("❌ Team wallet private key not configured.")
+            return
+        
+        result = await send_sol(team_wallet, OWNER_WALLET, Decimal(str(amount)), team_wallet_private_key)
         
         if result.get("success"):
             tx_sig = result.get("signature", "N/A")
