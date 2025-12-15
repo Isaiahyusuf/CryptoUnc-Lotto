@@ -585,6 +585,7 @@ dp.include_router(wallet_router)
 # State management for PIN operations and wallet actions
 user_states = {}  # Stores pending operations: {user_id: {"action": "set_pin", "data": {...}}}
 pending_pins = {}  # Stores PIN attempts: {user_id: {"pin": "1234", "action": "view_key"}}
+pin_fail_counts = {}  # Track failed PIN attempts: {user_id: count}
 # ---------------------------
 # Database helpers
 # ---------------------------
@@ -648,6 +649,7 @@ def init_db():
 
 
 def get_current_round() -> int:
+    """Get current round number (1-24, resets after 24)"""
     conn = get_db_conn()
     c = conn.cursor()
     c.execute("SELECT value FROM meta WHERE key='current_round'")
@@ -657,9 +659,16 @@ def get_current_round() -> int:
 
 
 def increment_round():
+    """Increment round number, reset to 1 after reaching 24"""
     conn = get_db_conn()
     c = conn.cursor()
-    new_round = get_current_round() + 1
+    current = get_current_round()
+    # Reset to 1 after round 24
+    if current >= 24:
+        new_round = 1
+        print(f"[Round] Resetting round counter from {current} to 1 (24-round cycle complete)")
+    else:
+        new_round = current + 1
     c.execute("UPDATE meta SET value = %s WHERE key='current_round'", (str(new_round),))
     conn.commit()
     conn.close()
@@ -3331,8 +3340,15 @@ async def inline_handler(query: types.CallbackQuery):
             "What was your childhood nickname?"
         ]
         
+        # Preserve next_action if this is first-time setup
+        current_state = user_states.get(uid, {})
+        next_action = current_state.get("next_action")
+        
         if data == "sq_custom":
-            user_states[uid] = {"action": "enter_custom_question"}
+            new_state = {"action": "enter_custom_question"}
+            if next_action:
+                new_state["next_action"] = next_action
+            user_states[uid] = new_state
             await query.message.answer(
                 "✏️ <b>Custom Security Question</b>\n\n"
                 "Please type your own security question:",
@@ -3341,7 +3357,10 @@ async def inline_handler(query: types.CallbackQuery):
         else:
             q_index = int(data.split("_")[1])
             question = preset_questions[q_index]
-            user_states[uid] = {"action": "enter_security_answer", "question": question}
+            new_state = {"action": "enter_security_answer", "question": question}
+            if next_action:
+                new_state["next_action"] = next_action
+            user_states[uid] = new_state
             await query.message.answer(
                 f"❓ <b>Your Question:</b>\n{question}\n\n"
                 f"Please enter your answer:\n"
@@ -3943,14 +3962,27 @@ async def generic_message_handler(message: types.Message):
                 if set_user_pin(uid, text):
                     wallet_address = state.get("wallet_address")
                     set_active_wallet(uid, wallet_address)
-                    del user_states[uid]
-                    await bot.send_message(uid,
-                        "✅ <b>PIN Created Successfully!</b>\n\n"
-                        "Your PIN has been securely saved.\n"
-                        "You can now use your wallet!",
-                        parse_mode="HTML"
-                    )
-                    await start_private_play(uid)
+                    # Check if user already has a security question set up
+                    if has_security_question(uid):
+                        del user_states[uid]
+                        await bot.send_message(uid,
+                            "✅ <b>PIN Created Successfully!</b>\n\n"
+                            "Your PIN has been securely saved.\n"
+                            "You can now use your wallet!",
+                            parse_mode="HTML"
+                        )
+                        await start_private_play(uid)
+                    else:
+                        # First-time PIN setup - require security question
+                        user_states[uid] = {"action": "setup_first_security_question", "next_action": "play"}
+                        await bot.send_message(uid,
+                            "✅ <b>PIN Created!</b>\n\n"
+                            "🔐 <b>Security Setup Required</b>\n\n"
+                            "For your protection, you must set up a security question.\n"
+                            "This will help you recover your PIN if you forget it.",
+                            parse_mode="HTML"
+                        )
+                        await show_security_question_picker(uid)
                 else:
                     await bot.send_message(uid, "❌ Failed to save PIN. Please try again with 4 digits.")
             else:
@@ -3992,13 +4024,26 @@ async def generic_message_handler(message: types.Message):
             first_pin = state.get("first_pin")
             if text == first_pin:
                 if set_user_pin(uid, text):
-                    # Now ask to verify PIN to view key
-                    user_states[uid] = {"action": "verify_pin_for_key_view"}
-                    await bot.send_message(uid,
-                        "✅ PIN created!\n\n"
-                        "Please enter your PIN to view private key:",
-                        parse_mode="HTML"
-                    )
+                    # Check if user needs security question setup first
+                    if has_security_question(uid):
+                        # Now ask to verify PIN to view key
+                        user_states[uid] = {"action": "verify_pin_for_key_view"}
+                        await bot.send_message(uid,
+                            "✅ PIN created!\n\n"
+                            "Please enter your PIN to view private key:",
+                            parse_mode="HTML"
+                        )
+                    else:
+                        # First-time PIN - require security question
+                        user_states[uid] = {"action": "setup_first_security_question", "next_action": "view_key"}
+                        await bot.send_message(uid,
+                            "✅ <b>PIN Created!</b>\n\n"
+                            "🔐 <b>Security Setup Required</b>\n\n"
+                            "For your protection, you must set up a security question.\n"
+                            "This will help you recover your PIN if you forget it.",
+                            parse_mode="HTML"
+                        )
+                        await show_security_question_picker(uid)
                 else:
                     await bot.send_message(uid, "❌ Failed to save PIN. Please try again with 4 digits.")
             else:
@@ -4021,6 +4066,7 @@ async def generic_message_handler(message: types.Message):
             if verify_user_pin(uid, text):
                 # PIN is now persistent - don't delete after verification
                 del user_states[uid]
+                pin_fail_counts.pop(uid, None)  # Reset fail count on success
                 wallet = get_active_wallet(uid)
                 private_key = get_wallet_private_key(uid, wallet)
                 if private_key:
@@ -4039,7 +4085,23 @@ async def generic_message_handler(message: types.Message):
                 else:
                     await bot.send_message(uid, "❌ Could not retrieve private key.")
             else:
-                await bot.send_message(uid, "❌ Incorrect PIN. Please try again:")
+                # Track failed PIN attempts
+                pin_fail_counts[uid] = pin_fail_counts.get(uid, 0) + 1
+                if pin_fail_counts[uid] >= 2 and has_security_question(uid):
+                    # Show forgot PIN button after 2 failed attempts
+                    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text="🔑 Forgot PIN?", callback_data="reset_pin_security")],
+                        [InlineKeyboardButton(text="🔙 Cancel", callback_data="back_to_main")]
+                    ])
+                    await bot.send_message(uid, 
+                        "❌ <b>Incorrect PIN</b>\n\n"
+                        "You've entered the wrong PIN multiple times.\n"
+                        "Use your security question to reset your PIN.",
+                        reply_markup=keyboard,
+                        parse_mode="HTML"
+                    )
+                else:
+                    await bot.send_message(uid, "❌ Incorrect PIN. Please try again:")
             return
         
         elif action == "import_wallet_private_key":
@@ -4129,16 +4191,29 @@ async def generic_message_handler(message: types.Message):
             first_pin = state.get("first_pin")
             if text == first_pin:
                 if set_user_pin(uid, text):
-                    user_states[uid] = {"action": "get_send_address"}
-                    wallet = get_active_wallet(uid)
-                    balance = await get_real_balance(wallet)
-                    await bot.send_message(uid,
-                        f"✅ PIN created!\n\n"
-                        f"💸 <b>Send SOL</b>\n"
-                        f"Current balance: <b>{balance} SOL</b>\n\n"
-                        f"Please send the recipient's Solana address:",
-                        parse_mode="HTML"
-                    )
+                    # Check if user needs security question setup first
+                    if has_security_question(uid):
+                        user_states[uid] = {"action": "get_send_address"}
+                        wallet = get_active_wallet(uid)
+                        balance = await get_real_balance(wallet)
+                        await bot.send_message(uid,
+                            f"✅ PIN created!\n\n"
+                            f"💸 <b>Send SOL</b>\n"
+                            f"Current balance: <b>{balance} SOL</b>\n\n"
+                            f"Please send the recipient's Solana address:",
+                            parse_mode="HTML"
+                        )
+                    else:
+                        # First-time PIN - require security question
+                        user_states[uid] = {"action": "setup_first_security_question", "next_action": "send"}
+                        await bot.send_message(uid,
+                            "✅ <b>PIN Created!</b>\n\n"
+                            "🔐 <b>Security Setup Required</b>\n\n"
+                            "For your protection, you must set up a security question.\n"
+                            "This will help you recover your PIN if you forget it.",
+                            parse_mode="HTML"
+                        )
+                        await show_security_question_picker(uid)
                 else:
                     await bot.send_message(uid, "❌ Failed to save PIN. Please try again with 4 digits.")
             else:
@@ -4161,6 +4236,7 @@ async def generic_message_handler(message: types.Message):
             if verify_user_pin(uid, text):
                 # PIN is now persistent - don't delete after verification
                 user_states[uid] = {"action": "get_send_address"}
+                pin_fail_counts.pop(uid, None)  # Reset fail count on success
                 wallet = get_active_wallet(uid)
                 balance = await get_real_balance(wallet)
                 await bot.send_message(uid,
@@ -4171,7 +4247,23 @@ async def generic_message_handler(message: types.Message):
                     parse_mode="HTML"
                 )
             else:
-                await bot.send_message(uid, "❌ Incorrect PIN. Please try again:")
+                # Track failed PIN attempts
+                pin_fail_counts[uid] = pin_fail_counts.get(uid, 0) + 1
+                if pin_fail_counts[uid] >= 2 and has_security_question(uid):
+                    # Show forgot PIN button after 2 failed attempts
+                    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text="🔑 Forgot PIN?", callback_data="reset_pin_security")],
+                        [InlineKeyboardButton(text="🔙 Cancel", callback_data="back_to_main")]
+                    ])
+                    await bot.send_message(uid, 
+                        "❌ <b>Incorrect PIN</b>\n\n"
+                        "You've entered the wrong PIN multiple times.\n"
+                        "Use your security question to reset your PIN.",
+                        reply_markup=keyboard,
+                        parse_mode="HTML"
+                    )
+                else:
+                    await bot.send_message(uid, "❌ Incorrect PIN. Please try again:")
             return
         
         elif action == "get_send_address":
@@ -4255,7 +4347,12 @@ async def generic_message_handler(message: types.Message):
                 await message.answer("❌ Question is too long. Please keep it under 200 characters:")
                 return
             
-            user_states[uid] = {"action": "enter_security_answer", "question": question}
+            # Preserve next_action if first-time setup
+            next_action = state.get("next_action")
+            new_state = {"action": "enter_security_answer", "question": question}
+            if next_action:
+                new_state["next_action"] = next_action
+            user_states[uid] = new_state
             await bot.send_message(uid,
                 f"❓ <b>Your Question:</b>\n{question}\n\n"
                 f"Please enter your answer:\n"
@@ -4285,7 +4382,11 @@ async def generic_message_handler(message: types.Message):
             
             # First time entering - ask to confirm (like PIN double entry)
             question = state.get("question")
-            user_states[uid] = {"action": "confirm_security_answer", "question": question, "first_answer": answer}
+            next_action = state.get("next_action")
+            new_state = {"action": "confirm_security_answer", "question": question, "first_answer": answer}
+            if next_action:
+                new_state["next_action"] = next_action
+            user_states[uid] = new_state
             await bot.send_message(uid,
                 f"🔐 <b>Confirm Your Answer</b>\n\n"
                 f"❓ Question: {question}\n\n"
@@ -4298,6 +4399,7 @@ async def generic_message_handler(message: types.Message):
             answer = text.strip()
             first_answer = state.get("first_answer")
             question = state.get("question")
+            next_action = state.get("next_action")
             
             # Delete answer message for security (like PIN)
             try:
@@ -4307,15 +4409,46 @@ async def generic_message_handler(message: types.Message):
             
             if answer == first_answer:
                 if save_security_question(uid, question, answer):
-                    del user_states[uid]
-                    await bot.send_message(uid,
-                        "✅ <b>Security Question Saved!</b>\n\n"
-                        "You can now use this to reset your PIN if you forget it.\n\n"
-                        f"❓ Question: {question}\n"
-                        f"💡 Tip: Remember your answer!",
-                        reply_markup=create_keyboard_with_nav([]),
-                        parse_mode="HTML"
-                    )
+                    # Check if this was first-time setup and redirect accordingly
+                    if next_action:
+                        del user_states[uid]
+                        await bot.send_message(uid,
+                            "✅ <b>Security Setup Complete!</b>\n\n"
+                            "Your security question has been saved.\n"
+                            "You can now use your wallet!",
+                            parse_mode="HTML"
+                        )
+                        # Redirect to original action
+                        if next_action == "play":
+                            await start_private_play(uid)
+                        elif next_action == "view_key":
+                            # Ask for PIN to view key
+                            user_states[uid] = {"action": "verify_pin_for_key_view"}
+                            await bot.send_message(uid,
+                                "🔐 Please enter your PIN to view private key:",
+                                parse_mode="HTML"
+                            )
+                        elif next_action == "send":
+                            # Continue to send flow
+                            user_states[uid] = {"action": "get_send_address"}
+                            wallet = get_active_wallet(uid)
+                            balance = await get_real_balance(wallet)
+                            await bot.send_message(uid,
+                                f"💸 <b>Send SOL</b>\n"
+                                f"Current balance: <b>{balance} SOL</b>\n\n"
+                                f"Please send the recipient's Solana address:",
+                                parse_mode="HTML"
+                            )
+                    else:
+                        del user_states[uid]
+                        await bot.send_message(uid,
+                            "✅ <b>Security Question Saved!</b>\n\n"
+                            "You can now use this to reset your PIN if you forget it.\n\n"
+                            f"❓ Question: {question}\n"
+                            f"💡 Tip: Remember your answer!",
+                            reply_markup=create_keyboard_with_nav([]),
+                            parse_mode="HTML"
+                        )
                 else:
                     del user_states[uid]
                     await bot.send_message(uid,
@@ -4323,8 +4456,11 @@ async def generic_message_handler(message: types.Message):
                         reply_markup=create_keyboard_with_nav([])
                     )
             else:
-                # Answers don't match - start over
-                user_states[uid] = {"action": "enter_security_answer", "question": question}
+                # Answers don't match - start over (preserve next_action)
+                new_state = {"action": "enter_security_answer", "question": question}
+                if next_action:
+                    new_state["next_action"] = next_action
+                user_states[uid] = new_state
                 await bot.send_message(uid,
                     f"❌ <b>Answers don't match!</b>\n\n"
                     f"❓ Question: {question}\n\n"
@@ -5469,45 +5605,11 @@ async def send_to_announcements(message_text: str, keyboard=None):
 
 async def announce_new_ticket(user_id: int, ticket_id: int, stake_amount, numbers: list, round_id: int, ticket_count: int):
     """
-    Announce a new ticket purchase to the announcements channel.
-    Includes the player's Telegram ID for transparency.
+    Announce a new ticket purchase - DISABLED for groups/channels.
+    Ticket purchases are no longer broadcast to groups/channels per user request.
+    Other announcements (round opens, winners, etc.) still work.
     """
-    try:
-        conn = get_db_conn()
-        c = conn.cursor()
-        c.execute("SELECT username FROM users WHERE user_id = %s", (user_id,))
-        user_row = c.fetchone()
-        username = user_row[0] if user_row and user_row[0] else None
-        conn.close()
-        
-        player_display = f"@{username}" if username else f"Player ID: {user_id}"
-        
-        try:
-            jackpot = await get_real_balance(OWNER_WALLET)
-        except:
-            jackpot = Decimal("0")
-        
-        bot_info = await bot.get_me()
-        bot_username = bot_info.username
-        
-        message_text = (
-            f"🎫 <b>New Ticket Purchased!</b>\n\n"
-            f"👤 {player_display}\n"
-            f"🆔 Telegram ID: <code>{user_id}</code>\n"
-            f"🎟️ Ticket #{ticket_id}\n"
-            f"🎲 Numbers: <b>{', '.join(map(str, numbers))}</b>\n"
-            f"💰 Stake: {stake_amount} SOL\n\n"
-            f"📊 Round {round_id}: {ticket_count} tickets\n"
-            f"🏆 Current Jackpot: <b>{jackpot} SOL</b>"
-        )
-        
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🎲 Play Now", url=f"https://t.me/{bot_username}?start=play")]
-        ])
-        
-        await send_to_announcements(message_text, keyboard)
-    except Exception as e:
-        print(f"❌ Ticket announcement error: {e}")
+    print(f"[Ticket] User {user_id} purchased ticket #{ticket_id} for round {round_id} - announcement to groups disabled")
 
 
 async def announce_round_cancelled(round_id: int, player_count: int, refund_count: int):

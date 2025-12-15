@@ -42,6 +42,7 @@ A Telegram-based cryptocurrency lottery bot with real Solana wallet integration.
 - **Wallet Help** - Creating, importing, securing wallets
 - **Stats & VIP** - Statistics and VIP tier explanations
 - **Ask Questions** - Free-form Q&A with fallback FAQ
+- **OpenAI + Gemini Fallback** - Uses OpenAI GPT-5 primary, Google Gemini 2.5 Flash as fallback
 
 Access via "AI Assistant" button in main menu.
 
@@ -60,9 +61,16 @@ Access via "AI Assistant" button in main menu.
 - `TEAM_WALLET` - Team Solana wallet for fees
 - `SUPPORT_USERNAME` - Support contact
 - `ANNOUNCEMENTS_GROUP_ID` - Additional announcement group
+- `OPENAI_API_KEY` - OpenAI API key for AI assistant (primary)
+- `GEMINI_API_KEY` - Google Gemini API key (fallback when OpenAI fails)
 
 ## Recent Changes (December 2025)
-- **AI Assistant Added** - GPT4All-powered help system with FAQ fallback
+- **Ticket Purchase Announcements Disabled** - Ticket purchases no longer broadcast to groups/channels (other announcements still work)
+- **Round Count Reset** - Round counter resets to 1 after every 24th round (24-round cycle)
+- **Google Gemini AI Fallback** - Added Gemini 2.5 Flash as fallback when OpenAI fails
+- **Forgot PIN Feature** - "Forgot PIN?" button appears after 2 wrong PIN attempts (uses security question)
+- **Mandatory Security Question** - First-time PIN setup now requires setting up a security question
+- **AI Assistant Added** - OpenAI GPT-5 powered help system with Gemini fallback and FAQ fallback
 - **Production-ready refactoring** - Added caching, rate limiting, RPC load balancing
 - **RPC Manager** - Centralized RPC with Helius primary, round-robin reads, automatic failover
 - **Cache Layer** - In-memory cache for pot, round info, balances (10-60s TTL)

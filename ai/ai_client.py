@@ -14,11 +14,11 @@ from .prompts import (
     FAQ_KEYWORDS
 )
 
-# the newest OpenAI model is "gpt-5" which was released August 7, 2025.
-# do not change this unless explicitly requested by the user
 OPENAI_MODEL = "gpt-5"
+GEMINI_MODEL = "gemini-2.5-flash"
 
 _openai_client = None
+_gemini_client = None
 
 def get_openai_client():
     """Get or create OpenAI client"""
@@ -29,8 +29,26 @@ def get_openai_client():
             _openai_client = OpenAI(api_key=api_key)
             print("[AI] OpenAI client initialized successfully")
         else:
-            print("[AI] OPENAI_API_KEY not found - using fallback responses")
+            print("[AI] OPENAI_API_KEY not found - will try Gemini fallback")
     return _openai_client
+
+def get_gemini_client():
+    """Get or create Gemini client as fallback"""
+    global _gemini_client
+    if _gemini_client is None:
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if api_key:
+            try:
+                from google import genai
+                _gemini_client = genai.Client(api_key=api_key)
+                print("[AI] Gemini client initialized successfully (fallback)")
+            except ImportError:
+                print("[AI] google-genai not installed - Gemini fallback unavailable")
+            except Exception as e:
+                print(f"[AI] Gemini client initialization failed: {e}")
+        else:
+            print("[AI] GEMINI_API_KEY not found - Gemini fallback unavailable")
+    return _gemini_client
 
 CRYPTOUNC_SYSTEM_PROMPT = """You are CryptoUnc Lotto's friendly AI assistant! You're a helpful, conversational AI that helps users with everything about the CryptoUnc Lotto lottery system on Solana blockchain.
 
@@ -171,87 +189,126 @@ def get_smart_response(question: str) -> str:
         "Just ask me anything!"
     )
 
+async def ask_gemini_async(system_prompt: str, user_prompt: str, max_tokens: int = 500) -> Optional[str]:
+    """Try to get response from Gemini as fallback"""
+    client = get_gemini_client()
+    if client is None:
+        return None
+    
+    try:
+        from google.genai import types
+        
+        full_prompt = f"{system_prompt}\n\nUser question: {user_prompt}"
+        
+        response = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=full_prompt,
+                config=types.GenerateContentConfig(
+                    max_output_tokens=max_tokens
+                )
+            )
+        )
+        
+        if response and response.text:
+            print("[AI] Gemini fallback response successful")
+            return response.text
+        return None
+    except Exception as e:
+        print(f"[AI] Gemini error: {e}")
+        return None
+
 async def chat_with_ai(user_id: int, message: str, context: str = "") -> str:
     """
     Have a conversational chat with the AI.
     This is the main entry point for interactive AI conversations.
+    Uses OpenAI first, then Gemini as fallback.
     """
     client = get_openai_client()
     
-    if client is None:
-        faq_match = find_best_faq_match(message)
-        if faq_match:
-            return faq_match
-        return get_smart_response(message)
-    
-    try:
-        history = get_user_history(user_id)
-        
-        messages = [{"role": "system", "content": CRYPTOUNC_SYSTEM_PROMPT}]
-        
-        if context:
-            messages.append({
-                "role": "system", 
-                "content": f"Additional context: {context}"
-            })
-        
-        for msg in history[-MAX_HISTORY * 2:]:
-            messages.append(msg)
-        
-        messages.append({"role": "user", "content": message})
-        
-        response = await asyncio.get_event_loop().run_in_executor(
-            None,
-            lambda: client.chat.completions.create(
-                model=OPENAI_MODEL,
-                messages=messages,  # type: ignore
-                max_completion_tokens=500
+    # Try OpenAI first
+    if client is not None:
+        try:
+            history = get_user_history(user_id)
+            
+            messages = [{"role": "system", "content": CRYPTOUNC_SYSTEM_PROMPT}]
+            
+            if context:
+                messages.append({
+                    "role": "system", 
+                    "content": f"Additional context: {context}"
+                })
+            
+            for msg in history[-MAX_HISTORY * 2:]:
+                messages.append(msg)
+            
+            messages.append({"role": "user", "content": message})
+            
+            response = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: client.chat.completions.create(
+                    model=OPENAI_MODEL,
+                    messages=messages,  # type: ignore
+                    max_completion_tokens=500
+                )
             )
-        )
-        
-        ai_response = response.choices[0].message.content or ""
-        
+            
+            ai_response = response.choices[0].message.content or ""
+            
+            add_to_history(user_id, "user", message)
+            add_to_history(user_id, "assistant", ai_response)
+            
+            return ai_response
+            
+        except Exception as e:
+            print(f"[AI] OpenAI error: {e}, trying Gemini fallback...")
+    
+    # Try Gemini fallback
+    gemini_response = await ask_gemini_async(CRYPTOUNC_SYSTEM_PROMPT, message)
+    if gemini_response:
         add_to_history(user_id, "user", message)
-        add_to_history(user_id, "assistant", ai_response)
-        
-        return ai_response
-        
-    except Exception as e:
-        print(f"[AI] OpenAI error: {e}")
-        faq_match = find_best_faq_match(message)
-        if faq_match:
-            return faq_match
-        return get_smart_response(message)
+        add_to_history(user_id, "assistant", gemini_response)
+        return gemini_response
+    
+    # Final fallback to FAQ/smart responses
+    faq_match = find_best_faq_match(message)
+    if faq_match:
+        return faq_match
+    return get_smart_response(message)
 
 async def ask_ai_async(system_prompt: str, user_prompt: str, max_tokens: int = 500) -> str:
-    """Async AI request with OpenAI"""
+    """Async AI request with OpenAI, Gemini fallback"""
     client = get_openai_client()
     
-    if client is None:
-        faq_match = find_best_faq_match(user_prompt)
-        if faq_match:
-            return faq_match
-        return get_smart_response(user_prompt)
-    
-    try:
-        response = await asyncio.get_event_loop().run_in_executor(
-            None,
-            lambda: client.chat.completions.create(
-                model=OPENAI_MODEL,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                max_completion_tokens=max_tokens
+    # Try OpenAI first
+    if client is not None:
+        try:
+            response = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: client.chat.completions.create(
+                    model=OPENAI_MODEL,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    max_completion_tokens=max_tokens
+                )
             )
-        )
-        return response.choices[0].message.content or ""
-    except Exception as e:
-        print(f"[AI] OpenAI error: {e}")
-        faq_match = find_best_faq_match(user_prompt)
-        if faq_match:
-            return faq_match
-        return get_smart_response(user_prompt)
+            return response.choices[0].message.content or ""
+        except Exception as e:
+            print(f"[AI] OpenAI error: {e}, trying Gemini fallback...")
+    
+    # Try Gemini fallback
+    gemini_response = await ask_gemini_async(system_prompt, user_prompt, max_tokens)
+    if gemini_response:
+        return gemini_response
+    
+    # Final fallback
+    faq_match = find_best_faq_match(user_prompt)
+    if faq_match:
+        return faq_match
+    return get_smart_response(user_prompt)
 
 def ask_ai(system_prompt: str, user_prompt: str, max_tokens: int = 500) -> str:
     """Synchronous AI request"""
@@ -334,8 +391,8 @@ async def get_support_guidance(issue: str = "") -> str:
     return await ask_ai_async(SUPPORT_PROMPT, issue)
 
 def is_ai_available() -> bool:
-    """Check if AI is available"""
-    return get_openai_client() is not None or True
+    """Check if AI is available (OpenAI or Gemini)"""
+    return get_openai_client() is not None or get_gemini_client() is not None or True
 
 async def get_interactive_response(message: str, user_id: int = 0, context: dict = None) -> str:
     """
