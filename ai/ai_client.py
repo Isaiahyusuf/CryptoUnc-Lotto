@@ -1,6 +1,7 @@
 import asyncio
 import os
 import re
+from datetime import datetime, timedelta
 from typing import Optional, List, Dict
 from openai import OpenAI
 from .prompts import (
@@ -14,11 +15,14 @@ from .prompts import (
     FAQ_KEYWORDS
 )
 
-OPENAI_MODEL = "gpt-5"
-GEMINI_MODEL = "gemini-2.5-flash"
+OPENAI_MODEL = "gpt-4o"
+GEMINI_MODEL = "gemini-2.0-flash"
 
 _openai_client = None
 _gemini_client = None
+
+CHAT_HISTORY_RETENTION_DAYS = 3
+MAX_HISTORY_MESSAGES = 20
 
 def get_openai_client():
     """Get or create OpenAI client"""
@@ -50,6 +54,174 @@ def get_gemini_client():
             print("[AI] GEMINI_API_KEY not found - Gemini fallback unavailable")
     return _gemini_client
 
+def get_db_connection():
+    """Get database connection - imported lazily to avoid circular imports"""
+    try:
+        from db import get_db_conn
+        return get_db_conn()
+    except Exception as e:
+        print(f"[AI] Database connection error: {e}")
+        return None
+
+def save_chat_message(user_id: int, role: str, content: str):
+    """Save a chat message to the database"""
+    conn = get_db_connection()
+    if conn is None:
+        return
+    try:
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO ai_chat_history (user_id, role, content) VALUES (%s, %s, %s)",
+            (user_id, role, content)
+        )
+        conn.commit()
+    except Exception as e:
+        print(f"[AI] Error saving chat message: {e}")
+    finally:
+        conn.close()
+
+def get_chat_history(user_id: int) -> List[Dict]:
+    """Get chat history for a user from the database (last 3 days)"""
+    conn = get_db_connection()
+    if conn is None:
+        return []
+    try:
+        c = conn.cursor()
+        cutoff = datetime.now() - timedelta(days=CHAT_HISTORY_RETENTION_DAYS)
+        c.execute(
+            """SELECT role, content FROM ai_chat_history 
+               WHERE user_id = %s AND created_at > %s 
+               ORDER BY created_at DESC LIMIT %s""",
+            (user_id, cutoff, MAX_HISTORY_MESSAGES)
+        )
+        rows = c.fetchall()
+        messages = [{"role": row[0], "content": row[1]} for row in reversed(rows)]
+        return messages
+    except Exception as e:
+        print(f"[AI] Error getting chat history: {e}")
+        return []
+    finally:
+        conn.close()
+
+def clear_chat_history(user_id: int):
+    """Clear all chat history for a user"""
+    conn = get_db_connection()
+    if conn is None:
+        return
+    try:
+        c = conn.cursor()
+        c.execute("DELETE FROM ai_chat_history WHERE user_id = %s", (user_id,))
+        conn.commit()
+        print(f"[AI] Cleared chat history for user {user_id}")
+    except Exception as e:
+        print(f"[AI] Error clearing chat history: {e}")
+    finally:
+        conn.close()
+
+def cleanup_old_chat_history():
+    """Remove chat messages older than retention period"""
+    conn = get_db_connection()
+    if conn is None:
+        return
+    try:
+        c = conn.cursor()
+        cutoff = datetime.now() - timedelta(days=CHAT_HISTORY_RETENTION_DAYS)
+        c.execute("DELETE FROM ai_chat_history WHERE created_at < %s", (cutoff,))
+        deleted = c._cursor.rowcount
+        conn.commit()
+        if deleted > 0:
+            print(f"[AI] Cleaned up {deleted} old chat messages")
+    except Exception as e:
+        print(f"[AI] Error cleaning up chat history: {e}")
+    finally:
+        conn.close()
+
+def get_user_profile(user_id: int) -> Optional[Dict]:
+    """Get user profile with permanent info AI should remember"""
+    conn = get_db_connection()
+    if conn is None:
+        return None
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT display_name, preferred_name, notes FROM user_profiles WHERE user_id = %s",
+            (user_id,)
+        )
+        row = c.fetchone()
+        if row:
+            return {
+                "display_name": row[0],
+                "preferred_name": row[1],
+                "notes": row[2]
+            }
+        return None
+    except Exception as e:
+        print(f"[AI] Error getting user profile: {e}")
+        return None
+    finally:
+        conn.close()
+
+def update_user_profile(user_id: int, display_name: str = None, preferred_name: str = None, notes: str = None):
+    """Update or create user profile with permanent info"""
+    conn = get_db_connection()
+    if conn is None:
+        return
+    try:
+        c = conn.cursor()
+        c.execute("SELECT user_id FROM user_profiles WHERE user_id = %s", (user_id,))
+        exists = c.fetchone()
+        
+        if exists:
+            updates = []
+            params = []
+            if display_name is not None:
+                updates.append("display_name = %s")
+                params.append(display_name)
+            if preferred_name is not None:
+                updates.append("preferred_name = %s")
+                params.append(preferred_name)
+            if notes is not None:
+                updates.append("notes = %s")
+                params.append(notes)
+            updates.append("last_interaction = CURRENT_TIMESTAMP")
+            params.append(user_id)
+            
+            if updates:
+                c.execute(
+                    f"UPDATE user_profiles SET {', '.join(updates)} WHERE user_id = %s",
+                    tuple(params)
+                )
+        else:
+            c.execute(
+                """INSERT INTO user_profiles (user_id, display_name, preferred_name, notes) 
+                   VALUES (%s, %s, %s, %s)""",
+                (user_id, display_name, preferred_name, notes)
+            )
+        conn.commit()
+    except Exception as e:
+        print(f"[AI] Error updating user profile: {e}")
+    finally:
+        conn.close()
+
+def extract_user_info_from_message(message: str, response: str) -> Dict:
+    """Extract user info like names from conversation"""
+    info = {}
+    
+    name_patterns = [
+        r"(?:my name is|i'm|i am|call me|they call me)\s+([A-Z][a-z]+)",
+        r"(?:I'm|Im)\s+([A-Z][a-z]+)",
+    ]
+    
+    for pattern in name_patterns:
+        match = re.search(pattern, message, re.IGNORECASE)
+        if match:
+            name = match.group(1).strip()
+            if len(name) > 1 and name.lower() not in ['the', 'a', 'an', 'just', 'here']:
+                info['preferred_name'] = name
+                break
+    
+    return info
+
 CRYPTOUNC_SYSTEM_PROMPT = """You are CryptoUnc Lotto's friendly AI assistant! You're a helpful, conversational AI that helps users with everything about the CryptoUnc Lotto lottery system on Solana blockchain.
 
 Your personality:
@@ -57,6 +229,7 @@ Your personality:
 - Clear and easy to understand
 - Helpful and patient with all questions
 - Responsible - never encourage gambling or promise winnings
+- You remember previous conversations and user preferences
 
 Key facts about CryptoUnc Lotto:
 - Ticket price: 0.025 SOL
@@ -85,27 +258,9 @@ When answering:
 - For technical issues, provide clear troubleshooting steps
 - Always remind users to play responsibly when appropriate
 - Never reveal private wallet information or help bypass security
-- Never predict lottery outcomes or guarantee winnings"""
-
-conversation_history: Dict[int, List[Dict]] = {}
-MAX_HISTORY = 10
-
-def get_user_history(user_id: int) -> List[Dict]:
-    """Get conversation history for a user"""
-    if user_id not in conversation_history:
-        conversation_history[user_id] = []
-    return conversation_history[user_id]
-
-def add_to_history(user_id: int, role: str, content: str):
-    """Add a message to user's conversation history"""
-    history = get_user_history(user_id)
-    history.append({"role": role, "content": content})
-    if len(history) > MAX_HISTORY * 2:
-        conversation_history[user_id] = history[-MAX_HISTORY * 2:]
-
-def clear_history(user_id: int):
-    """Clear a user's conversation history"""
-    conversation_history[user_id] = []
+- Never predict lottery outcomes or guarantee winnings
+- If the user told you their name, use it occasionally to be friendly
+- Reference previous conversations when relevant"""
 
 def normalize_text(text: str) -> str:
     """Normalize text for better matching"""
@@ -189,7 +344,7 @@ def get_smart_response(question: str) -> str:
         "Just ask me anything!"
     )
 
-async def ask_gemini_async(system_prompt: str, user_prompt: str, max_tokens: int = 500) -> Optional[str]:
+async def ask_gemini_async(system_prompt: str, user_prompt: str, max_tokens: int = 500, history: List[Dict] = None) -> Optional[str]:
     """Try to get response from Gemini as fallback"""
     client = get_gemini_client()
     if client is None:
@@ -198,7 +353,16 @@ async def ask_gemini_async(system_prompt: str, user_prompt: str, max_tokens: int
     try:
         from google.genai import types
         
-        full_prompt = f"{system_prompt}\n\nUser question: {user_prompt}"
+        full_prompt = f"{system_prompt}\n\n"
+        
+        if history:
+            full_prompt += "Previous conversation:\n"
+            for msg in history[-10:]:
+                role = "User" if msg["role"] == "user" else "Assistant"
+                full_prompt += f"{role}: {msg['content']}\n"
+            full_prompt += "\n"
+        
+        full_prompt += f"User question: {user_prompt}"
         
         response = await asyncio.get_event_loop().run_in_executor(
             None,
@@ -224,15 +388,27 @@ async def chat_with_ai(user_id: int, message: str, context: str = "") -> str:
     Have a conversational chat with the AI.
     This is the main entry point for interactive AI conversations.
     Uses OpenAI first, then Gemini as fallback.
+    Persists chat history to database for 3 days.
+    Remembers user info permanently.
     """
     client = get_openai_client()
     
-    # Try OpenAI first
+    history = get_chat_history(user_id)
+    profile = get_user_profile(user_id)
+    
+    system_prompt = CRYPTOUNC_SYSTEM_PROMPT
+    if profile:
+        profile_context = []
+        if profile.get("preferred_name"):
+            profile_context.append(f"User's name: {profile['preferred_name']}")
+        if profile.get("notes"):
+            profile_context.append(f"Notes about user: {profile['notes']}")
+        if profile_context:
+            system_prompt += f"\n\nUser information: {', '.join(profile_context)}"
+    
     if client is not None:
         try:
-            history = get_user_history(user_id)
-            
-            messages = [{"role": "system", "content": CRYPTOUNC_SYSTEM_PROMPT}]
+            messages = [{"role": "system", "content": system_prompt}]
             
             if context:
                 messages.append({
@@ -240,7 +416,7 @@ async def chat_with_ai(user_id: int, message: str, context: str = "") -> str:
                     "content": f"Additional context: {context}"
                 })
             
-            for msg in history[-MAX_HISTORY * 2:]:
+            for msg in history[-MAX_HISTORY_MESSAGES:]:
                 messages.append(msg)
             
             messages.append({"role": "user", "content": message})
@@ -249,29 +425,36 @@ async def chat_with_ai(user_id: int, message: str, context: str = "") -> str:
                 None,
                 lambda: client.chat.completions.create(
                     model=OPENAI_MODEL,
-                    messages=messages,  # type: ignore
+                    messages=messages,
                     max_completion_tokens=500
                 )
             )
             
             ai_response = response.choices[0].message.content or ""
             
-            add_to_history(user_id, "user", message)
-            add_to_history(user_id, "assistant", ai_response)
+            save_chat_message(user_id, "user", message)
+            save_chat_message(user_id, "assistant", ai_response)
+            
+            user_info = extract_user_info_from_message(message, ai_response)
+            if user_info:
+                update_user_profile(user_id, **user_info)
             
             return ai_response
             
         except Exception as e:
             print(f"[AI] OpenAI error: {e}, trying Gemini fallback...")
     
-    # Try Gemini fallback
-    gemini_response = await ask_gemini_async(CRYPTOUNC_SYSTEM_PROMPT, message)
+    gemini_response = await ask_gemini_async(system_prompt, message, history=history)
     if gemini_response:
-        add_to_history(user_id, "user", message)
-        add_to_history(user_id, "assistant", gemini_response)
+        save_chat_message(user_id, "user", message)
+        save_chat_message(user_id, "assistant", gemini_response)
+        
+        user_info = extract_user_info_from_message(message, gemini_response)
+        if user_info:
+            update_user_profile(user_id, **user_info)
+        
         return gemini_response
     
-    # Final fallback to FAQ/smart responses
     faq_match = find_best_faq_match(message)
     if faq_match:
         return faq_match
@@ -281,7 +464,6 @@ async def ask_ai_async(system_prompt: str, user_prompt: str, max_tokens: int = 5
     """Async AI request with OpenAI, Gemini fallback"""
     client = get_openai_client()
     
-    # Try OpenAI first
     if client is not None:
         try:
             response = await asyncio.get_event_loop().run_in_executor(
@@ -299,12 +481,10 @@ async def ask_ai_async(system_prompt: str, user_prompt: str, max_tokens: int = 5
         except Exception as e:
             print(f"[AI] OpenAI error: {e}, trying Gemini fallback...")
     
-    # Try Gemini fallback
     gemini_response = await ask_gemini_async(system_prompt, user_prompt, max_tokens)
     if gemini_response:
         return gemini_response
     
-    # Final fallback
     faq_match = find_best_faq_match(user_prompt)
     if faq_match:
         return faq_match
@@ -411,3 +591,15 @@ async def get_interactive_response(message: str, user_id: int = 0, context: dict
         return quick
     
     return await ask_ai_async(CRYPTOUNC_SYSTEM_PROMPT, message)
+
+def get_user_history(user_id: int) -> List[Dict]:
+    """Get conversation history for a user - now uses database"""
+    return get_chat_history(user_id)
+
+def add_to_history(user_id: int, role: str, content: str):
+    """Add a message to user's conversation history - now uses database"""
+    save_chat_message(user_id, role, content)
+
+def clear_history(user_id: int):
+    """Clear a user's conversation history"""
+    clear_chat_history(user_id)

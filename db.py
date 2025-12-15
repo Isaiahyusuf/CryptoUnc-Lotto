@@ -471,6 +471,29 @@ def init_all_tables():
         )
     """)
     
+    # AI Chat History - stores conversations for 3 days
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS ai_chat_history (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
+    # User Profiles - permanent storage for user info AI should remember
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS user_profiles (
+            user_id BIGINT PRIMARY KEY,
+            display_name TEXT,
+            preferred_name TEXT,
+            notes TEXT,
+            first_interaction TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_interaction TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
     # Initialize meta values
     try:
         c.execute("INSERT INTO meta (key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING", ('current_round', '1'))
@@ -494,6 +517,8 @@ def init_all_tables():
         c.execute("CREATE INDEX IF NOT EXISTS idx_email_codes_user ON email_verification_codes(user_id)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_wallet_tx_user ON wallet_transactions(user_id)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_wallet_tx_sig ON wallet_transactions(tx_signature)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_ai_chat_user ON ai_chat_history(user_id)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_ai_chat_created ON ai_chat_history(created_at)")
     except Exception as e:
         print(f"[Database] Index creation note: {e}")
     
