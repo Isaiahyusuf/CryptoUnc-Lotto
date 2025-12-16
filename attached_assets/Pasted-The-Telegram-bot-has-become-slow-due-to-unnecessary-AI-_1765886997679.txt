@@ -1,0 +1,106 @@
+The Telegram bot has become slow due to unnecessary AI providers, blocking operations, and poor async handling. Fix it using the steps below.
+	1.	REMOVE ALL OTHER AI PROVIDERS
+Completely remove OpenAI and Google Gemini from the project.
+
+Do the following:
+	•	Delete all imports related to openai, google.generativeai, or Gemini SDKs
+	•	Remove all fallback logic, try/except blocks, or conditionals that reference OpenAI or Gemini
+	•	Remove environment variables:
+	•	OPENAI_API_KEY
+	•	GEMINI_API_KEY
+	•	Ensure the codebase references ONLY Groq for AI responses
+
+There must be one AI provider only: Groq.
+
+⸻
+
+	2.	USE GROQ ASYNC CLIENT ONLY
+If Groq calls are blocking, the bot will lag.
+
+	•	Use Groq’s async-compatible client or wrap Groq calls in non-blocking async functions
+	•	NEVER call Groq inside a synchronous function used by aiogram handlers
+	•	Each AI request must be awaited properly
+
+If Groq does not support native async in the SDK:
+	•	Move AI calls into asyncio.to_thread() so they do not block the event loop
+
+⸻
+
+	3.	ACKNOWLEDGE TELEGRAM CALLBACKS IMMEDIATELY
+The bot is slow because Telegram callbacks are not answered in time.
+
+Fix:
+	•	Every callback_query_handler must immediately call:
+await callback.answer()
+	•	Do this before any AI call, database query, or processing
+	•	This prevents the “query is too old / timeout expired” error
+
+⸻
+
+	4.	MOVE HEAVY TASKS OUT OF HANDLERS
+Handlers must respond fast.
+
+	•	No AI generation inside the handler body
+	•	No database scans inside handlers
+	•	No long computations inside handlers
+
+Instead:
+	•	Send a “Processing…” message
+	•	Run AI or heavy logic in a background task using asyncio.create_task()
+	•	Edit or reply to the message once the task completes
+
+⸻
+
+	5.	ADD SIMPLE IN-MEMORY RESPONSE CACHING
+To improve speed and reduce Groq calls:
+
+	•	Cache AI responses by (user_id + prompt_hash) for short periods
+	•	If the same user sends the same request again, return cached response instantly
+	•	Cache can be Python dict with timestamps (no Redis needed for now)
+
+⸻
+
+	6.	LIMIT AI CONTEXT SIZE
+Large prompts slow Groq and increase latency.
+
+	•	Trim conversation history to last 5–7 messages only
+	•	Remove unnecessary system text
+	•	Never send full chat history
+
+⸻
+
+	7.	DATABASE PERFORMANCE FIX
+If the bot uses PostgreSQL or SQLite:
+
+	•	Ensure a single DB connection pool, not reconnecting per request
+	•	Remove any leftover SQLite fallback logic
+	•	Ensure indexes exist for frequently queried fields (user_id, round_id, wallet)
+
+⸻
+
+	8.	DISABLE DEBUG LOGGING IN PRODUCTION
+Excessive logging slows the bot.
+
+	•	Remove print statements inside handlers
+	•	Set logging level to WARNING or ERROR only
+	•	No request/response dumps in production
+
+⸻
+
+	9.	ENSURE ONLY ONE BOT INSTANCE RUNS
+Slowness can happen if multiple instances fight updates.
+
+	•	Ensure Replit runs only one process
+	•	Remove background polling duplicates
+	•	Confirm webhook OR polling is used — not both
+
+⸻
+
+	10.	EXPECTED RESULT
+After these changes:
+
+	•	Bot responds instantly to buttons
+	•	No Telegram timeout errors
+	•	AI replies are faster
+	•	CPU and memory usage drop
+	•	Only Groq is used, clean and simple

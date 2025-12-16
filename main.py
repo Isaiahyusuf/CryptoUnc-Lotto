@@ -3295,16 +3295,19 @@ async def inline_handler(query: types.CallbackQuery):
         ])
         
         await bot.send_message(uid,
-            f"💰 <b>Current Jackpot</b>\n\n"
+            f"💰 <b>Current Prize Pool</b>\n\n"
             f"🏆 <b>{jackpot} SOL</b>\n\n"
-            f"This is the live balance in the prize pool.\n"
-            f"Match all 5 numbers to win it all!\n\n"
-            f"No winner? Prize rolls over to next round!",
+            f"<b>TIERED PRIZES:</b>\n"
+            f"🏆 5-Match: 70% of pool\n"
+            f"🥈 4-Match: 20% of pool\n"
+            f"🥉 3-Match: 10% of pool\n\n"
+            f"Unclaimed tiers roll over to grow the pool!",
             reply_markup=keyboard,
             parse_mode="HTML"
         )
 
     elif data == "rules":
+        await query.answer()
         keyboard = create_keyboard_with_nav([
             [InlineKeyboardButton(text="🎲 Play Now", callback_data="play_now")]
         ])
@@ -3316,32 +3319,30 @@ async def inline_handler(query: types.CallbackQuery):
             f"3. Tap 'Play Now' and join a round\n"
             f"4. Ticket price: <b>{TICKET_PRICE} SOL</b> (Unlimited tickets!)\n"
             f"5. <b>Pick your 5 lucky numbers (1-40)</b>\n"
-            f"6. Wait for the round to end\n\n"
+            f"6. Wait for the hourly draw!\n\n"
             f"<b>🎯 Round Schedule:</b>\n"
             f"• {ROUNDS_PER_DAY} rounds per day (one every hour)\n"
             f"• Each round lasts {ROUND_DURATION_MINUTES} minutes\n"
             f"• Draw happens automatically when round ends\n\n"
-            f"<b>🏆 How to Win:</b>\n"
-            f"• Match ALL 5 numbers = WIN THE ENTIRE JACKPOT!\n"
-            f"• No winner? Prize rolls over to next round!\n"
+            f"<b>🏆 TIERED PRIZE SYSTEM:</b>\n"
+            f"🏆 <b>5-Match (70%)</b> - Match all 5 = JACKPOT tier!\n"
+            f"🥈 <b>4-Match (20%)</b> - Match 4 numbers\n"
+            f"🥉 <b>3-Match (10%)</b> - Match 3 numbers\n\n"
+            f"• Multiple winners in a tier split equally\n"
+            f"• No winners in a tier? That allocation ROLLS OVER!\n"
             f"• Winning numbers shown after each round\n"
-            f"• You get a private message with your results\n"
             f"• Winners announced in the public channel\n\n"
-            f"<b>💰 Jackpot System:</b>\n"
+            f"<b>💰 Prize Pool:</b>\n"
             f"• 20% of each ticket goes to team\n"
-            f"• 80% goes to jackpot (owner wallet)\n"
-            f"• Winner takes the ENTIRE jackpot!\n"
-            f"• No winner? Jackpot grows for next round!\n\n"
-            f"<b>🎁 Referral Program:</b>\n"
-            f"• Invite friends using your unique link\n"
-            f"• Referral rewards coming soon!\n\n"
-            f"<b>🎖️ VIP Tiers:</b>\n"
-            f"• Bronze (0+ tickets) → Silver (10+) → Gold (50+)\n"
-            f"• Platinum (100+) → Diamond (500+ tickets)\n\n"
+            f"• 80% goes to prize pool\n"
+            f"• Prize pool = 80% of sales + rollover\n"
+            f"• Unclaimed tier prizes keep growing!\n\n"
+            f"<b>🎖️ VIP Tiers (by SOL spent):</b>\n"
+            f"Bronze → Silver → Gold → Platinum → Diamond\n\n"
             f"<b>🔐 Security:</b>\n"
-            f"• Provably fair random numbers\n"
-            f"• All transactions on Solana blockchain\n"
-            f"• Your wallet keys stay encrypted & private",
+            f"• Blockchain-based provably fair randomness\n"
+            f"• All transactions on Solana\n"
+            f"• Encrypted wallet keys",
             reply_markup=keyboard,
             parse_mode="HTML"
         )
@@ -3432,7 +3433,7 @@ async def inline_handler(query: types.CallbackQuery):
     elif data == "ai_wallet_help":
         await query.answer("Loading...")
         try:
-            response = await get_wallet_help()
+            response = await get_wallet_help("How do I set up and manage my wallet?", uid)
             keyboard = create_keyboard_with_nav([], "ai_menu")
             await bot.send_message(uid,
                 f"💼 <b>Wallet Help</b>\n\n{response}",

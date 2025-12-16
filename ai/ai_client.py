@@ -1,10 +1,16 @@
+"""
+CryptoUnc Lotto AI Client - Groq Only
+Uses Groq's Llama model for fast, reliable AI responses.
+All other providers (OpenAI, Gemini) have been removed for performance.
+"""
+
 import asyncio
 import os
 import re
 import time
+import hashlib
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict
-from openai import OpenAI
 from .prompts import (
     AI_SYSTEM_PROMPT, 
     FAIRNESS_PROMPT, 
@@ -16,49 +22,22 @@ from .prompts import (
     FAQ_KEYWORDS
 )
 
-OPENAI_MODEL = "gpt-4o"
-GEMINI_MODEL = "gemini-2.0-flash"
+# Groq is the ONLY AI provider
 GROQ_MODEL = "llama-3.1-8b-instant"
 
-_openai_client = None
-_gemini_client = None
 _groq_client = None
 
+# Chat history settings - keep minimal for speed
 CHAT_HISTORY_RETENTION_DAYS = 3
-MAX_HISTORY_MESSAGES = 20
+MAX_HISTORY_MESSAGES = 5  # Reduced from 20 to 5 for speed
 
-def get_openai_client():
-    """Get or create OpenAI client"""
-    global _openai_client
-    if _openai_client is None:
-        api_key = os.environ.get("OPENAI_API_KEY")
-        if api_key:
-            _openai_client = OpenAI(api_key=api_key)
-            print("[AI] OpenAI client initialized successfully")
-        else:
-            print("[AI] OPENAI_API_KEY not found - will try Gemini fallback")
-    return _openai_client
+# In-memory response cache: {cache_key: {"response": str, "timestamp": float}}
+_response_cache: Dict[str, Dict] = {}
+CACHE_TTL_SECONDS = 300  # 5 minutes cache
 
-def get_gemini_client():
-    """Get or create Gemini client as fallback"""
-    global _gemini_client
-    if _gemini_client is None:
-        api_key = os.environ.get("GEMINI_API_KEY")
-        if api_key:
-            try:
-                from google import genai
-                _gemini_client = genai.Client(api_key=api_key)
-                print("[AI] Gemini client initialized successfully (fallback)")
-            except ImportError:
-                print("[AI] google-genai not installed - Gemini fallback unavailable")
-            except Exception as e:
-                print(f"[AI] Gemini client initialization failed: {e}")
-        else:
-            print("[AI] GEMINI_API_KEY not found - Gemini fallback unavailable")
-    return _gemini_client
 
 def get_groq_client():
-    """Get or create Groq client as final fallback"""
+    """Get or create Groq client - the only AI provider"""
     global _groq_client
     if _groq_client is None:
         api_key = os.environ.get("GROQ_API_KEY")
@@ -66,14 +45,50 @@ def get_groq_client():
             try:
                 from groq import Groq
                 _groq_client = Groq(api_key=api_key)
-                print("[AI] Groq client initialized successfully (final fallback)")
+                print("[AI] Groq client initialized - single AI provider active")
             except ImportError:
-                print("[AI] groq not installed - Groq fallback unavailable")
+                print("[AI] ERROR: groq package not installed")
             except Exception as e:
                 print(f"[AI] Groq client initialization failed: {e}")
         else:
-            print("[AI] GROQ_API_KEY not found - Groq fallback unavailable")
+            print("[AI] WARNING: GROQ_API_KEY not found - AI features disabled")
     return _groq_client
+
+
+def get_cache_key(user_id: int, prompt: str) -> str:
+    """Generate cache key from user_id and prompt hash"""
+    prompt_hash = hashlib.md5(prompt.encode()).hexdigest()[:16]
+    return f"{user_id}:{prompt_hash}"
+
+
+def get_cached_response(user_id: int, prompt: str) -> Optional[str]:
+    """Get cached response if available and not expired"""
+    cache_key = get_cache_key(user_id, prompt)
+    if cache_key in _response_cache:
+        cached = _response_cache[cache_key]
+        if time.time() - cached["timestamp"] < CACHE_TTL_SECONDS:
+            print(f"[AI] Cache hit for user {user_id}")
+            return cached["response"]
+        else:
+            del _response_cache[cache_key]
+    return None
+
+
+def cache_response(user_id: int, prompt: str, response: str):
+    """Cache a response for future use"""
+    cache_key = get_cache_key(user_id, prompt)
+    _response_cache[cache_key] = {
+        "response": response,
+        "timestamp": time.time()
+    }
+    
+    # Clean old cache entries (keep max 1000)
+    if len(_response_cache) > 1000:
+        oldest_keys = sorted(_response_cache.keys(), 
+                            key=lambda k: _response_cache[k]["timestamp"])[:200]
+        for key in oldest_keys:
+            del _response_cache[key]
+
 
 def get_db_connection():
     """Get database connection - imported lazily to avoid circular imports"""
@@ -83,6 +98,7 @@ def get_db_connection():
     except Exception as e:
         print(f"[AI] Database connection error: {e}")
         return None
+
 
 def save_chat_message(user_id: int, role: str, content: str):
     """Save a chat message to the database"""
@@ -101,8 +117,9 @@ def save_chat_message(user_id: int, role: str, content: str):
     finally:
         conn.close()
 
+
 def get_chat_history(user_id: int) -> List[Dict]:
-    """Get chat history for a user from the database (last 3 days)"""
+    """Get chat history for a user - limited to 5 messages for speed"""
     conn = get_db_connection()
     if conn is None:
         return []
@@ -124,6 +141,7 @@ def get_chat_history(user_id: int) -> List[Dict]:
     finally:
         conn.close()
 
+
 def clear_chat_history(user_id: int):
     """Clear all chat history for a user"""
     conn = get_db_connection()
@@ -138,6 +156,7 @@ def clear_chat_history(user_id: int):
         print(f"[AI] Error clearing chat history: {e}")
     finally:
         conn.close()
+
 
 def cleanup_old_chat_history():
     """Remove chat messages older than retention period"""
@@ -156,6 +175,7 @@ def cleanup_old_chat_history():
         print(f"[AI] Error cleaning up chat history: {e}")
     finally:
         conn.close()
+
 
 def get_user_profile(user_id: int) -> Optional[Dict]:
     """Get user profile with permanent info AI should remember"""
@@ -181,6 +201,7 @@ def get_user_profile(user_id: int) -> Optional[Dict]:
         return None
     finally:
         conn.close()
+
 
 def update_user_profile(user_id: int, display_name: str = None, preferred_name: str = None, notes: str = None):
     """Update or create user profile with permanent info"""
@@ -224,6 +245,7 @@ def update_user_profile(user_id: int, display_name: str = None, preferred_name: 
     finally:
         conn.close()
 
+
 def extract_user_info_from_message(message: str, response: str) -> Dict:
     """Extract user info like names from conversation"""
     info = {}
@@ -243,45 +265,43 @@ def extract_user_info_from_message(message: str, response: str) -> Dict:
     
     return info
 
-CRYPTOUNC_SYSTEM_PROMPT = """You are CryptoUnc Lotto's friendly AI assistant! You're a helpful, conversational AI that helps users with everything about the CryptoUnc Lotto lottery system on Solana blockchain.
 
-Your personality:
-- Friendly, approachable, and enthusiastic
-- Clear and easy to understand
-- Helpful and patient with all questions
-- Responsible - never encourage gambling or promise winnings
-- You remember previous conversations and user preferences
+# System prompt for the AI - includes tiered prize system details
+CRYPTOUNC_SYSTEM_PROMPT = """You are CryptoUnc Lotto's friendly AI assistant on Solana blockchain.
 
-Key facts about CryptoUnc Lotto:
+CRITICAL RULES:
+- Be helpful, concise, and friendly
+- NEVER predict lottery outcomes or guarantee winnings
+- NEVER encourage excessive gambling
+- NEVER reveal private wallet information
+
+TIERED PRIZE SYSTEM (IMPORTANT):
+- Players pick 5 numbers from 1-40
+- Prize pool = 80% of ticket sales + rollover from previous rounds
+- 3 ways to win:
+  * 5-Match: 70% of prize pool (JACKPOT tier)
+  * 4-Match: 20% of prize pool
+  * 3-Match: 10% of prize pool
+- Multiple winners in a tier split that tier's allocation equally
+- If NO winners in a tier, that allocation ROLLS OVER to next round
+- Unclaimed tiers accumulate, making future prizes bigger!
+
+LOTTERY DETAILS:
 - Ticket price: 0.025 SOL
-- Pick 5 numbers from 1-40
-- Match all 5 to win the entire jackpot
-- 24 draws per day (every hour on the hour)
-- 80% of ticket sales go to prize pool, 20% to team
-- If no winner, jackpot rolls over to next round
-- Uses cryptographic blockchain randomness - provably fair
+- 24 hourly draws (every hour on the hour)
 - Maximum 3 wallets per user
-- 4-digit PIN required for security
-- Private keys are encrypted and auto-delete after 30 seconds
+- 4-digit PIN for security
+- Private keys encrypted, auto-delete after 30 seconds
 
-VIP Tiers (by SOL spent):
+VIP TIERS (by SOL spent):
 - Bronze: 0-1 SOL
 - Silver: 1-5 SOL
 - Gold: 5-20 SOL
 - Platinum: 20-50 SOL
 - Diamond: 50+ SOL
 
-When answering:
-- Be conversational and natural
-- Give helpful, specific answers
-- Use emojis sparingly for friendliness
-- Keep responses concise but complete
-- For technical issues, provide clear troubleshooting steps
-- Always remind users to play responsibly when appropriate
-- Never reveal private wallet information or help bypass security
-- Never predict lottery outcomes or guarantee winnings
-- If the user told you their name, use it occasionally to be friendly
-- Reference previous conversations when relevant"""
+Keep responses under 150 words. Be conversational and helpful."""
+
 
 def normalize_text(text: str) -> str:
     """Normalize text for better matching"""
@@ -289,6 +309,7 @@ def normalize_text(text: str) -> str:
     text = re.sub(r'[^\w\s]', '', text)
     text = ' '.join(text.split())
     return text
+
 
 def find_best_faq_match(question: str) -> Optional[str]:
     """Find the best FAQ match using keyword matching"""
@@ -328,8 +349,9 @@ def find_best_faq_match(question: str) -> Optional[str]:
     
     return None
 
+
 def get_smart_response(question: str) -> str:
-    """Get an intelligent response without using OpenAI"""
+    """Get an intelligent response without using AI"""
     question_lower = normalize_text(question)
     
     faq_match = find_best_faq_match(question)
@@ -365,350 +387,224 @@ def get_smart_response(question: str) -> str:
         "Just ask me anything!"
     )
 
-async def ask_gemini_async(system_prompt: str, user_prompt: str, max_tokens: int = 500, history: List[Dict] = None) -> Optional[str]:
-    """Try to get response from Gemini as fallback"""
-    client = get_gemini_client()
-    if client is None:
-        return None
-    
-    try:
-        from google.genai import types
-        
-        full_prompt = f"{system_prompt}\n\n"
-        
-        if history:
-            full_prompt += "Previous conversation:\n"
-            for msg in history[-10:]:
-                role = "User" if msg["role"] == "user" else "Assistant"
-                full_prompt += f"{role}: {msg['content']}\n"
-            full_prompt += "\n"
-        
-        full_prompt += f"User question: {user_prompt}"
-        
-        response = await asyncio.get_event_loop().run_in_executor(
-            None,
-            lambda: client.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=full_prompt,
-                config=types.GenerateContentConfig(
-                    max_output_tokens=max_tokens
-                )
-            )
-        )
-        
-        if response and response.text:
-            print("[AI] Gemini fallback response successful")
-            return response.text
-        return None
-    except Exception as e:
-        print(f"[AI] Gemini error: {e}")
-        return None
 
-async def ask_groq_async(system_prompt: str, user_prompt: str, max_tokens: int = 300, history: List[Dict] = None) -> Optional[str]:
-    """Try to get response from Groq as final fallback"""
+async def ask_groq_async(system_prompt: str, user_prompt: str, max_tokens: int = 200, history: List[Dict] = None) -> Optional[str]:
+    """
+    Get response from Groq using asyncio.to_thread for non-blocking execution.
+    This prevents the bot from lagging during AI calls.
+    """
     client = get_groq_client()
     if client is None:
         return None
     
     try:
-        full_prompt = f"{system_prompt}\n\n"
+        # Build messages list with limited history
+        messages = [{"role": "system", "content": system_prompt}]
         
         if history:
-            full_prompt += "Previous conversation:\n"
-            for msg in history[-10:]:
-                role = "User" if msg["role"] == "user" else "Assistant"
-                full_prompt += f"{role}: {msg['content']}\n"
-            full_prompt += "\n"
+            # Only use last 5 messages to keep context small
+            for msg in history[-5:]:
+                messages.append(msg)
         
-        full_prompt += f"User question: {user_prompt}"
+        messages.append({"role": "user", "content": user_prompt})
         
-        response = await asyncio.get_event_loop().run_in_executor(
-            None,
-            lambda: client.chat.completions.create(
-                model=GROQ_MODEL,
-                messages=[{"role": "user", "content": full_prompt}],
-                temperature=0.4,
-                max_tokens=max_tokens
-            )
+        # Run Groq in thread pool to avoid blocking
+        response = await asyncio.to_thread(
+            client.chat.completions.create,
+            model=GROQ_MODEL,
+            messages=messages,
+            temperature=0.4,
+            max_tokens=max_tokens
         )
         
         if response and response.choices[0].message.content:
-            print("[AI] Groq fallback response successful")
             return response.choices[0].message.content
         return None
     except Exception as e:
         print(f"[AI] Groq error: {e}")
         return None
 
+
 async def chat_with_ai(user_id: int, message: str, context: str = "") -> str:
     """
-    Have a conversational chat with the AI.
-    This is the main entry point for interactive AI conversations.
-    Uses OpenAI first, then Gemini, then Groq as fallbacks.
-    Persists chat history to database for 3 days.
-    Remembers user info permanently.
+    Main entry point for AI conversations.
+    Uses Groq only with caching and non-blocking execution.
     """
-    client = get_openai_client()
+    # Check cache first for fast response
+    cached = get_cached_response(user_id, message)
+    if cached:
+        return cached
     
+    # Try FAQ match first (instant response)
+    faq_match = find_best_faq_match(message)
+    if faq_match:
+        return faq_match
+    
+    # Get chat history (limited to 5 messages)
     history = get_chat_history(user_id)
     profile = get_user_profile(user_id)
     
+    # Build system prompt with user context
     system_prompt = CRYPTOUNC_SYSTEM_PROMPT
     if profile:
         profile_context = []
         if profile.get("preferred_name"):
             profile_context.append(f"User's name: {profile['preferred_name']}")
         if profile.get("notes"):
-            profile_context.append(f"Notes about user: {profile['notes']}")
+            profile_context.append(f"Notes: {profile['notes']}")
         if profile_context:
-            system_prompt += f"\n\nUser information: {', '.join(profile_context)}"
+            system_prompt += f"\n\nUser info: {', '.join(profile_context)}"
     
-    if client is not None:
-        try:
-            messages = [{"role": "system", "content": system_prompt}]
-            
-            if context:
-                messages.append({
-                    "role": "system", 
-                    "content": f"Additional context: {context}"
-                })
-            
-            for msg in history[-MAX_HISTORY_MESSAGES:]:
-                messages.append(msg)
-            
-            messages.append({"role": "user", "content": message})
-            
-            response = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: client.chat.completions.create(
-                    model=OPENAI_MODEL,
-                    messages=messages,
-                    max_completion_tokens=500
-                )
-            )
-            
-            ai_response = response.choices[0].message.content or ""
-            
-            save_chat_message(user_id, "user", message)
-            save_chat_message(user_id, "assistant", ai_response)
-            
-            user_info = extract_user_info_from_message(message, ai_response)
-            if user_info:
-                update_user_profile(user_id, **user_info)
-            
-            return ai_response
-            
-        except Exception as e:
-            print(f"[AI] OpenAI error: {e}, trying Gemini fallback...")
-            await asyncio.sleep(1)
+    if context:
+        system_prompt += f"\n\nAdditional context: {context}"
     
-    gemini_response = await ask_gemini_async(system_prompt, message, history=history)
-    if gemini_response:
+    # Call Groq (non-blocking)
+    ai_response = await ask_groq_async(system_prompt, message, max_tokens=200, history=history)
+    
+    if ai_response:
+        # Save to history
         save_chat_message(user_id, "user", message)
-        save_chat_message(user_id, "assistant", gemini_response)
+        save_chat_message(user_id, "assistant", ai_response)
         
-        user_info = extract_user_info_from_message(message, gemini_response)
+        # Cache the response
+        cache_response(user_id, message, ai_response)
+        
+        # Extract user info if present
+        user_info = extract_user_info_from_message(message, ai_response)
         if user_info:
             update_user_profile(user_id, **user_info)
         
-        return gemini_response
+        return ai_response
     
-    print("[AI] Gemini failed, switching to Groq...")
-    await asyncio.sleep(1)
-    
-    groq_response = await ask_groq_async(system_prompt, message, history=history)
-    if groq_response:
-        save_chat_message(user_id, "user", message)
-        save_chat_message(user_id, "assistant", groq_response)
-        
-        user_info = extract_user_info_from_message(message, groq_response)
-        if user_info:
-            update_user_profile(user_id, **user_info)
-        
-        return groq_response
-    
-    faq_match = find_best_faq_match(message)
-    if faq_match:
-        return faq_match
-    return "AI is currently unavailable. Please try again later."
+    # Fallback to smart response
+    return get_smart_response(message)
 
-async def ask_ai_async(system_prompt: str, user_prompt: str, max_tokens: int = 500) -> str:
-    """Async AI request with OpenAI, Gemini, Groq fallback chain"""
-    client = get_openai_client()
+
+async def ask_ai_async(system_prompt: str, user_prompt: str, max_tokens: int = 200) -> str:
+    """Async AI request using Groq only"""
+    response = await ask_groq_async(system_prompt, user_prompt, max_tokens)
+    if response:
+        return response
     
-    if client is not None:
-        try:
-            response = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: client.chat.completions.create(
-                    model=OPENAI_MODEL,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    max_completion_tokens=max_tokens
-                )
-            )
-            return response.choices[0].message.content or ""
-        except Exception as e:
-            print(f"[AI] OpenAI error: {e}, trying Gemini fallback...")
-            await asyncio.sleep(1)
-    
-    gemini_response = await ask_gemini_async(system_prompt, user_prompt, max_tokens)
-    if gemini_response:
-        return gemini_response
-    
-    print("[AI] Gemini failed, switching to Groq...")
-    await asyncio.sleep(1)
-    
-    groq_response = await ask_groq_async(system_prompt, user_prompt, min(max_tokens, 300))
-    if groq_response:
-        return groq_response
-    
+    # Fallback to FAQ
     faq_match = find_best_faq_match(user_prompt)
     if faq_match:
         return faq_match
     return "AI is currently unavailable. Please try again later."
 
-def ask_ai(system_prompt: str, user_prompt: str, max_tokens: int = 500) -> str:
-    """Synchronous AI request with OpenAI, Gemini, Groq fallback chain"""
-    client = get_openai_client()
+
+def ask_ai(system_prompt: str, user_prompt: str, max_tokens: int = 200) -> str:
+    """Synchronous AI request using Groq only"""
+    client = get_groq_client()
     
     if client is not None:
         try:
             response = client.chat.completions.create(
-                model=OPENAI_MODEL,
+                model=GROQ_MODEL,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                max_completion_tokens=max_tokens
-            )
-            return response.choices[0].message.content or ""
-        except Exception as e:
-            print(f"[AI] OpenAI error: {e}, trying Gemini fallback...")
-            time.sleep(1)
-    
-    gemini = get_gemini_client()
-    if gemini is not None:
-        try:
-            from google.genai import types
-            full_prompt = f"{system_prompt}\n\nUser question: {user_prompt}"
-            response = gemini.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=full_prompt,
-                config=types.GenerateContentConfig(max_output_tokens=max_tokens)
-            )
-            if response and response.text:
-                print("[AI] Gemini fallback response successful")
-                return response.text
-        except Exception as e:
-            print(f"[AI] Gemini error: {e}, switching to Groq...")
-            time.sleep(1)
-    
-    groq = get_groq_client()
-    if groq is not None:
-        try:
-            full_prompt = f"{system_prompt}\n\nUser question: {user_prompt}"
-            response = groq.chat.completions.create(
-                model=GROQ_MODEL,
-                messages=[{"role": "user", "content": full_prompt}],
                 temperature=0.4,
-                max_tokens=min(max_tokens, 300)
+                max_tokens=max_tokens
             )
             if response and response.choices[0].message.content:
-                print("[AI] Groq fallback response successful")
                 return response.choices[0].message.content
         except Exception as e:
-            print(f"[AI] Groq also failed: {e}")
+            print(f"[AI] Groq sync error: {e}")
     
+    # Fallback to FAQ
     faq_match = find_best_faq_match(user_prompt)
     if faq_match:
         return faq_match
     return "AI is currently unavailable. Please try again later."
 
-def get_fallback_response(user_prompt: str) -> str:
-    """Provide fallback responses"""
-    return get_smart_response(user_prompt)
 
-def get_quick_answer(question: str) -> Optional[str]:
-    """Get quick FAQ answer"""
-    return find_best_faq_match(question)
-
+# Convenience functions using the common prompts
 async def get_ai_help(question: str, user_id: int = 0) -> str:
-    """Get AI help for a general question - uses conversational AI"""
-    if user_id > 0:
-        return await chat_with_ai(user_id, question)
+    """Get general AI help with caching"""
+    cached = get_cached_response(user_id, question)
+    if cached:
+        return cached
     
-    quick = get_quick_answer(question)
-    if quick:
-        return quick
+    response = await ask_ai_async(AI_SYSTEM_PROMPT, question, 200)
+    if user_id:
+        cache_response(user_id, question, response)
+    return response
+
+
+async def get_fairness_explanation(user_id: int = 0) -> str:
+    """Explain how the lottery is fair"""
+    prompt = "Explain how CryptoUnc Lotto is provably fair"
+    cached = get_cached_response(user_id, prompt)
+    if cached:
+        return cached
     
-    return await ask_ai_async(CRYPTOUNC_SYSTEM_PROMPT, question)
+    response = await ask_ai_async(FAIRNESS_PROMPT, prompt, 200)
+    if user_id:
+        cache_response(user_id, prompt, response)
+    return response
 
-async def get_fairness_explanation() -> str:
-    """Get AI explanation of lottery fairness"""
-    return await ask_ai_async(
-        CRYPTOUNC_SYSTEM_PROMPT,
-        "Explain in detail how CryptoUnc Lotto ensures fair and transparent draws. "
-        "Cover the blockchain randomness, verification process, and why users can trust the system."
-    )
 
-async def get_how_to_play() -> str:
-    """Get AI explanation of how to play"""
-    return await ask_ai_async(
-        CRYPTOUNC_SYSTEM_PROMPT,
-        "Walk me through how to play CryptoUnc Lotto step by step, from creating a wallet to buying tickets to checking results."
-    )
+async def get_how_to_play(user_id: int = 0) -> str:
+    """Get how to play instructions"""
+    prompt = "How do I play CryptoUnc Lotto?"
+    cached = get_cached_response(user_id, prompt)
+    if cached:
+        return cached
+    
+    response = await ask_ai_async(HOW_TO_PLAY_PROMPT, prompt, 250)
+    if user_id:
+        cache_response(user_id, prompt, response)
+    return response
 
-async def get_wallet_help(question: str = "") -> str:
-    """Get AI help for wallet-related questions"""
-    if not question:
-        question = "Explain all the wallet options, how to set them up, and security features."
-    return await ask_ai_async(WALLET_HELP_PROMPT, question)
 
-async def get_stats_explanation() -> str:
-    """Get AI explanation of stats and VIP system"""
-    return await ask_ai_async(
-        CRYPTOUNC_SYSTEM_PROMPT,
-        "Explain the user statistics tracking and VIP tier system in CryptoUnc Lotto."
-    )
+async def get_wallet_help(question: str, user_id: int = 0) -> str:
+    """Get wallet-related help"""
+    cached = get_cached_response(user_id, question)
+    if cached:
+        return cached
+    
+    response = await ask_ai_async(WALLET_HELP_PROMPT, question, 200)
+    if user_id:
+        cache_response(user_id, question, response)
+    return response
 
-async def get_support_guidance(issue: str = "") -> str:
-    """Get AI support guidance for common issues"""
-    if not issue:
-        issue = "What are the most common issues users face and how can they be resolved?"
-    return await ask_ai_async(SUPPORT_PROMPT, issue)
+
+async def get_stats_explanation(user_id: int = 0) -> str:
+    """Explain stats and VIP system"""
+    prompt = "Explain the VIP tiers and stats system"
+    cached = get_cached_response(user_id, prompt)
+    if cached:
+        return cached
+    
+    response = await ask_ai_async(STATS_EXPLANATION_PROMPT, prompt, 200)
+    if user_id:
+        cache_response(user_id, prompt, response)
+    return response
+
+
+async def get_support_guidance(issue: str, user_id: int = 0) -> str:
+    """Get support guidance for an issue"""
+    cached = get_cached_response(user_id, issue)
+    if cached:
+        return cached
+    
+    response = await ask_ai_async(SUPPORT_PROMPT, issue, 200)
+    if user_id:
+        cache_response(user_id, issue, response)
+    return response
+
 
 def is_ai_available() -> bool:
-    """Check if AI is available (OpenAI, Gemini, or Groq)"""
-    return get_openai_client() is not None or get_gemini_client() is not None or get_groq_client() is not None or True
+    """Check if AI is available"""
+    return get_groq_client() is not None
 
-async def get_interactive_response(message: str, user_id: int = 0, context: dict = None) -> str:
-    """
-    Get an interactive AI response based on message and optional context.
-    This is the main entry point for conversational AI in the bot.
-    """
-    context_str = ""
-    if context:
-        context_str = ", ".join([f"{k}: {v}" for k, v in context.items()])
-    
-    if user_id > 0:
-        return await chat_with_ai(user_id, message, context_str)
-    
-    quick = find_best_faq_match(message)
-    if quick:
-        return quick
-    
-    return await ask_ai_async(CRYPTOUNC_SYSTEM_PROMPT, message)
 
-def get_user_history(user_id: int) -> List[Dict]:
-    """Get conversation history for a user - now uses database"""
-    return get_chat_history(user_id)
+async def get_interactive_response(user_id: int, message: str, context: str = "") -> str:
+    """Get an interactive AI response - wrapper for chat_with_ai"""
+    return await chat_with_ai(user_id, message, context)
 
-def add_to_history(user_id: int, role: str, content: str):
-    """Add a message to user's conversation history - now uses database"""
-    save_chat_message(user_id, role, content)
 
 def clear_history(user_id: int):
     """Clear a user's conversation history"""
