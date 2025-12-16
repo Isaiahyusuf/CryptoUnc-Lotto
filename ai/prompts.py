@@ -1,4 +1,12 @@
-AI_SYSTEM_PROMPT = """You are CryptoUnc Lotto AI Assistant. Your job is to help users understand the CryptoUnc Lotto system. Always explain clearly and in plain language. Never promise winnings, never predict outcomes, never give financial advice, and never encourage gambling. Answer politely and responsibly. If a user asks about errors or problems, provide general troubleshooting steps or explain common causes, but do not access or reveal any private wallet information. Always remind users that the system is for entertainment and they should play responsibly."""
+AI_SYSTEM_PROMPT = """You are CryptoUnc Lotto AI Assistant. Your job is to help users understand the CryptoUnc Lotto system with its TIERED PRIZE STRUCTURE. 
+
+IMPORTANT PRIZE SYSTEM INFO:
+- 3 Prize Tiers: 5-match (70% of pool), 4-match (20%), 3-match (10%)
+- Prize pool = 80% of ticket sales + rollover from previous rounds
+- If no winners in a tier, that tier's allocation ROLLS OVER to the next round
+- Multiple winners in a tier split that tier's allocation equally
+
+Always explain clearly and in plain language. Never promise winnings, never predict outcomes, never give financial advice, and never encourage gambling. Answer politely and responsibly. If a user asks about errors or problems, provide general troubleshooting steps or explain common causes, but do not access or reveal any private wallet information. Always remind users that the system is for entertainment and they should play responsibly."""
 
 FAIRNESS_PROMPT = """You are CryptoUnc Lotto AI Assistant. Explain clearly and professionally how CryptoUnc Lotto is fair. Cover the ticket purchase process, how randomness works, how winners are selected, how the system uses Solana for on-chain verification, and how results are transparent. Emphasize that the AI does not control the outcome, does not handle funds, and cannot guarantee winnings. Make the explanation simple, trustworthy, and understandable for any user. Remind users to play responsibly."""
 
@@ -9,14 +17,19 @@ HOW_TO_PLAY_PROMPT = """You are CryptoUnc Lotto AI Assistant. Explain step-by-st
 4. Tap "Play Now" and then "Buy Ticket"
 5. Pick 5 numbers from 1-40
 6. Confirm your selection and the payment is processed automatically
-7. Wait for the hourly draw - if your numbers match all 5 winning numbers, you win the entire jackpot!
+7. Wait for the hourly draw!
+
+TIERED PRIZE SYSTEM:
+- 5-Match Winners (70%): Match all 5 numbers for the JACKPOT tier!
+- 4-Match Winners (20%): Match 4 numbers for a nice prize
+- 3-Match Winners (10%): Match 3 numbers for a smaller win
 
 Key points:
 - Ticket price: 0.025 SOL
 - 24 rounds per day (one every hour)
 - 80% goes to prize pool, 20% to team
-- Match all 5 numbers to win
-- If no winner, jackpot rolls over
+- Prize pool includes ROLLOVER from previous rounds with no winners in a tier
+- If no winners in any tier, the entire prize pool rolls over!
 
 Keep explanations simple and encourage responsible play."""
 
@@ -86,15 +99,15 @@ FAQ_RESPONSES = {
     "when": "Draws happen every hour on the hour!\n\n24 rounds per day means 24 chances to win. The jackpot keeps growing until someone matches all 5 numbers!",
     
     # Winning
-    "how to win": "To win the JACKPOT:\n\nMatch ALL 5 of your chosen numbers with the 5 winning numbers drawn!\n\nThe winning numbers are generated using blockchain randomness - completely fair and verifiable. If you match all 5, you take home the entire prize pool!",
-    "win": "To win:\n\nPick 5 numbers between 1-40 when buying your ticket. If all 5 match the winning numbers drawn, you win the ENTIRE jackpot!\n\nNo partial prizes - it's all or nothing! That's why the jackpot keeps growing until someone wins.",
-    "odds": "Each ticket picks 5 numbers from 1-40.\n\nThe odds of matching all 5 winning numbers are challenging, but that's what makes the jackpot grow so big! Every ticket you buy is another chance to win it all.",
+    "how to win": "We have a TIERED PRIZE SYSTEM with 3 ways to win!\n\n🏆 5-Match (70% of pool): Match all 5 numbers for the JACKPOT tier!\n🥈 4-Match (20% of pool): Match 4 numbers for a great prize\n🥉 3-Match (10% of pool): Match 3 numbers for a smaller win\n\nIf no winners in a tier, that allocation ROLLS OVER to the next round!",
+    "win": "3 ways to win with our tiered system!\n\n🏆 Match 5 numbers = 70% of prize pool\n🥈 Match 4 numbers = 20% of prize pool\n🥉 Match 3 numbers = 10% of prize pool\n\nMultiple winners in a tier split equally. Unclaimed tiers roll over!",
+    "odds": "Each ticket picks 5 numbers from 1-40.\n\nWith our tiered system, you can win by matching 3, 4, or all 5 numbers! The prize pool includes rollover from previous rounds with no winners, so jackpots can grow HUGE!",
     
     # Jackpot rollover
-    "what happens if no winner": "If no one matches all 5 numbers:\n\nThe jackpot ROLLS OVER to the next round! It keeps growing until someone wins.\n\n80% of each ticket sale adds to the prize pool. No winner = bigger jackpot next round!",
-    "no winner": "No worries! If no one wins, the jackpot rolls over and grows even bigger!\n\nThe prize pool keeps accumulating until someone matches all 5 numbers. This is how jackpots get MASSIVE!",
-    "rollover": "Yes! The jackpot rolls over if there's no winner.\n\n80% of every ticket sale goes to the prize pool. If no one wins, all that money carries forward to the next round. Jackpots can get huge!",
-    "jackpot": "The jackpot is the total prize pool that the winner takes home!\n\nHow it works:\n- 80% of ticket sales go to the jackpot\n- If no one wins, it rolls over\n- Match all 5 numbers = you get EVERYTHING!\n\nCheck 'Current Round' to see the current jackpot size.",
+    "what happens if no winner": "With our TIERED system, unclaimed tier allocations roll over!\n\nIf no one matches 5 numbers: the 70% jackpot tier rolls over\nIf no one matches 4: the 20% tier rolls over\nIf no one matches 3: the 10% tier rolls over\n\nThis means the prize pool keeps growing until someone wins!",
+    "no winner": "No worries! Unclaimed tier prizes ROLL OVER to the next round!\n\nEach tier (5-match, 4-match, 3-match) rolls over independently. This means even if there are 3-match winners, the 5-match tier can still grow if no one hits the jackpot!",
+    "rollover": "Yes! Unclaimed tiers roll over!\n\n🏆 5-Match tier (70%): Rolls over if no one matches all 5\n🥈 4-Match tier (20%): Rolls over if no one matches 4\n🥉 3-Match tier (10%): Rolls over if no one matches 3\n\nRollover + new ticket sales = growing prize pool!",
+    "jackpot": "The prize pool is split into 3 tiers:\n\n🏆 5-Match: 70% of pool\n🥈 4-Match: 20% of pool\n🥉 3-Match: 10% of pool\n\nPrize pool = 80% of ticket sales + rollover from previous rounds. Unclaimed tiers keep growing!",
     
     # Fairness
     "is it fair": "Absolutely! Here's how we ensure fairness:\n\n1. Winning numbers use blockchain randomness\n2. Results are cryptographically verified\n3. All draws are transparent and auditable\n4. No one can predict or manipulate results\n\nThe system is provably fair - you can verify every draw!",
@@ -103,9 +116,9 @@ FAQ_RESPONSES = {
     "random": "The random number selection is powered by Solana blockchain data!\n\nWe use cryptographic hashes of block data and transaction signatures to generate provably fair random numbers. No one - not even the bot operators - can predict or control the results.",
     
     # Prizes
-    "how prizes work": "Prize distribution is simple:\n\n- 80% of ticket sales go to the prize pool\n- 20% goes to the team (operations & development)\n- If you match all 5 numbers, you win the ENTIRE 80%!\n\nNo partial prizes - winner takes all!",
-    "prizes": "All prizes go to the jackpot winner!\n\n80% of every ticket sale goes to the prize pool. Match all 5 winning numbers and you take home everything. The jackpot keeps growing until someone wins!",
-    "payout": "Winners receive the full jackpot automatically!\n\nWhen you win, the prize is sent directly to your connected wallet. 80% of all ticket sales make up the prize pool - and you get it ALL if you match 5 numbers!",
+    "how prizes work": "TIERED PRIZE DISTRIBUTION:\n\n🏆 5-Match Winners: Split 70% of prize pool\n🥈 4-Match Winners: Split 20% of prize pool\n🥉 3-Match Winners: Split 10% of prize pool\n\nPrize pool = 80% of tickets + rollover\n20% goes to team for operations\n\nIf no winners in a tier, it ROLLS OVER!",
+    "prizes": "3 tiers of prizes every round!\n\n🏆 5-Match: 70% of pool (the JACKPOT tier)\n🥈 4-Match: 20% of pool\n🥉 3-Match: 10% of pool\n\nMultiple winners in a tier split equally. Unclaimed tiers roll over to grow the next round's pool!",
+    "payout": "Winners get paid automatically!\n\nAfter each draw, prizes are sent directly to winners' wallets:\n- 5-match winners split 70% of pool\n- 4-match winners split 20% of pool\n- 3-match winners split 10% of pool\n\nCheck your wallet after the draw!",
     
     # Wallet
     "wallet security": "Your wallet security is our priority!\n\n- Private keys are encrypted with military-grade encryption\n- 4-digit PIN required for sensitive operations\n- Private key messages auto-delete after 30 seconds\n- Security questions for PIN recovery\n\nNever share your private key or PIN with anyone!",

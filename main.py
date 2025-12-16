@@ -5577,82 +5577,126 @@ async def manage_rounds():
 
 async def process_round_end(round_id: int):
     """
-    Process the end of a round - run the draw.
-    No refunds, no player minimum required.
+    Process the end of a round with TIERED PRIZE SYSTEM.
+    Pays out winners in all tiers (5/4/3 matches) and handles rollover.
     """
     result = process_round_draw(round_id)
     
     if result:
-        await announce_draw_result(round_id, result)
+        # Pay all tier winners
+        await pay_tiered_winners(result)
         
-        if result.get("has_winner"):
-            await pay_jackpot_winner(result)
-        else:
-            await pay_team_fee(result)
+        # Announce results with tier information
+        await announce_draw_result(round_id, result)
     
     update_round_status(round_id, 'completed')
     print(f"✅ Round {round_id} completed!")
 
 
 async def announce_draw_result(round_id: int, result: dict):
-    """Announce the draw results to the channel, group, and DM each player"""
+    """Announce the draw results with TIERED PRIZE INFORMATION"""
     try:
         winning_nums = result['winning_numbers']
         player_count = result['player_count']
+        prize_pool = result.get('prize_pool', Decimal("0"))
+        previous_rollover = result.get('previous_rollover', Decimal("0"))
+        new_rollover = result.get('new_rollover', Decimal("0"))
         
-        # Get current jackpot from owner wallet
-        try:
-            jackpot = await get_real_balance(OWNER_WALLET)
-        except:
-            jackpot = Decimal("0")
+        tier_5_payouts = result.get('tier_5_payouts', [])
+        tier_4_payouts = result.get('tier_4_payouts', [])
+        tier_3_payouts = result.get('tier_3_payouts', [])
         
-        if result.get("has_winner"):
-            winner_id = result['winner_user_id']
-            prize = result.get('prize_amount', jackpot)
-            
-            conn = get_db_conn()
-            c = conn.cursor()
-            c.execute("SELECT username FROM users WHERE user_id = %s", (winner_id,))
-            user_row = c.fetchone()
-            winner_name = user_row[0] if user_row and user_row[0] else f"User {winner_id}"
-            conn.close()
-            
+        # Build tier winner summaries
+        tier_sections = []
+        
+        # Tier 5 (5 matches - 70%)
+        if tier_5_payouts:
+            payout_amount = tier_5_payouts[0]['amount'] if tier_5_payouts else Decimal("0")
+            tier_sections.append(
+                f"🏆 <b>5-Match Winners (70%)</b>\n"
+                f"   {len(tier_5_payouts)} winner(s) | {payout_amount:.6f} SOL each"
+            )
+        else:
+            tier_5_alloc = result.get('tier_5_allocation', Decimal("0"))
+            tier_sections.append(f"🏆 <b>5-Match (70%)</b>: No winners | {tier_5_alloc:.6f} SOL → Rollover")
+        
+        # Tier 4 (4 matches - 20%)
+        if tier_4_payouts:
+            payout_amount = tier_4_payouts[0]['amount'] if tier_4_payouts else Decimal("0")
+            tier_sections.append(
+                f"🥈 <b>4-Match Winners (20%)</b>\n"
+                f"   {len(tier_4_payouts)} winner(s) | {payout_amount:.6f} SOL each"
+            )
+        else:
+            tier_4_alloc = result.get('tier_4_allocation', Decimal("0"))
+            tier_sections.append(f"🥈 <b>4-Match (20%)</b>: No winners | {tier_4_alloc:.6f} SOL → Rollover")
+        
+        # Tier 3 (3 matches - 10%)
+        if tier_3_payouts:
+            payout_amount = tier_3_payouts[0]['amount'] if tier_3_payouts else Decimal("0")
+            tier_sections.append(
+                f"🥉 <b>3-Match Winners (10%)</b>\n"
+                f"   {len(tier_3_payouts)} winner(s) | {payout_amount:.6f} SOL each"
+            )
+        else:
+            tier_3_alloc = result.get('tier_3_allocation', Decimal("0"))
+            tier_sections.append(f"🥉 <b>3-Match (10%)</b>: No winners | {tier_3_alloc:.6f} SOL → Rollover")
+        
+        tier_summary = "\n".join(tier_sections)
+        
+        # Build main announcement
+        has_any_winners = tier_5_payouts or tier_4_payouts or tier_3_payouts
+        
+        if has_any_winners:
+            # Celebration message for winners
             message_text = (
-                f"🎉🎉🎉 <b>JACKPOT WINNER!!!</b> 🎉🎉🎉\n\n"
-                f"🎰 Round: {round_id}\n"
-                f"👥 Players: {player_count}\n\n"
-                f"🎲 Winning Numbers: <b>{', '.join(map(str, winning_nums))}</b>\n\n"
-                f"🏆 Winner: @{winner_name}\n"
-                f"💰 JACKPOT: <b>{prize} SOL</b>\n\n"
-                f"Someone matched ALL 5 numbers and won the ENTIRE JACKPOT!\n"
-                f"A new jackpot starts now!\n\n"
-                f"🍀 Congratulations!!! 🍀"
+                f"🎉 <b>Round {round_id} Results - WINNERS!</b> 🎉\n\n"
+                f"👥 Players: {player_count}\n"
+                f"🎲 Winning Numbers: <b>{', '.join(map(str, winning_nums))}</b>\n"
+                f"💰 Prize Pool: <b>{prize_pool:.6f} SOL</b>\n\n"
+                f"<b>━━━ PRIZE BREAKDOWN ━━━</b>\n\n"
+                f"{tier_summary}\n\n"
             )
             
-            await send_to_announcements(message_text)
+            # Add rollover info if any
+            if new_rollover > 0:
+                message_text += (
+                    f"<b>━━━ ROLLOVER ━━━</b>\n"
+                    f"💫 <b>{new_rollover:.6f} SOL</b> rolls over to next round!\n\n"
+                )
+            
+            message_text += "🍀 Congratulations to all winners! 🍀"
         else:
+            # No winners - all rolls over
             message_text = (
                 f"📊 <b>Round {round_id} Results</b>\n\n"
                 f"👥 Players: {player_count}\n"
-                f"🎲 Winning Numbers: <b>{', '.join(map(str, winning_nums))}</b>\n\n"
-                f"❌ No one matched all 5 numbers this round.\n\n"
-                f"🏆 <b>Current Jackpot: {jackpot} SOL</b>\n\n"
-                f"The jackpot keeps growing! Join the next round for a chance to win it all!"
+                f"🎲 Winning Numbers: <b>{', '.join(map(str, winning_nums))}</b>\n"
+                f"💰 Prize Pool: <b>{prize_pool:.6f} SOL</b>\n\n"
+                f"❌ No winners matched 3+ numbers this round.\n\n"
+                f"<b>━━━ ROLLOVER ━━━</b>\n"
+                f"💫 <b>ENTIRE prize pool ({new_rollover:.6f} SOL)</b> rolls over!\n\n"
+                f"The prize pool keeps growing! Join the next round for a chance to win!"
             )
-            
-            await send_to_announcements(message_text)
         
+        await send_to_announcements(message_text)
         await dm_round_results_to_players(round_id, result)
     except Exception as e:
         print(f"❌ Draw result announcement error: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 async def dm_round_results_to_players(round_id: int, result: dict):
-    """Send DM to each player with their personal results"""
+    """Send DM to each player with their personal results (tiered system)"""
     try:
         winning_nums = result['winning_numbers']
-        has_winner = result.get("has_winner", False)
-        winner_id = result.get("winner_user_id")
+        new_rollover = result.get('new_rollover', Decimal("0"))
+        
+        # Build sets of winner user_ids for each tier (already paid via pay_tiered_winners)
+        tier_5_winner_ids = set(p['user_id'] for p in result.get('tier_5_payouts', []))
+        tier_4_winner_ids = set(p['user_id'] for p in result.get('tier_4_payouts', []))
+        tier_3_winner_ids = set(p['user_id'] for p in result.get('tier_3_payouts', []))
         
         conn = get_db_conn()
         c = conn.cursor()
@@ -5670,28 +5714,26 @@ async def dm_round_results_to_players(round_id: int, result: dict):
                 user_numbers = str_to_numbers(numbers_str)
                 matches = len(set(user_numbers) & set(winning_nums))
                 
-                if user_id == winner_id:
+                # Skip winners - they already got a special DM via pay_tiered_winners
+                if user_id in tier_5_winner_ids or user_id in tier_4_winner_ids or user_id in tier_3_winner_ids:
                     continue
                 
-                if matches == 5:
-                    status_text = "🎉 PERFECT MATCH! You matched all 5 numbers!"
-                elif matches >= 3:
-                    status_text = f"👏 Nice try! You matched {matches} numbers."
+                # Status based on matches (non-winners)
+                if matches == 2:
+                    status_text = "👏 You matched 2 numbers. So close! Keep trying!"
+                elif matches == 1:
+                    status_text = "🎯 You matched 1 number. Better luck next time!"
                 else:
-                    status_text = f"❌ You matched {matches} number{'s' if matches != 1 else ''}. Better luck next time!"
-                
-                try:
-                    new_pot = await get_real_balance(OWNER_WALLET)
-                except:
-                    new_pot = result.get('new_pot', Decimal("0"))
+                    status_text = "❌ No matches this round. Try again for the next one!"
                 
                 dm_message = (
                     f"📊 <b>Round {round_id} Results</b>\n\n"
                     f"🎲 Winning Numbers: <b>{', '.join(map(str, winning_nums))}</b>\n"
-                    f"🎫 Your Numbers: <b>{', '.join(map(str, user_numbers))}</b>\n\n"
+                    f"🎫 Your Numbers: <b>{', '.join(map(str, user_numbers))}</b>\n"
+                    f"Match Count: <b>{matches}/5</b>\n\n"
                     f"{status_text}\n\n"
-                    f"🏆 Current Jackpot: <b>{new_pot} SOL</b>\n\n"
-                    f"A new round starts soon - try again for the jackpot!"
+                    f"💫 Next Round Rollover: <b>{new_rollover:.6f} SOL</b>\n\n"
+                    f"Play again for a chance to win!"
                 )
                 
                 await bot.send_message(user_id, dm_message, parse_mode="HTML")
@@ -5703,66 +5745,107 @@ async def dm_round_results_to_players(round_id: int, result: dict):
         print(f"❌ DM round results error: {e}")
 
 
-async def pay_jackpot_winner(result: dict):
-    """Pay the entire jackpot (owner wallet balance) to the winner"""
-    try:
-        winner_id = result['winner_user_id']
+async def pay_tiered_winners(result: dict):
+    """
+    Pay all tier winners from the prize pool.
+    Tier 5 (5 matches): 70% of prize pool
+    Tier 4 (4 matches): 20% of prize pool
+    Tier 3 (3 matches): 10% of prize pool
+    """
+    round_id = result['round_id']
+    all_payouts = []
+    
+    # Collect all payouts from all tiers
+    for tier, tier_payouts in [(5, result.get('tier_5_payouts', [])), 
+                                (4, result.get('tier_4_payouts', [])),
+                                (3, result.get('tier_3_payouts', []))]:
+        for payout in tier_payouts:
+            all_payouts.append({
+                'tier': tier,
+                'user_id': payout['user_id'],
+                'amount': payout['amount'],
+                'participant_id': payout['participant_id']
+            })
+    
+    if not all_payouts:
+        print(f"ℹ️ No winners to pay for round {round_id}")
+        return
+    
+    print(f"💸 Processing {len(all_payouts)} tier payouts for round {round_id}...")
+    
+    successful_payouts = 0
+    failed_payouts = 0
+    
+    for payout in all_payouts:
+        user_id = payout['user_id']
+        amount = payout['amount']
+        tier = payout['tier']
         
-        winner_wallet = get_active_wallet(winner_id)
-        if not winner_wallet:
-            print(f"❌ Winner {winner_id} has no active wallet!")
-            return
-        
-        # Get current owner wallet balance as jackpot prize
         try:
-            jackpot_balance = await get_real_balance(OWNER_WALLET)
-        except:
-            print(f"❌ Could not fetch owner wallet balance!")
-            return
-        
-        if jackpot_balance <= Decimal("0.001"):
-            print(f"❌ Owner wallet balance too low: {jackpot_balance} SOL")
-            return
-        
-        # Reserve some for transaction fees
-        prize_amount = jackpot_balance - Decimal("0.001")
-        
-        print(f"💰 Sending JACKPOT {prize_amount} SOL to winner {winner_id} at {winner_wallet[:8]}...")
-        
-        prize_result = await send_sol(OWNER_WALLET, winner_wallet, prize_amount, OWNER_WALLET_PRIVATE_KEY)
-        
-        if prize_result and prize_result.get("success"):
-            print(f"✅ Jackpot paid! TX: {prize_result['signature'][:16]}...")
+            winner_wallet = get_active_wallet(user_id)
+            if not winner_wallet:
+                print(f"❌ User {user_id} has no active wallet - skipping tier {tier} payout")
+                failed_payouts += 1
+                continue
             
-            # Log lottery win transaction
-            log_wallet_transaction(
-                user_id=winner_id,
-                wallet_address=winner_wallet,
-                tx_type="lottery_win",
-                amount=prize_amount,
-                from_address=OWNER_WALLET,
-                tx_signature=prize_result['signature'],
-                status="completed"
-            )
+            # Skip very small payouts (less than network fee)
+            if amount < Decimal("0.0001"):
+                print(f"⚠️ Skipping tiny payout {amount} SOL to user {user_id}")
+                continue
             
-            # Update result with actual prize amount for announcements
-            result['prize_amount'] = prize_amount
+            print(f"   → Sending tier {tier} payout: {amount:.6f} SOL to user {user_id}")
             
-            # Notify winner
-            await bot.send_message(
-                winner_id,
-                f"🎉🎉🎉 <b>CONGRATULATIONS! YOU WON THE JACKPOT!</b> 🎉🎉🎉\n\n"
-                f"You matched ALL 5 winning numbers!\n\n"
-                f"💰 <b>Prize: {prize_amount} SOL</b>\n"
-                f"📝 TX: <code>{prize_result['signature'][:20]}...</code>\n\n"
-                f"The jackpot has been sent to your wallet!\n"
-                f"View on Solscan: https://solscan.io/tx/{prize_result['signature']}",
-                parse_mode="HTML"
-            )
-        else:
-            print(f"❌ Jackpot payment failed: {prize_result.get('error')}")
-    except Exception as e:
-        print(f"❌ Jackpot payment error: {e}")
+            payout_result = await send_sol(OWNER_WALLET, winner_wallet, amount, OWNER_WALLET_PRIVATE_KEY)
+            
+            if payout_result and payout_result.get("success"):
+                tx_sig = payout_result.get('signature', '')
+                print(f"   ✅ Tier {tier} payout sent! TX: {tx_sig[:16]}...")
+                
+                # Log payout
+                log_payout(round_id, tier, user_id, amount, tx_sig)
+                
+                # Log wallet transaction
+                log_wallet_transaction(
+                    user_id=user_id,
+                    wallet_address=winner_wallet,
+                    tx_type="lottery_win",
+                    amount=amount,
+                    from_address=OWNER_WALLET,
+                    tx_signature=tx_sig,
+                    status="completed"
+                )
+                
+                # DM the winner
+                tier_emoji = {5: "🏆", 4: "🥈", 3: "🥉"}.get(tier, "🎉")
+                tier_name = {5: "5-MATCH JACKPOT", 4: "4-MATCH", 3: "3-MATCH"}.get(tier, f"TIER {tier}")
+                
+                await bot.send_message(
+                    user_id,
+                    f"{tier_emoji}{tier_emoji}{tier_emoji} <b>CONGRATULATIONS! YOU WON!</b> {tier_emoji}{tier_emoji}{tier_emoji}\n\n"
+                    f"You are a <b>{tier_name} WINNER!</b>\n\n"
+                    f"💰 <b>Prize: {amount:.6f} SOL</b>\n"
+                    f"📝 TX: <code>{tx_sig[:20]}...</code>\n\n"
+                    f"Your prize has been sent to your wallet!\n"
+                    f"View on Solscan: https://solscan.io/tx/{tx_sig}",
+                    parse_mode="HTML"
+                )
+                
+                successful_payouts += 1
+            else:
+                error_msg = payout_result.get('error', 'Unknown error') if payout_result else 'No result'
+                print(f"   ❌ Tier {tier} payout failed: {error_msg}")
+                failed_payouts += 1
+                
+        except Exception as e:
+            print(f"   ❌ Error paying tier {tier} to user {user_id}: {e}")
+            failed_payouts += 1
+    
+    print(f"💫 Payout summary: {successful_payouts} successful, {failed_payouts} failed")
+
+
+async def pay_jackpot_winner(result: dict):
+    """Legacy function - redirects to pay_tiered_winners for backwards compatibility"""
+    await pay_tiered_winners(result)
 
 
 async def pay_team_fee(result: dict):
