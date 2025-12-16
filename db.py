@@ -494,6 +494,30 @@ def init_all_tables():
         )
     """)
     
+    # Payout logs - for transparency and auditing of prize payouts
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS payout_logs (
+            id SERIAL PRIMARY KEY,
+            round_id INTEGER NOT NULL,
+            tier INTEGER NOT NULL,
+            user_id BIGINT NOT NULL,
+            amount REAL NOT NULL,
+            tx_signature TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
+    # Rollover logs - for transparency and auditing of rollover amounts
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS rollover_logs (
+            id SERIAL PRIMARY KEY,
+            round_id INTEGER NOT NULL,
+            amount REAL NOT NULL,
+            reason TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
     # Initialize meta values
     try:
         c.execute("INSERT INTO meta (key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING", ('current_round', '1'))

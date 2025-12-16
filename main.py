@@ -454,11 +454,18 @@ STAKE_PACKAGES = [TICKET_PRICE]  # Single fixed price
 # DB_PATH removed - now using db.py module for database abstraction
 
 # ==============================================================================
-# JACKPOT / POT SYSTEM
+# TIERED PRIZE SYSTEM WITH ROLL-OVER
 # ==============================================================================
-# The pot accumulates and carries forward when there's no winner.
-# When someone wins (matches all 5 numbers), they get the ENTIRE pot.
-# If no one wins, 20% goes to team and 80% carries forward.
+# Prize tiers based on number matches:
+# - 5 matches: 70% of prize pool
+# - 4 matches: 20% of prize pool
+# - 3 matches: 10% of prize pool
+# Prize pool = 80% of round stakes + rollover from previous rounds
+# If no winners in a tier, that tier's allocation rolls over to next round
+
+TIER_5_MATCH_PERCENTAGE = Decimal("0.70")  # 70% for 5-match winners
+TIER_4_MATCH_PERCENTAGE = Decimal("0.20")  # 20% for 4-match winners
+TIER_3_MATCH_PERCENTAGE = Decimal("0.10")  # 10% for 3-match winners
 
 def get_current_pot() -> Decimal:
     """Get the current accumulated pot amount from database with caching"""
@@ -501,6 +508,124 @@ def reset_pot():
     """Reset pot to zero after a winner claims it"""
     set_current_pot(Decimal("0"))
     cache.invalidate_prize_pool()
+
+
+def get_rollover() -> Decimal:
+    """Get the current rollover amount from previous rounds"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("SELECT value FROM meta WHERE key = 'rollover_amount'")
+    row = c.fetchone()
+    conn.close()
+    return Decimal(row[0]) if row else Decimal("0")
+
+
+def set_rollover(amount: Decimal):
+    """Set the rollover amount in database"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO meta (key, value) VALUES ('rollover_amount', %s)
+        ON CONFLICT(key) DO UPDATE SET value = %s
+    """, (str(amount), str(amount)))
+    conn.commit()
+    conn.close()
+
+
+def add_to_rollover(amount: Decimal) -> Decimal:
+    """Add amount to the rollover pool"""
+    current = get_rollover()
+    new_total = current + amount
+    set_rollover(new_total)
+    print(f"📈 Added {amount} SOL to rollover. New total: {new_total} SOL")
+    return new_total
+
+
+def reset_rollover():
+    """Reset rollover to zero"""
+    set_rollover(Decimal("0"))
+
+
+def log_payout(round_id: int, tier: int, user_id: int, amount: Decimal, tx_signature: str = None):
+    """Log a payout for transparency and auditing"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    try:
+        c.execute("""
+            INSERT INTO payout_logs (round_id, tier, user_id, amount, tx_signature, created_at)
+            VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+        """, (round_id, tier, user_id, float(amount), tx_signature))
+        conn.commit()
+    except Exception as e:
+        print(f"⚠️ Failed to log payout: {e}")
+    finally:
+        conn.close()
+
+
+def log_rollover(round_id: int, rollover_amount: Decimal, reason: str):
+    """Log rollover amounts for transparency"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    try:
+        c.execute("""
+            INSERT INTO rollover_logs (round_id, amount, reason, created_at)
+            VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+        """, (round_id, float(rollover_amount), reason))
+        conn.commit()
+    except Exception as e:
+        print(f"⚠️ Failed to log rollover: {e}")
+    finally:
+        conn.close()
+
+
+def is_round_settled(round_id: int) -> bool:
+    """Check if a round has already been settled to prevent double processing"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("SELECT value FROM meta WHERE key = %s", (f'round_{round_id}_settled',))
+    row = c.fetchone()
+    conn.close()
+    return row is not None
+
+
+def mark_round_settled(round_id: int):
+    """Mark a round as settled to prevent double processing"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO meta (key, value) VALUES (%s, %s)
+        ON CONFLICT(key) DO NOTHING
+    """, (f'round_{round_id}_settled', 'true'))
+    conn.commit()
+    conn.close()
+
+
+def lock_round(round_id: int) -> bool:
+    """Lock a round so no new tickets can be counted after winning numbers are drawn"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    try:
+        c.execute("""
+            UPDATE scheduled_rounds SET status = 'locked'
+            WHERE round_id = %s AND status = 'open'
+        """, (round_id,))
+        conn.commit()
+        locked = c._cursor.rowcount > 0
+        conn.close()
+        if locked:
+            print(f"🔒 Round {round_id} locked for settlement")
+        return locked
+    except Exception as e:
+        print(f"⚠️ Failed to lock round {round_id}: {e}")
+        conn.close()
+        return False
+
+
+def mask_wallet(wallet: str) -> str:
+    """Mask wallet address for privacy in public announcements"""
+    if not wallet or len(wallet) < 12:
+        return "****"
+    return f"{wallet[:4]}...{wallet[-4:]}"
 
 
 async def check_rate_limit(user_id: int, action: RateLimitAction) -> bool:
@@ -1699,14 +1824,25 @@ async def send_winner_payout(winner_user_id: int, prize_amount: Decimal, round_s
 
 def process_round_draw(round_id: int):
     """
-    Process the lottery draw for a round.
+    Process the lottery draw for a round with TIERED PRIZE SYSTEM.
     
-    NEW JACKPOT LOGIC:
-    - Bot generates 5 winning numbers (1-40) for the round
-    - Only players who match ALL 5 numbers win the ENTIRE pot
-    - If no one matches all 5: 20% to team, 80% carries forward to next round
-    - Pot accumulates across rounds until there's a winner
+    TIERED PRIZE LOGIC:
+    1. Generate 5 winning numbers (1-40) for the round
+    2. Categorize tickets by matches: 5-match, 4-match, 3-match (ignore fewer)
+    3. Prize pool = 80% of round stakes + rollover from previous rounds
+    4. Split prize pool: 70% for 5-match, 20% for 4-match, 10% for 3-match
+    5. If no winners in a tier, that tier's allocation rolls over to next round
+    6. Run settlement only once per round (prevent double processing)
+    7. Lock round before settlement so no new tickets counted
     """
+    # SAFEGUARD: Prevent double processing
+    if is_round_settled(round_id):
+        print(f"⚠️ Round {round_id} already settled - skipping")
+        return None
+    
+    # Lock the round to prevent new ticket entries
+    lock_round(round_id)
+    
     conn = get_db_conn()
     c = conn.cursor()
     
@@ -1740,69 +1876,135 @@ def process_round_draw(round_id: int):
         winning_numbers = generate_lottery_numbers(seed, count=5, min_val=1, max_val=40)
         set_round_winning_numbers(round_id, winning_numbers)
     
-    # Find players who matched ALL 5 numbers
-    jackpot_winners = []
+    # Categorize tickets by match count
+    tier_5_winners = []  # 5 matches - jackpot
+    tier_4_winners = []  # 4 matches
+    tier_3_winners = []  # 3 matches
     
     for participant_id, user_id, numbers_str, tx_sig, stake_amount in participants:
         user_numbers = str_to_numbers(numbers_str)
         matches = len(set(user_numbers) & set(winning_numbers))
         
-        if matches == 5:  # JACKPOT - All 5 numbers match!
-            jackpot_winners.append((participant_id, user_id, stake_amount))
+        if matches == 5:
+            tier_5_winners.append((participant_id, user_id, stake_amount, user_numbers))
+        elif matches == 4:
+            tier_4_winners.append((participant_id, user_id, stake_amount, user_numbers))
+        elif matches == 3:
+            tier_3_winners.append((participant_id, user_id, stake_amount, user_numbers))
     
-    # Note: Jackpot is now the owner wallet balance (on-chain)
-    # The prize_amount will be fetched from owner wallet when paying winner
+    # Calculate prize pool: 80% of round stakes + rollover
+    previous_rollover = get_rollover()
+    round_prize_contribution = round_total * WINNER_SHARE_PERCENTAGE  # 80%
+    total_prize_pool = round_prize_contribution + previous_rollover
     
+    print(f"💰 Prize Pool Calculation:")
+    print(f"   Round stakes: {round_total} SOL")
+    print(f"   Prize contribution (80%): {round_prize_contribution} SOL")
+    print(f"   Previous rollover: {previous_rollover} SOL")
+    print(f"   Total prize pool: {total_prize_pool} SOL")
+    
+    # Calculate tier allocations
+    tier_5_allocation = total_prize_pool * TIER_5_MATCH_PERCENTAGE  # 70%
+    tier_4_allocation = total_prize_pool * TIER_4_MATCH_PERCENTAGE  # 20%
+    tier_3_allocation = total_prize_pool * TIER_3_MATCH_PERCENTAGE  # 10%
+    
+    # Calculate payouts and rollover for each tier
+    tier_5_payouts = []
+    tier_4_payouts = []
+    tier_3_payouts = []
+    new_rollover = Decimal("0")
+    
+    # Process Tier 5 (5 matches - 70% allocation)
+    if tier_5_winners:
+        payout_per_winner = tier_5_allocation / len(tier_5_winners)
+        for participant_id, user_id, stake_amount, user_numbers in tier_5_winners:
+            tier_5_payouts.append({
+                "participant_id": participant_id,
+                "user_id": user_id,
+                "amount": payout_per_winner,
+                "numbers": user_numbers
+            })
+        print(f"🏆 Tier 5 (5 matches): {len(tier_5_winners)} winners, {payout_per_winner:.6f} SOL each")
+    else:
+        new_rollover += tier_5_allocation
+        log_rollover(round_id, tier_5_allocation, "No 5-match winners")
+        print(f"📈 Tier 5 (5 matches): No winners - {tier_5_allocation:.6f} SOL rolls over")
+    
+    # Process Tier 4 (4 matches - 20% allocation)
+    if tier_4_winners:
+        payout_per_winner = tier_4_allocation / len(tier_4_winners)
+        for participant_id, user_id, stake_amount, user_numbers in tier_4_winners:
+            tier_4_payouts.append({
+                "participant_id": participant_id,
+                "user_id": user_id,
+                "amount": payout_per_winner,
+                "numbers": user_numbers
+            })
+        print(f"🥈 Tier 4 (4 matches): {len(tier_4_winners)} winners, {payout_per_winner:.6f} SOL each")
+    else:
+        new_rollover += tier_4_allocation
+        log_rollover(round_id, tier_4_allocation, "No 4-match winners")
+        print(f"📈 Tier 4 (4 matches): No winners - {tier_4_allocation:.6f} SOL rolls over")
+    
+    # Process Tier 3 (3 matches - 10% allocation)
+    if tier_3_winners:
+        payout_per_winner = tier_3_allocation / len(tier_3_winners)
+        for participant_id, user_id, stake_amount, user_numbers in tier_3_winners:
+            tier_3_payouts.append({
+                "participant_id": participant_id,
+                "user_id": user_id,
+                "amount": payout_per_winner,
+                "numbers": user_numbers
+            })
+        print(f"🥉 Tier 3 (3 matches): {len(tier_3_winners)} winners, {payout_per_winner:.6f} SOL each")
+    else:
+        new_rollover += tier_3_allocation
+        log_rollover(round_id, tier_3_allocation, "No 3-match winners")
+        print(f"📈 Tier 3 (3 matches): No winners - {tier_3_allocation:.6f} SOL rolls over")
+    
+    # Update rollover for next round
+    set_rollover(new_rollover)
+    print(f"💫 New rollover for next round: {new_rollover} SOL")
+    
+    # Build result object
     result = {
         "winning_numbers": winning_numbers,
         "player_count": len(participants),
         "round_total": round_total,
         "round_id": round_id,
-        "participants": participants  # For partial prize distribution
+        "participants": participants,
+        "prize_pool": total_prize_pool,
+        "previous_rollover": previous_rollover,
+        "new_rollover": new_rollover,
+        "tier_5_winners": tier_5_winners,
+        "tier_4_winners": tier_4_winners,
+        "tier_3_winners": tier_3_winners,
+        "tier_5_payouts": tier_5_payouts,
+        "tier_4_payouts": tier_4_payouts,
+        "tier_3_payouts": tier_3_payouts,
+        "tier_5_allocation": tier_5_allocation,
+        "tier_4_allocation": tier_4_allocation,
+        "tier_3_allocation": tier_3_allocation,
+        "has_winner": bool(tier_5_winners or tier_4_winners or tier_3_winners)
     }
     
-    if jackpot_winners:
-        # JACKPOT! Someone won the entire pot!
-        if len(jackpot_winners) == 1:
-            winner = jackpot_winners[0]
-        else:
-            # Multiple winners - split equally or select one deterministically
-            tx_signatures_ordered = [str(p[3]) for p in participants]
-            seed = generate_provable_seed(round_id, "draw", *tx_signatures_ordered)
-            winner_seed = generate_provable_seed(seed, "tiebreaker", len(jackpot_winners))
-            winner_idx = select_winner_deterministically(winner_seed, len(jackpot_winners))
-            winner = jackpot_winners[winner_idx]
-        
-        result["has_winner"] = True
-        result["winner_user_id"] = winner[1]
-        result["winner_participant_id"] = winner[0]
-        result["jackpot_winners_count"] = len(jackpot_winners)
-        
-        # Update database
-        c.execute("""
-            UPDATE round_stakes
-            SET status = 'drawn', winner_user_id = %s
-            WHERE round_id = %s
-        """, (winner[1], round_id))
-        conn.commit()
-        
-        print(f"🎉 JACKPOT WINNER! User {winner[1]} matched all 5 numbers!")
-    else:
-        # No winner - jackpot carries forward (already in owner wallet)
-        result["has_winner"] = False
-        result["winner_user_id"] = None
-        
-        # Update database
-        c.execute("""
-            UPDATE round_stakes
-            SET status = 'drawn'
-            WHERE round_id = %s
-        """, (round_id,))
-        conn.commit()
-        
-        print(f"📊 No jackpot winner this round.")
-        print(f"   Round participants: {len(participants)}")
-        print(f"   Round stakes: {round_total} SOL")
+    # Update database - mark as drawn
+    c.execute("""
+        UPDATE round_stakes
+        SET status = 'drawn'
+        WHERE round_id = %s
+    """, (round_id,))
+    conn.commit()
+    
+    # Mark round as settled to prevent double processing
+    mark_round_settled(round_id)
+    
+    # Log summary
+    print(f"✅ Round {round_id} settlement complete:")
+    print(f"   🏆 5-match winners: {len(tier_5_winners)}")
+    print(f"   🥈 4-match winners: {len(tier_4_winners)}")
+    print(f"   🥉 3-match winners: {len(tier_3_winners)}")
+    print(f"   💫 Rollover to next round: {new_rollover} SOL")
     
     conn.close()
     return result
