@@ -80,7 +80,7 @@ def generate_ai_response(prompt: str) -> str:
     if groq is not None:
         try:
             response = groq.chat.completions.create(
-                model="llama3-8b-8192",
+                model="llama-3.1-8b-instant",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.4,
                 max_tokens=300

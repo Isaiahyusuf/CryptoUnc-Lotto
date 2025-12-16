@@ -18,7 +18,7 @@ from .prompts import (
 
 OPENAI_MODEL = "gpt-4o"
 GEMINI_MODEL = "gemini-2.0-flash"
-GROQ_MODEL = "llama3-8b-8192"
+GROQ_MODEL = "llama-3.1-8b-instant"
 
 _openai_client = None
 _gemini_client = None

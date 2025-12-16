@@ -43,7 +43,7 @@ A Telegram-based cryptocurrency lottery bot with real Solana wallet integration.
 - **Wallet Help** - Creating, importing, securing wallets
 - **Stats & VIP** - Statistics and VIP tier explanations
 - **Ask Questions** - Free-form Q&A with fallback FAQ
-- **OpenAI + Gemini + Groq Fallback** - Uses OpenAI GPT-4o primary, Google Gemini 2.0 Flash as second fallback, Groq Llama3-8B as final fallback
+- **OpenAI + Gemini + Groq Fallback** - Uses OpenAI GPT-4o primary, Google Gemini 2.0 Flash as second fallback, Groq Llama-3.1-8B as final fallback
 - **Persistent Chat Sessions** - Conversations saved to database for 3 days
 - **User Memory** - AI remembers user names and preferences permanently
 
@@ -69,7 +69,7 @@ Access via "AI Assistant" button in main menu.
 - `GROQ_API_KEY` - Groq API key (final fallback when both OpenAI and Gemini fail)
 
 ## Recent Changes (December 2025)
-- **Groq AI Fallback Added** - Added Groq Llama3-8B-8192 as the third AI fallback option (OpenAI -> Gemini -> Groq)
+- **Groq AI Fallback Added** - Added Groq Llama-3.1-8B-instant as the third AI fallback option (OpenAI -> Gemini -> Groq)
 - **Persistent AI Chat Sessions** - Chat history stored in database for 3 days, AI remembers conversations
 - **AI User Memory** - AI permanently remembers user names and basic info via user_profiles table
 - **Ticket Purchase Announcements Disabled** - Ticket purchases no longer broadcast to groups/channels (other announcements still work)
