@@ -16,7 +16,7 @@ A Telegram-based cryptocurrency lottery bot with real Solana wallet integration.
 - **Bot Framework**: aiogram 3.4.1 (Telegram Bot API)
 - **Blockchain**: Solana mainnet via solana-py/solders
 - **Database**: PostgreSQL (required, no SQLite)
-- **AI Assistant**: GPT4All local model for user help and FAQ
+- **AI Assistant**: OpenAI GPT-4o with Gemini and Groq fallbacks
 - **Encryption**: cryptography library for wallet private key encryption
 - **Caching**: In-memory cache layer for reduced DB/RPC reads
 - **Rate Limiting**: Per-user rate limits for spam prevention
@@ -27,7 +27,8 @@ A Telegram-based cryptocurrency lottery bot with real Solana wallet integration.
 - `db.py` - PostgreSQL-only database layer
 - `wallet.py` - Solana wallet management
 - `wallet_buttons.py` - Wallet action button handlers
-- `ai/ai_client.py` - AI assistant client with GPT4All integration
+- `ai/ai_client.py` - AI assistant client with OpenAI/Gemini/Groq fallback chain
+- `ai_fallback.py` - Standalone AI fallback module with three-tier fallback
 - `ai/prompts.py` - AI prompts and FAQ responses
 - `email_service.py` - Email verification service
 - `encryption.py` - Private key encryption
@@ -42,7 +43,7 @@ A Telegram-based cryptocurrency lottery bot with real Solana wallet integration.
 - **Wallet Help** - Creating, importing, securing wallets
 - **Stats & VIP** - Statistics and VIP tier explanations
 - **Ask Questions** - Free-form Q&A with fallback FAQ
-- **OpenAI + Gemini Fallback** - Uses OpenAI GPT-4o primary, Google Gemini 2.0 Flash as fallback
+- **OpenAI + Gemini + Groq Fallback** - Uses OpenAI GPT-4o primary, Google Gemini 2.0 Flash as second fallback, Groq Llama3-8B as final fallback
 - **Persistent Chat Sessions** - Conversations saved to database for 3 days
 - **User Memory** - AI remembers user names and preferences permanently
 
@@ -64,9 +65,11 @@ Access via "AI Assistant" button in main menu.
 - `SUPPORT_USERNAME` - Support contact
 - `ANNOUNCEMENTS_GROUP_ID` - Additional announcement group
 - `OPENAI_API_KEY` - OpenAI API key for AI assistant (primary)
-- `GEMINI_API_KEY` - Google Gemini API key (fallback when OpenAI fails)
+- `GEMINI_API_KEY` - Google Gemini API key (second fallback when OpenAI fails)
+- `GROQ_API_KEY` - Groq API key (final fallback when both OpenAI and Gemini fail)
 
 ## Recent Changes (December 2025)
+- **Groq AI Fallback Added** - Added Groq Llama3-8B-8192 as the third AI fallback option (OpenAI -> Gemini -> Groq)
 - **Persistent AI Chat Sessions** - Chat history stored in database for 3 days, AI remembers conversations
 - **AI User Memory** - AI permanently remembers user names and basic info via user_profiles table
 - **Ticket Purchase Announcements Disabled** - Ticket purchases no longer broadcast to groups/channels (other announcements still work)
