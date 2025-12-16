@@ -2320,7 +2320,10 @@ async def handle_bot_membership_change(update: types.ChatMemberUpdated):
                 f"CryptoUnc Lotto Bot is now active here!\n\n"
                 f"🎫 Buy tickets for <b>{TICKET_PRICE} SOL</b>\n"
                 f"🎲 Pick 5 numbers (1-40)\n"
-                f"🏆 Match all 5 to win the ENTIRE jackpot!\n\n"
+                f"🏆 • Pick your 5 lucky numbers (1–40)
+• Match 5 numbers to win 70% of the jackpot
+• Match 4 numbers to win 20% of the jackpot
+• Match 3 numbers to win 10% of the jackpot\n\n"
                 f"I'll post announcements here:\n"
                 f"• New ticket purchases\n"
                 f"• Round results & winners\n"
@@ -2384,7 +2387,10 @@ async def cmd_start(message: types.Message):
         f"🏆 <b>Current Jackpot: {jackpot} SOL</b>\n\n"
         f"📋 <b>How It Works:</b>\n"
         f"• <b>Pick your 5 lucky numbers (1-40)</b>\n"
-        f"• Match ALL 5 to win the ENTIRE jackpot!\n"
+        f"• • Pick your 5 lucky numbers (1–40)
+• Match 5 numbers to win 70% of the jackpot
+• Match 4 numbers to win 20% of the jackpot
+• Match 3 numbers to win 10% of the jackpot\n"
         f"• No winner? Prize rolls over to next round!\n\n"
         f"💰 Ticket Price: {TICKET_PRICE} SOL (Unlimited tickets!)\n"
         f"⏰ 24 Hourly Rounds (one per hour)\n\n"
