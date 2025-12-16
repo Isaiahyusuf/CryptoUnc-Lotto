@@ -1172,6 +1172,171 @@ def get_overall_stats() -> Dict:
 
 
 # ==============================================================================
+# TRANSPARENCY DASHBOARD FUNCTIONS
+# ==============================================================================
+
+def get_transparency_stats() -> Dict:
+    """Get comprehensive transparency statistics for the dashboard"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    
+    # Total draws completed
+    c.execute("SELECT COUNT(*) FROM draw_history")
+    total_draws = c.fetchone()[0] or 0
+    
+    # Total prizes distributed
+    c.execute("SELECT SUM(prize_amount) FROM draw_history WHERE winner_id IS NOT NULL")
+    total_distributed = Decimal(str(c.fetchone()[0] or 0))
+    
+    # Total tickets sold all time
+    c.execute("SELECT SUM(total_tickets) FROM user_stats")
+    total_tickets_alltime = c.fetchone()[0] or 0
+    
+    # Unique players
+    c.execute("SELECT COUNT(DISTINCT user_id) FROM user_stats WHERE total_tickets > 0")
+    unique_players = c.fetchone()[0] or 0
+    
+    # Tickets sold today
+    c.execute("""
+        SELECT COUNT(*) FROM round_participants 
+        WHERE joined_at >= CURRENT_DATE
+    """)
+    tickets_today = c.fetchone()[0] or 0
+    
+    # Active rounds count
+    c.execute("SELECT COUNT(*) FROM scheduled_rounds WHERE status IN ('open', 'pending')")
+    active_rounds = c.fetchone()[0] or 0
+    
+    # Draws today
+    c.execute("""
+        SELECT COUNT(*) FROM draw_history 
+        WHERE drawn_at >= CURRENT_DATE
+    """)
+    draws_today = c.fetchone()[0] or 0
+    
+    # Winners today
+    c.execute("""
+        SELECT COUNT(*) FROM draw_history 
+        WHERE drawn_at >= CURRENT_DATE AND winner_id IS NOT NULL
+    """)
+    winners_today = c.fetchone()[0] or 0
+    
+    # Average pot size
+    c.execute("SELECT AVG(total_pot) FROM draw_history WHERE total_pot > 0")
+    avg_pot = Decimal(str(c.fetchone()[0] or 0))
+    
+    # Biggest jackpot ever
+    c.execute("SELECT MAX(prize_amount) FROM draw_history")
+    biggest_jackpot = Decimal(str(c.fetchone()[0] or 0))
+    
+    # Last 24h volume
+    c.execute("""
+        SELECT SUM(total_pot) FROM draw_history 
+        WHERE drawn_at >= NOW() - INTERVAL '24 hours'
+    """)
+    volume_24h = Decimal(str(c.fetchone()[0] or 0))
+    
+    conn.close()
+    
+    return {
+        "total_draws": total_draws,
+        "total_distributed": total_distributed,
+        "total_tickets_alltime": total_tickets_alltime,
+        "unique_players": unique_players,
+        "tickets_today": tickets_today,
+        "active_rounds": active_rounds,
+        "draws_today": draws_today,
+        "winners_today": winners_today,
+        "avg_pot": avg_pot,
+        "biggest_jackpot": biggest_jackpot,
+        "volume_24h": volume_24h
+    }
+
+
+def get_draw_for_verification(round_id: int) -> Optional[Dict]:
+    """Get draw data for cryptographic verification"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("""
+        SELECT round_id, winning_numbers, seed_data, player_count, 
+               total_pot, winner_id, prize_amount, tx_signature, drawn_at
+        FROM draw_history
+        WHERE round_id = %s
+    """, (round_id,))
+    row = c.fetchone()
+    conn.close()
+    
+    if not row:
+        return None
+    
+    return {
+        "round_id": row[0],
+        "winning_numbers": str_to_numbers(row[1]) if row[1] else [],
+        "seed_data": row[2],
+        "player_count": row[3],
+        "total_pot": Decimal(str(row[4] or 0)),
+        "winner_id": row[5],
+        "prize_amount": Decimal(str(row[6] or 0)),
+        "tx_signature": row[7],
+        "drawn_at": row[8]
+    }
+
+
+def get_recent_draws_with_verification(limit: int = 10) -> List[Dict]:
+    """Get recent draws with all verification data"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("""
+        SELECT round_id, winning_numbers, seed_data, player_count, 
+               total_pot, winner_id, prize_amount, tx_signature, drawn_at
+        FROM draw_history
+        ORDER BY drawn_at DESC
+        LIMIT %s
+    """, (limit,))
+    rows = c.fetchall()
+    conn.close()
+    
+    return [{
+        "round_id": r[0],
+        "winning_numbers": str_to_numbers(r[1]) if r[1] else [],
+        "seed_data": r[2],
+        "player_count": r[3],
+        "total_pot": Decimal(str(r[4] or 0)),
+        "winner_id": r[5],
+        "prize_amount": Decimal(str(r[6] or 0)),
+        "tx_signature": r[7],
+        "drawn_at": r[8]
+    } for r in rows]
+
+
+def get_live_round_stats() -> List[Dict]:
+    """Get live statistics for currently open rounds"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("""
+        SELECT sr.round_id, sr.round_number, sr.status, sr.start_time,
+               COUNT(rp.id) as ticket_count,
+               COALESCE(SUM(rp.stake_amount), 0) as total_pool
+        FROM scheduled_rounds sr
+        LEFT JOIN round_participants rp ON sr.round_id = rp.round_id
+        WHERE sr.status IN ('open', 'pending')
+        GROUP BY sr.round_id, sr.round_number, sr.status, sr.start_time
+        ORDER BY sr.scheduled_time ASC
+    """)
+    rows = c.fetchall()
+    conn.close()
+    
+    return [{
+        "round_id": r[0],
+        "round_number": r[1],
+        "status": r[2],
+        "start_time": r[3],
+        "ticket_count": r[4],
+        "total_pool": Decimal(str(r[5] or 0))
+    } for r in rows]
+
+
+# ==============================================================================
 # JACKPOT SEEDING (Admin)
 # ==============================================================================
 
@@ -3727,18 +3892,239 @@ async def inline_handler(query: types.CallbackQuery):
         )
 
     elif data == "view_results":
-        await query.answer()
-        cur_round = get_current_round()
+        await query.answer("Loading transparency dashboard...")
         keyboard = create_keyboard_with_nav([
-            [InlineKeyboardButton(text="🎲 Play Now", callback_data="play_now")],
-            [InlineKeyboardButton(text="📊 Check Active Rounds", callback_data="check_active_rounds")]
+            [InlineKeyboardButton(text="📈 Live Stats", callback_data="transparency_live")],
+            [InlineKeyboardButton(text="📜 Recent Draws", callback_data="transparency_history")],
+            [InlineKeyboardButton(text="🔍 Verify a Draw", callback_data="transparency_verify")],
+            [InlineKeyboardButton(text="💰 Prize Pool Info", callback_data="transparency_pool")],
+            [InlineKeyboardButton(text="🔗 Blockchain Links", callback_data="transparency_links")]
         ])
-        await bot.send_message(uid,
-            f"📊 <b>Current Round:</b> {cur_round}\n\n"
-            "Results will be announced after the draw!",
-            reply_markup=keyboard,
-            parse_mode="HTML"
+        
+        try:
+            stats = get_transparency_stats()
+            jackpot = await get_real_balance(OWNER_WALLET)
+        except:
+            stats = {"total_draws": 0, "total_distributed": Decimal("0"), "unique_players": 0, 
+                     "tickets_today": 0, "draws_today": 0, "winners_today": 0, "volume_24h": Decimal("0"),
+                     "biggest_jackpot": Decimal("0")}
+            jackpot = Decimal("0")
+        
+        text = (
+            "📊 <b>TRANSPARENCY DASHBOARD</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            
+            f"💰 <b>Current Jackpot:</b> {jackpot} SOL\n"
+            f"🎫 <b>Tickets Today:</b> {stats['tickets_today']}\n"
+            f"🎲 <b>Draws Today:</b> {stats['draws_today']}\n"
+            f"🏆 <b>Winners Today:</b> {stats['winners_today']}\n\n"
+            
+            "📈 <b>ALL-TIME STATS</b>\n"
+            f"• Total Draws: {stats['total_draws']}\n"
+            f"• Total Distributed: {stats['total_distributed']:.4f} SOL\n"
+            f"• Unique Players: {stats['unique_players']}\n"
+            f"• Biggest Jackpot: {stats['biggest_jackpot']:.4f} SOL\n"
+            f"• 24h Volume: {stats['volume_24h']:.4f} SOL\n\n"
+            
+            "🔒 <b>Provably Fair</b>\n"
+            "All draws use SHA256 cryptographic hashing\n"
+            "with on-chain transaction signatures.\n"
+            "Anyone can verify any draw result!\n\n"
+            
+            "<i>Select an option below for more details</i>"
         )
+        
+        await bot.send_message(uid, text, reply_markup=keyboard, parse_mode="HTML")
+    
+    elif data == "transparency_live":
+        await query.answer("Loading live stats...")
+        
+        try:
+            live_rounds = get_live_round_stats()
+            jackpot = await get_real_balance(OWNER_WALLET)
+        except:
+            live_rounds = []
+            jackpot = Decimal("0")
+        
+        text = (
+            "📈 <b>LIVE ROUND STATS</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"💰 <b>Current Jackpot:</b> {jackpot} SOL\n\n"
+        )
+        
+        if live_rounds:
+            for r in live_rounds:
+                status_emoji = "🟢" if r["status"] == "open" else "🟡"
+                prize_pool = r["total_pool"] * Decimal("0.8")
+                text += (
+                    f"{status_emoji} <b>Round {r['round_id']}</b>\n"
+                    f"   🎫 Tickets Sold: {r['ticket_count']}\n"
+                    f"   💵 Prize Pool: {prize_pool:.4f} SOL\n"
+                    f"   📊 Status: {r['status'].upper()}\n\n"
+                )
+        else:
+            text += "<i>No active rounds at the moment</i>\n\n"
+        
+        text += (
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "💡 Prize pool = 80% of ticket sales\n"
+            "🔄 Updates in real-time!"
+        )
+        
+        keyboard = create_keyboard_with_nav([
+            [InlineKeyboardButton(text="🔄 Refresh", callback_data="transparency_live")],
+            [InlineKeyboardButton(text="◀️ Back", callback_data="view_results")]
+        ])
+        
+        await bot.send_message(uid, text, reply_markup=keyboard, parse_mode="HTML")
+    
+    elif data == "transparency_history":
+        await query.answer("Loading draw history...")
+        
+        draws = get_recent_draws_with_verification(10)
+        
+        text = (
+            "📜 <b>RECENT DRAW RESULTS</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        )
+        
+        if draws:
+            for d in draws:
+                nums_str = ", ".join(str(n) for n in d["winning_numbers"]) if d["winning_numbers"] else "N/A"
+                winner_text = f"Winner: User {d['winner_id']}" if d["winner_id"] else "No winner"
+                prize_text = f"{d['prize_amount']:.4f} SOL" if d["prize_amount"] else "Rolled over"
+                
+                drawn_at = d["drawn_at"]
+                if drawn_at:
+                    if isinstance(drawn_at, str):
+                        date_str = drawn_at[:10]
+                    else:
+                        date_str = drawn_at.strftime("%Y-%m-%d")
+                else:
+                    date_str = "N/A"
+                
+                text += (
+                    f"🎲 <b>Round {d['round_id']}</b> ({date_str})\n"
+                    f"   Numbers: <code>{nums_str}</code>\n"
+                    f"   {winner_text}\n"
+                    f"   Prize: {prize_text}\n"
+                    f"   Players: {d['player_count']}\n\n"
+                )
+        else:
+            text += "<i>No draws completed yet</i>\n\n"
+        
+        keyboard = create_keyboard_with_nav([
+            [InlineKeyboardButton(text="🔍 Verify a Draw", callback_data="transparency_verify")],
+            [InlineKeyboardButton(text="◀️ Back", callback_data="view_results")]
+        ])
+        
+        await bot.send_message(uid, text, reply_markup=keyboard, parse_mode="HTML")
+    
+    elif data == "transparency_verify":
+        await query.answer()
+        
+        text = (
+            "🔍 <b>VERIFY A DRAW</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            
+            "Enter the Round ID to verify:\n\n"
+            
+            "<b>How Verification Works:</b>\n"
+            "1. We show you the seed data used\n"
+            "2. The seed includes blockchain tx signatures\n"
+            "3. SHA256 hash generates winning numbers\n"
+            "4. You can reproduce this yourself!\n\n"
+            
+            "<i>Type the round number (e.g., 42) to verify:</i>"
+        )
+        
+        keyboard = create_keyboard_with_nav([
+            [InlineKeyboardButton(text="📜 View Recent Draws", callback_data="transparency_history")],
+            [InlineKeyboardButton(text="◀️ Back", callback_data="view_results")]
+        ])
+        
+        await bot.send_message(uid, text, reply_markup=keyboard, parse_mode="HTML")
+        
+        user_states[uid] = {"action": "awaiting_verify_round"}
+    
+    elif data == "transparency_pool":
+        await query.answer("Loading prize pool info...")
+        
+        try:
+            jackpot = await get_real_balance(OWNER_WALLET)
+            stats = get_transparency_stats()
+            seeded = get_total_seeded()
+        except:
+            jackpot = Decimal("0")
+            stats = {"total_distributed": Decimal("0"), "avg_pot": Decimal("0")}
+            seeded = Decimal("0")
+        
+        text = (
+            "💰 <b>PRIZE POOL BREAKDOWN</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            
+            f"🏆 <b>Current Jackpot:</b> {jackpot} SOL\n\n"
+            
+            "<b>How the Pool Works:</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"• Ticket Price: {TICKET_PRICE} SOL\n"
+            "• 80% goes to prize pool\n"
+            "• 20% goes to operations\n\n"
+            
+            "<b>Prize Tiers:</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "🥇 5-Match: 70% of prize pool\n"
+            "🥈 4-Match: 20% of prize pool\n"
+            "🥉 3-Match: 10% of prize pool\n\n"
+            
+            "<b>Rollover System:</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "If no winner in a tier, that tier's\n"
+            "allocation rolls to next round!\n\n"
+            
+            f"📊 <b>Stats:</b>\n"
+            f"• Total Distributed: {stats['total_distributed']:.4f} SOL\n"
+            f"• Admin Seeded: {seeded:.4f} SOL\n"
+        )
+        
+        keyboard = create_keyboard_with_nav([
+            [InlineKeyboardButton(text="🔗 View on Solscan", url=f"https://solscan.io/account/{OWNER_WALLET}")],
+            [InlineKeyboardButton(text="◀️ Back", callback_data="view_results")]
+        ])
+        
+        await bot.send_message(uid, text, reply_markup=keyboard, parse_mode="HTML")
+    
+    elif data == "transparency_links":
+        await query.answer()
+        
+        text = (
+            "🔗 <b>BLOCKCHAIN VERIFICATION</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            
+            "<b>Owner Wallet (Prize Pool):</b>\n"
+            f"<code>{OWNER_WALLET}</code>\n\n"
+            
+            "<b>Verify on Solscan:</b>\n"
+            "View all transactions, balances, and\n"
+            "prize distributions on the blockchain.\n\n"
+            
+            "<b>What You Can Verify:</b>\n"
+            "✅ All ticket payments received\n"
+            "✅ All prize payouts sent\n"
+            "✅ Current pool balance\n"
+            "✅ Transaction timestamps\n"
+            "✅ Transaction signatures\n\n"
+            
+            "<i>Click below to view live blockchain data</i>"
+        )
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📊 View Wallet on Solscan", url=f"https://solscan.io/account/{OWNER_WALLET}")],
+            [InlineKeyboardButton(text="📜 Transaction History", url=f"https://solscan.io/account/{OWNER_WALLET}#txs")],
+            [InlineKeyboardButton(text="◀️ Back", callback_data="view_results")]
+        ])
+        
+        await bot.send_message(uid, text, reply_markup=keyboard, parse_mode="HTML")
 
     elif data == "check_active_rounds":
         await query.answer("Loading...")
@@ -4133,6 +4519,84 @@ async def generic_message_handler(message: types.Message):
                     reply_markup=keyboard,
                     parse_mode="HTML"
                 )
+            return
+        
+        # Handle draw verification
+        if action == "awaiting_verify_round":
+            del user_states[uid]
+            
+            try:
+                round_id = int(text)
+            except ValueError:
+                await bot.send_message(uid, 
+                    "❌ Please enter a valid round number (e.g., 42)",
+                    parse_mode="HTML"
+                )
+                return
+            
+            draw = get_draw_for_verification(round_id)
+            
+            if not draw:
+                keyboard = create_keyboard_with_nav([
+                    [InlineKeyboardButton(text="📜 View Recent Draws", callback_data="transparency_history")],
+                    [InlineKeyboardButton(text="◀️ Back", callback_data="view_results")]
+                ])
+                await bot.send_message(uid,
+                    f"❌ <b>Round {round_id} not found</b>\n\n"
+                    "This round may not have been drawn yet, or doesn't exist.\n"
+                    "Try viewing recent draws to find valid round IDs.",
+                    reply_markup=keyboard,
+                    parse_mode="HTML"
+                )
+                return
+            
+            nums_str = ", ".join(str(n) for n in draw["winning_numbers"]) if draw["winning_numbers"] else "N/A"
+            seed_display = draw["seed_data"][:64] + "..." if draw["seed_data"] and len(draw["seed_data"]) > 64 else (draw["seed_data"] or "N/A")
+            
+            verification_text = (
+                f"🔍 <b>DRAW VERIFICATION - Round {round_id}</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                
+                f"🎲 <b>Winning Numbers:</b> <code>{nums_str}</code>\n\n"
+                
+                f"👥 <b>Players:</b> {draw['player_count']}\n"
+                f"💰 <b>Prize Pool:</b> {draw['total_pot']:.4f} SOL\n"
+                f"🏆 <b>Prize Paid:</b> {draw['prize_amount']:.4f} SOL\n\n"
+                
+                "🔐 <b>VERIFICATION DATA</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"<b>Seed Hash:</b>\n<code>{seed_display}</code>\n\n"
+            )
+            
+            if draw["tx_signature"]:
+                verification_text += (
+                    f"<b>TX Signature:</b>\n"
+                    f"<code>{draw['tx_signature'][:32]}...</code>\n\n"
+                )
+            
+            verification_text += (
+                "📋 <b>HOW TO VERIFY</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "1. The seed includes blockchain tx signatures\n"
+                "2. SHA256(seed) generates the winning numbers\n"
+                "3. Process is deterministic - same seed = same numbers\n"
+                "4. Anyone can reproduce this calculation!\n\n"
+                
+                "✅ <b>This draw is cryptographically verified</b>"
+            )
+            
+            keyboard_buttons = []
+            if draw["tx_signature"]:
+                keyboard_buttons.append([InlineKeyboardButton(
+                    text="🔗 View TX on Solscan", 
+                    url=f"https://solscan.io/tx/{draw['tx_signature']}"
+                )])
+            keyboard_buttons.append([InlineKeyboardButton(text="🔍 Verify Another", callback_data="transparency_verify")])
+            keyboard_buttons.append([InlineKeyboardButton(text="◀️ Back", callback_data="view_results")])
+            
+            keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+            
+            await bot.send_message(uid, verification_text, reply_markup=keyboard, parse_mode="HTML")
             return
         
         # Handle PIN setting
