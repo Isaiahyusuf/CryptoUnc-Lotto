@@ -12,6 +12,7 @@ psycopg2-binary
 sendgrid
 openai
 google-genai
+groq
 aiogram
 aiohttp
 base58
@@ -26,3 +27,4 @@ requests
 sendgrid
 solana
 solders
+groq
