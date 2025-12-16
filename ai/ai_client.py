@@ -388,7 +388,7 @@ def get_smart_response(question: str) -> str:
     )
 
 
-async def ask_groq_async(system_prompt: str, user_prompt: str, max_tokens: int = 200, history: List[Dict] = None) -> Optional[str]:
+async def ask_groq_async(system_prompt: str, user_prompt: str, max_tokens: int = 1500, history: List[Dict] = None) -> Optional[str]:
     """
     Get response from Groq using asyncio.to_thread for non-blocking execution.
     This prevents the bot from lagging during AI calls.
@@ -459,7 +459,7 @@ async def chat_with_ai(user_id: int, message: str, context: str = "") -> str:
         system_prompt += f"\n\nAdditional context: {context}"
     
     # Call Groq (non-blocking)
-    ai_response = await ask_groq_async(system_prompt, message, max_tokens=200, history=history)
+    ai_response = await ask_groq_async(system_prompt, message, max_tokens=1500, history=history)
     
     if ai_response:
         # Save to history
@@ -480,7 +480,7 @@ async def chat_with_ai(user_id: int, message: str, context: str = "") -> str:
     return get_smart_response(message)
 
 
-async def ask_ai_async(system_prompt: str, user_prompt: str, max_tokens: int = 200) -> str:
+async def ask_ai_async(system_prompt: str, user_prompt: str, max_tokens: int = 1500) -> str:
     """Async AI request using Groq only"""
     response = await ask_groq_async(system_prompt, user_prompt, max_tokens)
     if response:
@@ -493,7 +493,7 @@ async def ask_ai_async(system_prompt: str, user_prompt: str, max_tokens: int = 2
     return "AI is currently unavailable. Please try again later."
 
 
-def ask_ai(system_prompt: str, user_prompt: str, max_tokens: int = 200) -> str:
+def ask_ai(system_prompt: str, user_prompt: str, max_tokens: int = 1500) -> str:
     """Synchronous AI request using Groq only"""
     client = get_groq_client()
     
@@ -527,7 +527,7 @@ async def get_ai_help(question: str, user_id: int = 0) -> str:
     if cached:
         return cached
     
-    response = await ask_ai_async(AI_SYSTEM_PROMPT, question, 200)
+    response = await ask_ai_async(AI_SYSTEM_PROMPT, question, 1500)
     if user_id:
         cache_response(user_id, question, response)
     return response
@@ -540,7 +540,7 @@ async def get_fairness_explanation(user_id: int = 0) -> str:
     if cached:
         return cached
     
-    response = await ask_ai_async(FAIRNESS_PROMPT, prompt, 200)
+    response = await ask_ai_async(FAIRNESS_PROMPT, prompt, 1500)
     if user_id:
         cache_response(user_id, prompt, response)
     return response
@@ -553,7 +553,7 @@ async def get_how_to_play(user_id: int = 0) -> str:
     if cached:
         return cached
     
-    response = await ask_ai_async(HOW_TO_PLAY_PROMPT, prompt, 250)
+    response = await ask_ai_async(HOW_TO_PLAY_PROMPT, prompt, 1500)
     if user_id:
         cache_response(user_id, prompt, response)
     return response
@@ -565,7 +565,7 @@ async def get_wallet_help(question: str, user_id: int = 0) -> str:
     if cached:
         return cached
     
-    response = await ask_ai_async(WALLET_HELP_PROMPT, question, 200)
+    response = await ask_ai_async(WALLET_HELP_PROMPT, question, 1500)
     if user_id:
         cache_response(user_id, question, response)
     return response
@@ -578,7 +578,7 @@ async def get_stats_explanation(user_id: int = 0) -> str:
     if cached:
         return cached
     
-    response = await ask_ai_async(STATS_EXPLANATION_PROMPT, prompt, 200)
+    response = await ask_ai_async(STATS_EXPLANATION_PROMPT, prompt, 1500)
     if user_id:
         cache_response(user_id, prompt, response)
     return response
@@ -590,7 +590,7 @@ async def get_support_guidance(issue: str, user_id: int = 0) -> str:
     if cached:
         return cached
     
-    response = await ask_ai_async(SUPPORT_PROMPT, issue, 200)
+    response = await ask_ai_async(SUPPORT_PROMPT, issue, 1500)
     if user_id:
         cache_response(user_id, issue, response)
     return response
