@@ -82,9 +82,9 @@ Never access user wallets, never promise refunds, never share private informatio
 
 FAQ_RESPONSES = {
     # Basic gameplay
-    "how to play": "Getting started is easy!\n\n1. Tap 'Play Now' from the main menu\n2. Create or connect your Solana wallet\n3. Set up your 4-digit security PIN\n4. Buy a ticket for 0.025 SOL\n5. Pick 5 lucky numbers (1-40)\n6. Wait for the hourly draw!\n\nMatch all 5 numbers to win the entire jackpot!",
-    "play": "Getting started is easy!\n\n1. Tap 'Play Now' from the main menu\n2. Create or connect your Solana wallet\n3. Set up your 4-digit security PIN\n4. Buy a ticket for 0.025 SOL\n5. Pick 5 lucky numbers (1-40)\n6. Wait for the hourly draw!\n\nMatch all 5 numbers to win the entire jackpot!",
-    "start": "Welcome to CryptoUnc Lotto!\n\nTo get started:\n1. Tap /start if you haven't already\n2. Use the 'Play Now' button\n3. Set up your wallet and PIN\n4. Buy tickets and pick your numbers!\n\nNeed help? Just ask me anything!",
+    "how to play": "Getting started is easy!\n\n1. Tap 'Play Now' from the main menu\n2. Create or connect your Solana wallet\n3. Set up your 4-digit security PIN\n4. Buy a ticket for 0.025 SOL\n5. Pick 5 lucky numbers (1-40)\n6. Wait for the hourly draw!\n\nTIERED PRIZES:\n🏆 5 matches = 70% of pool\n🥈 4 matches = 20% of pool\n🥉 3 matches = 10% of pool\n\nUnclaimed tiers roll over to the next round!",
+    "play": "Getting started is easy!\n\n1. Tap 'Play Now' from the main menu\n2. Create or connect your Solana wallet\n3. Set up your 4-digit security PIN\n4. Buy a ticket for 0.025 SOL\n5. Pick 5 lucky numbers (1-40)\n6. Wait for the hourly draw!\n\nTIERED PRIZES:\n🏆 5 matches = 70% of pool\n🥈 4 matches = 20% of pool\n🥉 3 matches = 10% of pool\n\nUnclaimed tiers roll over to the next round!",
+    "start": "Welcome to CryptoUnc Lotto!\n\nTo get started:\n1. Tap /start if you haven't already\n2. Use the 'Play Now' button\n3. Set up your wallet and PIN\n4. Buy tickets and pick your numbers!\n\nWe have a TIERED prize system - you can win by matching 3, 4, or all 5 numbers!\n\nNeed help? Just ask me anything!",
     
     # Ticket info
     "ticket price": "Each ticket costs 0.025 SOL (about $4-5 depending on SOL price).\n\nYou can buy unlimited tickets per round to increase your chances! Each ticket lets you pick 5 different numbers.",
@@ -96,7 +96,7 @@ FAQ_RESPONSES = {
     "when is draw": "Draws happen every hour on the hour, 24 times per day!\n\nFor example: 12:00, 1:00, 2:00, 3:00... and so on.\n\nThe next draw will be at the top of the next hour.",
     "draw time": "Draws run every hour, 24/7!\n\nThe drawing happens automatically at :00 of every hour (UTC time). Check 'Current Round' to see the countdown!",
     "next draw": "The next draw happens at the top of the next hour!\n\nWe have 24 draws per day - one every hour. Check the 'Current Round' info for the exact countdown.",
-    "when": "Draws happen every hour on the hour!\n\n24 rounds per day means 24 chances to win. The jackpot keeps growing until someone matches all 5 numbers!",
+    "when": "Draws happen every hour on the hour!\n\n24 rounds per day means 24 chances to win. With our tiered system, you can win by matching 3, 4, or all 5 numbers! Unclaimed tiers roll over.",
     
     # Winning
     "how to win": "We have a TIERED PRIZE SYSTEM with 3 ways to win!\n\n🏆 5-Match (70% of pool): Match all 5 numbers for the JACKPOT tier!\n🥈 4-Match (20% of pool): Match 4 numbers for a great prize\n🥉 3-Match (10% of pool): Match 3 numbers for a smaller win\n\nIf no winners in a tier, that allocation ROLLS OVER to the next round!",
