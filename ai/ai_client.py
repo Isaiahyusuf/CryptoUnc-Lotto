@@ -1,6 +1,7 @@
 import asyncio
 import os
 import re
+import time
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict
 from openai import OpenAI
@@ -17,9 +18,11 @@ from .prompts import (
 
 OPENAI_MODEL = "gpt-4o"
 GEMINI_MODEL = "gemini-2.0-flash"
+GROQ_MODEL = "llama3-8b-8192"
 
 _openai_client = None
 _gemini_client = None
+_groq_client = None
 
 CHAT_HISTORY_RETENTION_DAYS = 3
 MAX_HISTORY_MESSAGES = 20
@@ -53,6 +56,24 @@ def get_gemini_client():
         else:
             print("[AI] GEMINI_API_KEY not found - Gemini fallback unavailable")
     return _gemini_client
+
+def get_groq_client():
+    """Get or create Groq client as final fallback"""
+    global _groq_client
+    if _groq_client is None:
+        api_key = os.environ.get("GROQ_API_KEY")
+        if api_key:
+            try:
+                from groq import Groq
+                _groq_client = Groq(api_key=api_key)
+                print("[AI] Groq client initialized successfully (final fallback)")
+            except ImportError:
+                print("[AI] groq not installed - Groq fallback unavailable")
+            except Exception as e:
+                print(f"[AI] Groq client initialization failed: {e}")
+        else:
+            print("[AI] GROQ_API_KEY not found - Groq fallback unavailable")
+    return _groq_client
 
 def get_db_connection():
     """Get database connection - imported lazily to avoid circular imports"""
@@ -383,11 +404,47 @@ async def ask_gemini_async(system_prompt: str, user_prompt: str, max_tokens: int
         print(f"[AI] Gemini error: {e}")
         return None
 
+async def ask_groq_async(system_prompt: str, user_prompt: str, max_tokens: int = 300, history: List[Dict] = None) -> Optional[str]:
+    """Try to get response from Groq as final fallback"""
+    client = get_groq_client()
+    if client is None:
+        return None
+    
+    try:
+        full_prompt = f"{system_prompt}\n\n"
+        
+        if history:
+            full_prompt += "Previous conversation:\n"
+            for msg in history[-10:]:
+                role = "User" if msg["role"] == "user" else "Assistant"
+                full_prompt += f"{role}: {msg['content']}\n"
+            full_prompt += "\n"
+        
+        full_prompt += f"User question: {user_prompt}"
+        
+        response = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: client.chat.completions.create(
+                model=GROQ_MODEL,
+                messages=[{"role": "user", "content": full_prompt}],
+                temperature=0.4,
+                max_tokens=max_tokens
+            )
+        )
+        
+        if response and response.choices[0].message.content:
+            print("[AI] Groq fallback response successful")
+            return response.choices[0].message.content
+        return None
+    except Exception as e:
+        print(f"[AI] Groq error: {e}")
+        return None
+
 async def chat_with_ai(user_id: int, message: str, context: str = "") -> str:
     """
     Have a conversational chat with the AI.
     This is the main entry point for interactive AI conversations.
-    Uses OpenAI first, then Gemini as fallback.
+    Uses OpenAI first, then Gemini, then Groq as fallbacks.
     Persists chat history to database for 3 days.
     Remembers user info permanently.
     """
@@ -443,6 +500,7 @@ async def chat_with_ai(user_id: int, message: str, context: str = "") -> str:
             
         except Exception as e:
             print(f"[AI] OpenAI error: {e}, trying Gemini fallback...")
+            await asyncio.sleep(1)
     
     gemini_response = await ask_gemini_async(system_prompt, message, history=history)
     if gemini_response:
@@ -455,13 +513,27 @@ async def chat_with_ai(user_id: int, message: str, context: str = "") -> str:
         
         return gemini_response
     
+    print("[AI] Gemini failed, switching to Groq...")
+    await asyncio.sleep(1)
+    
+    groq_response = await ask_groq_async(system_prompt, message, history=history)
+    if groq_response:
+        save_chat_message(user_id, "user", message)
+        save_chat_message(user_id, "assistant", groq_response)
+        
+        user_info = extract_user_info_from_message(message, groq_response)
+        if user_info:
+            update_user_profile(user_id, **user_info)
+        
+        return groq_response
+    
     faq_match = find_best_faq_match(message)
     if faq_match:
         return faq_match
-    return get_smart_response(message)
+    return "AI is currently unavailable. Please try again later."
 
 async def ask_ai_async(system_prompt: str, user_prompt: str, max_tokens: int = 500) -> str:
-    """Async AI request with OpenAI, Gemini fallback"""
+    """Async AI request with OpenAI, Gemini, Groq fallback chain"""
     client = get_openai_client()
     
     if client is not None:
@@ -480,42 +552,80 @@ async def ask_ai_async(system_prompt: str, user_prompt: str, max_tokens: int = 5
             return response.choices[0].message.content or ""
         except Exception as e:
             print(f"[AI] OpenAI error: {e}, trying Gemini fallback...")
+            await asyncio.sleep(1)
     
     gemini_response = await ask_gemini_async(system_prompt, user_prompt, max_tokens)
     if gemini_response:
         return gemini_response
     
+    print("[AI] Gemini failed, switching to Groq...")
+    await asyncio.sleep(1)
+    
+    groq_response = await ask_groq_async(system_prompt, user_prompt, min(max_tokens, 300))
+    if groq_response:
+        return groq_response
+    
     faq_match = find_best_faq_match(user_prompt)
     if faq_match:
         return faq_match
-    return get_smart_response(user_prompt)
+    return "AI is currently unavailable. Please try again later."
 
 def ask_ai(system_prompt: str, user_prompt: str, max_tokens: int = 500) -> str:
-    """Synchronous AI request"""
+    """Synchronous AI request with OpenAI, Gemini, Groq fallback chain"""
     client = get_openai_client()
     
-    if client is None:
-        faq_match = find_best_faq_match(user_prompt)
-        if faq_match:
-            return faq_match
-        return get_smart_response(user_prompt)
+    if client is not None:
+        try:
+            response = client.chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                max_completion_tokens=max_tokens
+            )
+            return response.choices[0].message.content or ""
+        except Exception as e:
+            print(f"[AI] OpenAI error: {e}, trying Gemini fallback...")
+            time.sleep(1)
     
-    try:
-        response = client.chat.completions.create(
-            model=OPENAI_MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            max_completion_tokens=max_tokens
-        )
-        return response.choices[0].message.content or ""
-    except Exception as e:
-        print(f"[AI] OpenAI error: {e}")
-        faq_match = find_best_faq_match(user_prompt)
-        if faq_match:
-            return faq_match
-        return get_smart_response(user_prompt)
+    gemini = get_gemini_client()
+    if gemini is not None:
+        try:
+            from google.genai import types
+            full_prompt = f"{system_prompt}\n\nUser question: {user_prompt}"
+            response = gemini.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=full_prompt,
+                config=types.GenerateContentConfig(max_output_tokens=max_tokens)
+            )
+            if response and response.text:
+                print("[AI] Gemini fallback response successful")
+                return response.text
+        except Exception as e:
+            print(f"[AI] Gemini error: {e}, switching to Groq...")
+            time.sleep(1)
+    
+    groq = get_groq_client()
+    if groq is not None:
+        try:
+            full_prompt = f"{system_prompt}\n\nUser question: {user_prompt}"
+            response = groq.chat.completions.create(
+                model=GROQ_MODEL,
+                messages=[{"role": "user", "content": full_prompt}],
+                temperature=0.4,
+                max_tokens=min(max_tokens, 300)
+            )
+            if response and response.choices[0].message.content:
+                print("[AI] Groq fallback response successful")
+                return response.choices[0].message.content
+        except Exception as e:
+            print(f"[AI] Groq also failed: {e}")
+    
+    faq_match = find_best_faq_match(user_prompt)
+    if faq_match:
+        return faq_match
+    return "AI is currently unavailable. Please try again later."
 
 def get_fallback_response(user_prompt: str) -> str:
     """Provide fallback responses"""
@@ -571,8 +681,8 @@ async def get_support_guidance(issue: str = "") -> str:
     return await ask_ai_async(SUPPORT_PROMPT, issue)
 
 def is_ai_available() -> bool:
-    """Check if AI is available (OpenAI or Gemini)"""
-    return get_openai_client() is not None or get_gemini_client() is not None or True
+    """Check if AI is available (OpenAI, Gemini, or Groq)"""
+    return get_openai_client() is not None or get_gemini_client() is not None or get_groq_client() is not None or True
 
 async def get_interactive_response(message: str, user_id: int = 0, context: dict = None) -> str:
     """
