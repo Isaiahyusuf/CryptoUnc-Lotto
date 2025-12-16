@@ -1,0 +1,102 @@
+Cause exception while process update id=195915017 by bot id=8126351608
+TypeError: Message.answer() missing 1 required positional argument: 'text'
+Traceback (most recent call last):
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/dispatcher.py", line 320, in _process_update
+    response = await self.feed_update(bot, update, **kwargs)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/dispatcher.py", line 164, in feed_update
+    response = await self.update.wrap_outer_middleware(
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/middlewares/error.py", line 27, in __call__
+    return await handler(event, data)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/middlewares/user_context.py", line 58, in __call__
+    return await handler(event, data)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/fsm/middleware.py", line 43, in __call__
+    return await handler(event, data)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/event/telegram.py", line 126, in trigger
+    return await wrapped_inner(event, kwargs)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/event/handler.py", line 43, in call
+    return await wrapped()
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/dispatcher.py", line 283, in _listen_update
+    return await self.propagate_event(update_type=update_type, event=event, **kwargs)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/router.py", line 161, in propagate_event
+    return await observer.wrap_outer_middleware(_wrapped, event=event, data=kwargs)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/router.py", line 153, in _wrapped
+    return await self._propagate_event(
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/router.py", line 181, in _propagate_event
+    response = await observer.trigger(event, **kwargs)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/event/telegram.py", line 126, in trigger
+    return await wrapped_inner(event, kwargs)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/event/handler.py", line 43, in call
+    return await wrapped()
+  File "/app/main.py", line 4093, in inline_handler
+    await cmd_start(query.message)
+  File "/app/main.py", line 2386, in cmd_start
+    await message.answer(
+TypeError: Message.answer() missing 1 required positional argument: 'text'
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/router.py", line 153, in _wrapped
+    await message.answer(
+TypeError: Message.answer() missing 1 required positional argument: 'text'
+Cause exception while process update id=195915018 by bot id=8126351608
+    return await self._propagate_event(
+TypeError: Message.answer() missing 1 required positional argument: 'text'
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/router.py", line 181, in _propagate_event
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/event/telegram.py", line 126, in trigger
+Traceback (most recent call last):
+    return await wrapped_inner(event, kwargs)
+    response = await observer.trigger(event, **kwargs)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/dispatcher.py", line 320, in _process_update
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/event/handler.py", line 43, in call
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/event/handler.py", line 43, in call
+    response = await self.feed_update(bot, update, **kwargs)
+    return await wrapped()
+    return await wrapped()
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/dispatcher.py", line 164, in feed_update
+  File "/app/main.py", line 4093, in inline_handler
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/dispatcher.py", line 283, in _listen_update
+    response = await self.update.wrap_outer_middleware(
+    return await self.propagate_event(update_type=update_type, event=event, **kwargs)
+    await cmd_start(query.message)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/middlewares/error.py", line 27, in __call__
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/router.py", line 161, in propagate_event
+  File "/app/main.py", line 2386, in cmd_start
+    return await handler(event, data)
+    return await observer.wrap_outer_middleware(_wrapped, event=event, data=kwargs)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/middlewares/user_context.py", line 58, in __call__
+    return await handler(event, data)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/fsm/middleware.py", line 43, in __call__
+    return await handler(event, data)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/event/telegram.py", line 126, in trigger
+    return await wrapped_inner(event, kwargs)
+    return await wrapped_inner(event, kwargs)
+Cause exception while process update id=195915019 by bot id=8126351608
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/event/handler.py", line 43, in call
+TypeError: Message.answer() missing 1 required positional argument: 'text'
+    return await wrapped()
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/dispatcher.py", line 283, in _listen_update
+Traceback (most recent call last):
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/dispatcher.py", line 320, in _process_update
+    response = await self.feed_update(bot, update, **kwargs)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/dispatcher.py", line 164, in feed_update
+    response = await self.update.wrap_outer_middleware(
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/middlewares/error.py", line 27, in __call__
+    return await handler(event, data)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/middlewares/user_context.py", line 58, in __call__
+    return await handler(event, data)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/fsm/middleware.py", line 43, in __call__
+    return await handler(event, data)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/event/telegram.py", line 126, in trigger
+    return await self.propagate_event(update_type=update_type, event=event, **kwargs)
+  File "/app/main.py", line 2386, in cmd_start
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/router.py", line 161, in propagate_event
+    await message.answer(
+    return await wrapped_inner(event, kwargs)
+    return await observer.wrap_outer_middleware(_wrapped, event=event, data=kwargs)
+TypeError: Message.answer() missing 1 required positional argument: 'text'
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/event/handler.py", line 43, in call
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/router.py", line 153, in _wrapped
+    return await wrapped()
+    return await self._propagate_event(
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/router.py", line 181, in _propagate_event
+  File "/app/main.py", line 4093, in inline_handler
+    response = await observer.trigger(event, **kwargs)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/event/telegram.py", line 126, in trigger
+    await cmd_start(query.message)

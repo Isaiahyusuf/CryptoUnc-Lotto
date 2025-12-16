@@ -2384,19 +2384,17 @@ async def cmd_start(message: types.Message):
         [InlineKeyboardButton(text="⚙️ Settings", callback_data="settings")]
     ])
     await message.answer(
-       WELCOME_TEXT = (
-    f"🎟️ <b>Welcome to CryptoUnc Lotto!</b> {vip_badge}\n\n"
-    f"🏆 <b>Current Jackpot: {jackpot} SOL</b>\n\n"
-    f"📋 <b>How It Works:</b>\n"
-    f"• <b>Pick your 5 lucky numbers (1-40)</b>\n"
-    f"• Match 5 numbers to win 70% of the jackpot\n"
-    f"• Match 4 numbers to win 20% of the jackpot\n"
-    f"• Match 3 numbers to win 10% of the jackpot\n"
-    f"• No winner? Prize rolls over to next round!\n\n"
-    f"💰 Ticket Price: {TICKET_PRICE} SOL (Unlimited tickets!)\n"
-    f"⏰ 24 Hourly Rounds (one per hour)\n\n"
-    f"🎁 Referral rewards coming soon!"
-),
+        f"🎟️ <b>Welcome to CryptoUnc Lotto!</b> {vip_badge}\n\n"
+        f"🏆 <b>Current Jackpot: {jackpot} SOL</b>\n\n"
+        f"📋 <b>How It Works:</b>\n"
+        f"• <b>Pick your 5 lucky numbers (1-40)</b>\n"
+        f"• Match 5 numbers to win 70% of the jackpot\n"
+        f"• Match 4 numbers to win 20% of the jackpot\n"
+        f"• Match 3 numbers to win 10% of the jackpot\n"
+        f"• No winner? Prize rolls over to next round!\n\n"
+        f"💰 Ticket Price: {TICKET_PRICE} SOL (Unlimited tickets!)\n"
+        f"⏰ 24 Hourly Rounds (one per hour)\n\n"
+        f"🎁 Referral rewards coming soon!",
         reply_markup=keyboard,
         parse_mode="HTML"
     )
