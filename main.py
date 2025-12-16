@@ -2317,17 +2317,18 @@ async def handle_bot_membership_change(update: types.ChatMemberUpdated):
             await bot.send_message(
                 chat.id,
                 f"👋 <b>Hello!</b>\n\n"
-                f"CryptoUnc Lotto Bot is now active here!\n\n"
-                f"🎫 Buy tickets for <b>{TICKET_PRICE} SOL</b>\n"
-                f"🎲 Pick 5 numbers (1-40)\n"
-                f"🏆 • Pick your 5 lucky numbers (1–40)
-• Match 5 numbers to win 70% of the jackpot
-• Match 4 numbers to win 20% of the jackpot
-• Match 3 numbers to win 10% of the jackpot\n\n"
-                f"I'll post announcements here:\n"
-                f"• New ticket purchases\n"
-                f"• Round results & winners\n"
-                f"• Jackpot updates",
+f"CryptoUnc Lotto Bot is now active here!\n\n"
+f"🎫 Buy tickets for <b>{TICKET_PRICE} SOL</b>\n"
+f"🎲 Pick 5 numbers (1-40)\n"
+f"🏆 How it works:\n"
+f"• Pick your 5 lucky numbers (1–40)\n"
+f"• Match 5 numbers to win 70% of the jackpot\n"
+f"• Match 4 numbers to win 20% of the jackpot\n"
+f"• Match 3 numbers to win 10% of the jackpot\n\n"
+f"I'll post announcements here:\n"
+f"• New ticket purchases\n"
+f"• Round results & winners\n"
+f"• Jackpot updates",
                 reply_markup=play_button,
                 parse_mode="HTML"
             )
