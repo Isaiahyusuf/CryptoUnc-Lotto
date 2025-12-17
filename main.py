@@ -3967,7 +3967,7 @@ async def inline_handler(query: types.CallbackQuery):
                 status_emoji = "🟢" if r["status"] == "open" else "🟡"
                 prize_pool = r["total_pool"] * Decimal("0.8")
                 text += (
-                    f"{status_emoji} <b>Round {r['round_id']}</b>\n"
+                    f"{status_emoji} <b>Round {r['round_number']}</b>\n"
                     f"   🎫 Tickets Sold: {r['ticket_count']}\n"
                     f"   💵 Prize Pool: {prize_pool:.4f} SOL\n"
                     f"   📊 Status: {r['status'].upper()}\n\n"
@@ -4013,8 +4013,9 @@ async def inline_handler(query: types.CallbackQuery):
                 else:
                     date_str = "N/A"
                 
+                round_num = get_round_number(d['round_id'])
                 text += (
-                    f"🎲 <b>Round {d['round_id']}</b> ({date_str})\n"
+                    f"🎲 <b>Round {round_num}</b> ({date_str})\n"
                     f"   Numbers: <code>{nums_str}</code>\n"
                     f"   {winner_text}\n"
                     f"   Prize: {prize_text}\n"
@@ -4553,9 +4554,9 @@ async def generic_message_handler(message: types.Message):
                     [InlineKeyboardButton(text="◀️ Back", callback_data="view_results")]
                 ])
                 await bot.send_message(uid,
-                    f"❌ <b>Round {round_id} not found</b>\n\n"
+                    f"❌ <b>Round not found</b>\n\n"
                     "This round may not have been drawn yet, or doesn't exist.\n"
-                    "Try viewing recent draws to find valid round IDs.",
+                    "Try viewing recent draws to find valid rounds.",
                     reply_markup=keyboard,
                     parse_mode="HTML"
                 )
@@ -4563,9 +4564,10 @@ async def generic_message_handler(message: types.Message):
             
             nums_str = ", ".join(str(n) for n in draw["winning_numbers"]) if draw["winning_numbers"] else "N/A"
             seed_display = draw["seed_data"][:64] + "..." if draw["seed_data"] and len(draw["seed_data"]) > 64 else (draw["seed_data"] or "N/A")
+            round_num = get_round_number(round_id)
             
             verification_text = (
-                f"🔍 <b>DRAW VERIFICATION - Round {round_id}</b>\n"
+                f"🔍 <b>DRAW VERIFICATION - Round {round_num}</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━━━\n\n"
                 
                 f"🎲 <b>Winning Numbers:</b> <code>{nums_str}</code>\n\n"
