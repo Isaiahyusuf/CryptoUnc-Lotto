@@ -1514,6 +1514,16 @@ def create_scheduled_round(round_number: int, scheduled_time: datetime):
         conn.close()
 
 
+def get_round_number(round_id: int) -> int:
+    """Get the round_number (1-24) for a given round_id"""
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("SELECT round_number FROM scheduled_rounds WHERE round_id = %s", (round_id,))
+    row = c.fetchone()
+    conn.close()
+    return row[0] if row else round_id
+
+
 def get_active_rounds():
     """Get only current open round and next pending round (max 2)"""
     conn = get_db_conn()
@@ -4155,7 +4165,8 @@ async def inline_handler(query: types.CallbackQuery):
         text = "🎰 <b>Active Rounds</b>\n\n"
         
         for round_id, round_number, status, start_time in rounds:
-            text += f"<b>Round {round_id}</b> - {'🟢 OPEN' if status == 'open' else '🟡 Pending'}\n"
+            # Display round_number (1-24) not round_id (auto-increment)
+            text += f"<b>Round {round_number}</b> - {'🟢 OPEN' if status == 'open' else '🟡 Pending'}\n"
             
             if status == 'open' and start_time:
                 try:
@@ -4197,7 +4208,7 @@ async def inline_handler(query: types.CallbackQuery):
         round_number, status, start_time = round_data
         stakes = get_round_stakes_with_counts(round_id)
         
-        text = f"🎰 <b>Round {round_id} - Updated</b>\n\n"
+        text = f"🎰 <b>Round {round_number} - Updated</b>\n\n"
         
         if status == 'open' and start_time:
             start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
@@ -5636,7 +5647,7 @@ async def cmd_status(message: types.Message):
         text += f"🎰 <b>Active Rounds: {len(rounds)}</b>\n\n"
         
         for round_id, round_number, scheduled_time, start_time, end_time, status in rounds:
-            text += f"<b>Round {round_id}</b>\n"
+            text += f"<b>Round {round_number}</b>\n"
             text += f"Status: {status}\n"
             
             if start_time:
@@ -6067,6 +6078,7 @@ async def process_round_end(round_id: int):
 async def announce_draw_result(round_id: int, result: dict):
     """Announce the draw results with TIERED PRIZE INFORMATION"""
     try:
+        round_num = get_round_number(round_id)
         winning_nums = result['winning_numbers']
         player_count = result['player_count']
         prize_pool = result.get('prize_pool', Decimal("0"))
@@ -6121,7 +6133,7 @@ async def announce_draw_result(round_id: int, result: dict):
         if has_any_winners:
             # Celebration message for winners
             message_text = (
-                f"🎉 <b>Round {round_id} Results - WINNERS!</b> 🎉\n\n"
+                f"🎉 <b>Round {round_num} Results - WINNERS!</b> 🎉\n\n"
                 f"👥 Players: {player_count}\n"
                 f"🎲 Winning Numbers: <b>{', '.join(map(str, winning_nums))}</b>\n"
                 f"💰 Prize Pool: <b>{prize_pool:.6f} SOL</b>\n\n"
@@ -6140,7 +6152,7 @@ async def announce_draw_result(round_id: int, result: dict):
         else:
             # No winners - all rolls over
             message_text = (
-                f"📊 <b>Round {round_id} Results</b>\n\n"
+                f"📊 <b>Round {round_num} Results</b>\n\n"
                 f"👥 Players: {player_count}\n"
                 f"🎲 Winning Numbers: <b>{', '.join(map(str, winning_nums))}</b>\n"
                 f"💰 Prize Pool: <b>{prize_pool:.6f} SOL</b>\n\n"
@@ -6161,6 +6173,7 @@ async def announce_draw_result(round_id: int, result: dict):
 async def dm_round_results_to_players(round_id: int, result: dict):
     """Send DM to each player with their personal results (tiered system)"""
     try:
+        round_num = get_round_number(round_id)
         winning_nums = result['winning_numbers']
         new_rollover = result.get('new_rollover', Decimal("0"))
         
@@ -6198,7 +6211,7 @@ async def dm_round_results_to_players(round_id: int, result: dict):
                     status_text = "❌ No matches this round. Try again for the next one!"
                 
                 dm_message = (
-                    f"📊 <b>Round {round_id} Results</b>\n\n"
+                    f"📊 <b>Round {round_num} Results</b>\n\n"
                     f"🎲 Winning Numbers: <b>{', '.join(map(str, winning_nums))}</b>\n"
                     f"🎫 Your Numbers: <b>{', '.join(map(str, user_numbers))}</b>\n"
                     f"Match Count: <b>{matches}/5</b>\n\n"
@@ -6371,6 +6384,7 @@ async def announce_new_ticket(user_id: int, ticket_id: int, stake_amount, number
 async def announce_round_cancelled(round_id: int, player_count: int, refund_count: int):
     """Announce when a round is cancelled due to insufficient players"""
     try:
+        round_num = get_round_number(round_id)
         try:
             jackpot = await get_real_balance(OWNER_WALLET)
         except:
@@ -6380,7 +6394,7 @@ async def announce_round_cancelled(round_id: int, player_count: int, refund_coun
         bot_username = bot_info.username
         
         message_text = (
-            f"⚠️ <b>Round {round_id} Cancelled</b>\n\n"
+            f"⚠️ <b>Round {round_num} Cancelled</b>\n\n"
             f"👥 Players: {player_count}\n"
             f"❌ Round ended without a winner.\n"
             f"✅ All {refund_count} participants have been notified.\n\n"
@@ -6400,6 +6414,7 @@ async def announce_round_cancelled(round_id: int, player_count: int, refund_coun
 async def announce_round_opened(round_id: int):
     """Announce when a new round opens with current pot information"""
     try:
+        round_num = get_round_number(round_id)
         bot_info = await bot.get_me()
         bot_username = bot_info.username
         
@@ -6426,7 +6441,7 @@ async def announce_round_opened(round_id: int):
         ])
         
         message_text = (
-            f"🎰 <b>Round {round_id} is NOW OPEN!</b>\n\n"
+            f"🎰 <b>Round {round_num} is NOW OPEN!</b>\n\n"
             f"🏆 <b>Current Jackpot: {jackpot} SOL</b>\n\n"
             f"📋 <b>Rules:</b>\n"
             f"• Pick 5 numbers (1-40)\n"
@@ -6444,6 +6459,7 @@ async def announce_round_opened(round_id: int):
 
 async def announce_winner(round_id: int, stake_amount: float, result: dict):
     try:
+        round_num = get_round_number(round_id)
         winner_id = result['winner_user_id']
         prize = result.get('prize_amount')
         if not prize:
@@ -6466,7 +6482,7 @@ async def announce_winner(round_id: int, stake_amount: float, result: dict):
         
         message_text = (
             f"🏆 <b>WINNER ANNOUNCEMENT!</b>\n\n"
-            f"🎰 Round: {round_id}\n"
+            f"🎰 Round: {round_num}\n"
             f"💰 Stake: {stake_amount} SOL\n"
             f"👥 Players: {players}\n\n"
             f"🎲 Winning Numbers: {', '.join(map(str, winning_nums))}\n\n"
