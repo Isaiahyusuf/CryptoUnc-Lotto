@@ -509,6 +509,14 @@ TIER_5_MATCH_PERCENTAGE = Decimal("0.70")  # 70% for 5-match winners
 TIER_4_MATCH_PERCENTAGE = Decimal("0.20")  # 20% for 4-match winners
 TIER_3_MATCH_PERCENTAGE = Decimal("0.10")  # 10% for 3-match winners
 
+# ==============================================================================
+# NETWORK FEE CONFIGURATION
+# ==============================================================================
+# Estimated Solana transaction fee with safety buffer
+# Actual fees are ~0.000005 SOL, we use 0.00002 for safety margin
+ESTIMATED_TX_FEE = Decimal("0.00002")  # ~0.00002 SOL per transaction
+MIN_PAYOUT_THRESHOLD = Decimal("0.0001")  # Minimum payout worth sending
+
 def get_current_pot() -> Decimal:
     """Get the current accumulated pot amount from database with caching"""
     cached = cache.get_prize_pool()
@@ -1938,11 +1946,11 @@ def update_round_status(round_id: int, status: str):
 
 async def send_winner_payout(winner_user_id: int, prize_amount: Decimal, round_stake_id: int) -> Dict:
     """
-    Send prize to winner with updated payout logic:
+    Send prize to winner with SMART FEE HANDLING:
     - Team gets 20% of total pool
-    - Winner gets 80% of total pool MINUS transaction fee
-    - Network fee is deducted from winner's share only
-    - Sends team payment FIRST to ensure atomicity
+    - Winner gets 80% of total pool
+    - Transaction fees are RESERVED from team's share (operational cost)
+    - Winner receives their full calculated share
     """
     try:
         # Get winner's wallet
@@ -1975,33 +1983,34 @@ async def send_winner_payout(winner_user_id: int, prize_amount: Decimal, round_s
             return {"success": False, "error": "No participants in round"}
         
         total_pool = Decimal(str(stake_amount)) * player_count
-        team_share = total_pool * Decimal("0.2")  # 20% to team
-        winner_share_before_fee = total_pool * Decimal("0.8")  # 80% to winner
         
-        # Estimate transaction fee for winner's payout
-        try:
-            winner_fee = await estimate_transaction_fee(OWNER_WALLET, winner_wallet, winner_share_before_fee)
-        except Exception as e:
-            print(f"⚠️ Could not estimate fee, using default: {e}")
-            winner_fee = Decimal("0.000005")  # Fallback fee
+        # SMART FEE HANDLING: Reserve fees from team's share
+        # Calculate how many transactions we need (1 for winner, optionally 1 for team)
+        num_transactions = 1  # Winner payout
+        if TEAM_WALLET and TEAM_WALLET != OWNER_WALLET:
+            num_transactions += 1  # Team payout
         
-        # Deduct fee from winner's share, ensuring non-negative
-        winner_final_amount = max(Decimal("0"), winner_share_before_fee - winner_fee)
+        total_fees_needed = ESTIMATED_TX_FEE * num_transactions
         
-        if winner_final_amount <= Decimal("0"):
-            print(f"❌ Winner amount after fee is zero or negative (fee: {winner_fee}, share: {winner_share_before_fee})")
-            return {"success": False, "error": "Prize too small to cover network fee"}
+        # Deduct fees from team's share (they absorb operational costs)
+        team_share_before_fees = total_pool * Decimal("0.2")  # 20% to team
+        team_share = max(Decimal("0"), team_share_before_fees - total_fees_needed)
+        winner_share = total_pool * Decimal("0.8")  # 80% to winner (no fee deduction)
         
-        print(f"💰 Payout calculation:")
+        if winner_share < MIN_PAYOUT_THRESHOLD:
+            print(f"❌ Winner share too small: {winner_share} SOL")
+            return {"success": False, "error": "Prize too small to send"}
+        
+        print(f"💰 Payout calculation (Smart Fee Handling):")
         print(f"   Total pool: {total_pool} SOL")
-        print(f"   Team share (20%): {team_share} SOL")
-        print(f"   Winner share before fee (80%): {winner_share_before_fee} SOL")
-        print(f"   Transaction fee: {winner_fee} SOL")
-        print(f"   Winner final amount: {winner_final_amount} SOL")
+        print(f"   Team share before fees (20%): {team_share_before_fees} SOL")
+        print(f"   Fees reserved from team share: {total_fees_needed} SOL")
+        print(f"   Team share after fees: {team_share} SOL")
+        print(f"   Winner share (80%): {winner_share} SOL")
         
-        # Send to team FIRST to ensure both succeed before marking as paid
+        # Send to team FIRST (with fees already deducted from their share)
         team_tx = None
-        if TEAM_WALLET and TEAM_WALLET != OWNER_WALLET and team_share > Decimal("0"):
+        if TEAM_WALLET and TEAM_WALLET != OWNER_WALLET and team_share > MIN_PAYOUT_THRESHOLD:
             print(f"   → Sending {team_share} SOL to team wallet...")
             team_result = await send_sol(OWNER_WALLET, TEAM_WALLET, team_share, OWNER_WALLET_PRIVATE_KEY)
             if not team_result.get("success"):
@@ -2010,15 +2019,15 @@ async def send_winner_payout(winner_user_id: int, prize_amount: Decimal, round_s
             team_tx = team_result.get("signature")
             print(f"   ✅ Team payment sent! TX: {team_tx[:16]}...")
         
-        # Send to winner (with fee deducted)
-        print(f"   → Sending {winner_final_amount} SOL to winner {winner_wallet[:8]}...")
-        winner_result = await send_sol(OWNER_WALLET, winner_wallet, winner_final_amount, OWNER_WALLET_PRIVATE_KEY)
+        # Send to winner (full share - fees came from team's portion)
+        print(f"   → Sending {winner_share} SOL to winner {winner_wallet[:8]}...")
+        winner_result = await send_sol(OWNER_WALLET, winner_wallet, winner_share, OWNER_WALLET_PRIVATE_KEY)
         
         if not winner_result.get("success"):
             print(f"   ❌ Winner payment failed: {winner_result.get('error')}")
-            # Team was already paid, log this critical inconsistency
-            print(f"   ⚠️ CRITICAL: Team paid but winner payment failed! Team TX: {team_tx}")
-            return {"success": False, "error": f"Winner payment failed (team was paid): {winner_result.get('error')}", "team_tx": team_tx}
+            if team_tx:
+                print(f"   ⚠️ CRITICAL: Team paid but winner payment failed! Team TX: {team_tx}")
+            return {"success": False, "error": f"Winner payment failed: {winner_result.get('error')}", "team_tx": team_tx}
         
         winner_tx = winner_result.get("signature")
         print(f"   ✅ Winner payment sent! TX: {winner_tx[:16]}...")
@@ -2027,9 +2036,9 @@ async def send_winner_payout(winner_user_id: int, prize_amount: Decimal, round_s
             "success": True,
             "winner_tx": winner_tx,
             "team_tx": team_tx,
-            "winner_amount": float(winner_final_amount),
+            "winner_amount": float(winner_share),
             "team_amount": float(team_share),
-            "fee_deducted": float(winner_fee),
+            "fees_reserved": float(total_fees_needed),
             "total_pool": float(total_pool)
         }
     except Exception as e:
@@ -2132,16 +2141,26 @@ def process_round_draw(round_id: int):
     new_rollover = Decimal("0")
     
     # Process Tier 5 (5 matches - 70% allocation)
+    # SMART FEE HANDLING: Reserve transaction fees from tier allocation before splitting
     if tier_5_winners:
-        payout_per_winner = tier_5_allocation / len(tier_5_winners)
-        for participant_id, user_id, stake_amount, user_numbers in tier_5_winners:
-            tier_5_payouts.append({
-                "participant_id": participant_id,
-                "user_id": user_id,
-                "amount": payout_per_winner,
-                "numbers": user_numbers
-            })
-        print(f"🏆 Tier 5 (5 matches): {len(tier_5_winners)} winners, {payout_per_winner:.6f} SOL each")
+        num_winners = len(tier_5_winners)
+        total_fees = ESTIMATED_TX_FEE * num_winners
+        net_allocation = tier_5_allocation - total_fees
+        payout_per_winner = max(Decimal("0"), net_allocation / num_winners)
+        
+        if payout_per_winner < MIN_PAYOUT_THRESHOLD:
+            new_rollover += tier_5_allocation
+            log_rollover(round_id, tier_5_allocation, f"Tier 5 payout too small after fees ({num_winners} winners)")
+            print(f"📈 Tier 5 (5 matches): Payout too small after fees - {tier_5_allocation:.6f} SOL rolls over")
+        else:
+            for participant_id, user_id, stake_amount, user_numbers in tier_5_winners:
+                tier_5_payouts.append({
+                    "participant_id": participant_id,
+                    "user_id": user_id,
+                    "amount": payout_per_winner,
+                    "numbers": user_numbers
+                })
+            print(f"🏆 Tier 5 (5 matches): {num_winners} winners, {payout_per_winner:.6f} SOL each (fees reserved: {total_fees:.6f} SOL)")
     else:
         new_rollover += tier_5_allocation
         log_rollover(round_id, tier_5_allocation, "No 5-match winners")
@@ -2149,15 +2168,24 @@ def process_round_draw(round_id: int):
     
     # Process Tier 4 (4 matches - 20% allocation)
     if tier_4_winners:
-        payout_per_winner = tier_4_allocation / len(tier_4_winners)
-        for participant_id, user_id, stake_amount, user_numbers in tier_4_winners:
-            tier_4_payouts.append({
-                "participant_id": participant_id,
-                "user_id": user_id,
-                "amount": payout_per_winner,
-                "numbers": user_numbers
-            })
-        print(f"🥈 Tier 4 (4 matches): {len(tier_4_winners)} winners, {payout_per_winner:.6f} SOL each")
+        num_winners = len(tier_4_winners)
+        total_fees = ESTIMATED_TX_FEE * num_winners
+        net_allocation = tier_4_allocation - total_fees
+        payout_per_winner = max(Decimal("0"), net_allocation / num_winners)
+        
+        if payout_per_winner < MIN_PAYOUT_THRESHOLD:
+            new_rollover += tier_4_allocation
+            log_rollover(round_id, tier_4_allocation, f"Tier 4 payout too small after fees ({num_winners} winners)")
+            print(f"📈 Tier 4 (4 matches): Payout too small after fees - {tier_4_allocation:.6f} SOL rolls over")
+        else:
+            for participant_id, user_id, stake_amount, user_numbers in tier_4_winners:
+                tier_4_payouts.append({
+                    "participant_id": participant_id,
+                    "user_id": user_id,
+                    "amount": payout_per_winner,
+                    "numbers": user_numbers
+                })
+            print(f"🥈 Tier 4 (4 matches): {num_winners} winners, {payout_per_winner:.6f} SOL each (fees reserved: {total_fees:.6f} SOL)")
     else:
         new_rollover += tier_4_allocation
         log_rollover(round_id, tier_4_allocation, "No 4-match winners")
@@ -2165,15 +2193,24 @@ def process_round_draw(round_id: int):
     
     # Process Tier 3 (3 matches - 10% allocation)
     if tier_3_winners:
-        payout_per_winner = tier_3_allocation / len(tier_3_winners)
-        for participant_id, user_id, stake_amount, user_numbers in tier_3_winners:
-            tier_3_payouts.append({
-                "participant_id": participant_id,
-                "user_id": user_id,
-                "amount": payout_per_winner,
-                "numbers": user_numbers
-            })
-        print(f"🥉 Tier 3 (3 matches): {len(tier_3_winners)} winners, {payout_per_winner:.6f} SOL each")
+        num_winners = len(tier_3_winners)
+        total_fees = ESTIMATED_TX_FEE * num_winners
+        net_allocation = tier_3_allocation - total_fees
+        payout_per_winner = max(Decimal("0"), net_allocation / num_winners)
+        
+        if payout_per_winner < MIN_PAYOUT_THRESHOLD:
+            new_rollover += tier_3_allocation
+            log_rollover(round_id, tier_3_allocation, f"Tier 3 payout too small after fees ({num_winners} winners)")
+            print(f"📈 Tier 3 (3 matches): Payout too small after fees - {tier_3_allocation:.6f} SOL rolls over")
+        else:
+            for participant_id, user_id, stake_amount, user_numbers in tier_3_winners:
+                tier_3_payouts.append({
+                    "participant_id": participant_id,
+                    "user_id": user_id,
+                    "amount": payout_per_winner,
+                    "numbers": user_numbers
+                })
+            print(f"🥉 Tier 3 (3 matches): {num_winners} winners, {payout_per_winner:.6f} SOL each (fees reserved: {total_fees:.6f} SOL)")
     else:
         new_rollover += tier_3_allocation
         log_rollover(round_id, tier_3_allocation, "No 3-match winners")
@@ -6316,9 +6353,9 @@ async def pay_tiered_winners(result: dict):
                 failed_payouts += 1
                 continue
             
-            # Skip very small payouts (less than network fee)
-            if amount < Decimal("0.0001"):
-                print(f"⚠️ Skipping tiny payout {amount} SOL to user {user_id}")
+            # Skip very small payouts (less than minimum threshold)
+            if amount < MIN_PAYOUT_THRESHOLD:
+                print(f"⚠️ Skipping tiny payout {amount} SOL to user {user_id} (below {MIN_PAYOUT_THRESHOLD} threshold)")
                 continue
             
             print(f"   → Sending tier {tier} payout: {amount:.6f} SOL to user {user_id}")
