@@ -393,7 +393,49 @@ validate_environment()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OWNER_WALLET = os.getenv("OWNER_WALLET")
-OWNER_WALLET_PRIVATE_KEY = os.getenv("OWNER_WALLET_PRIVATE_KEY")
+
+def normalize_private_key(private_key_input: str) -> str:
+    """
+    Convert private key to hex format (128 chars).
+    Supports: hex (128 chars), JSON array [64 numbers], base58.
+    Returns hex string or raises ValueError.
+    """
+    if not private_key_input:
+        return ""
+    
+    private_key_input = private_key_input.strip()
+    
+    if len(private_key_input) == 128 and all(c in '0123456789abcdefABCDEF' for c in private_key_input):
+        return private_key_input.lower()
+    
+    if private_key_input.startswith('[') and private_key_input.endswith(']'):
+        try:
+            key_array = json.loads(private_key_input)
+            if isinstance(key_array, list) and len(key_array) == 64:
+                return bytes(key_array).hex()
+        except:
+            pass
+    
+    if len(private_key_input) >= 64 and len(private_key_input) <= 100:
+        try:
+            import base58
+            decoded = base58.b58decode(private_key_input)
+            if len(decoded) == 64:
+                return decoded.hex()
+        except:
+            pass
+    
+    print(f"⚠️ Could not parse OWNER_WALLET_PRIVATE_KEY (length: {len(private_key_input)})")
+    return private_key_input
+
+_raw_owner_key = os.getenv("OWNER_WALLET_PRIVATE_KEY", "")
+OWNER_WALLET_PRIVATE_KEY = normalize_private_key(_raw_owner_key) if _raw_owner_key else ""
+
+if OWNER_WALLET_PRIVATE_KEY and len(OWNER_WALLET_PRIVATE_KEY) == 128:
+    print("✅ OWNER_WALLET_PRIVATE_KEY parsed successfully (128 hex chars)")
+elif _raw_owner_key:
+    print(f"⚠️ OWNER_WALLET_PRIVATE_KEY format issue - payouts may fail")
+
 TEAM_WALLET = os.getenv("TEAM_WALLET")  # Optional - if not set, all goes to owner wallet
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 ROUND_CHANNEL = os.getenv("ROUND_CHANNEL_ID", "@cryptounclottoportal")
