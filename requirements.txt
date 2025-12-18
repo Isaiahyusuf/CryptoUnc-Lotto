@@ -24,3 +24,10 @@ requests
 sendgrid
 solana
 solders
+aiogram
+aiohttp
+cryptography
+psycopg2-binary
+python-dotenv
+pytz
+requests

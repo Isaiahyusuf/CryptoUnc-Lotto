@@ -2606,8 +2606,8 @@ async def cmd_start(message: types.Message):
     if uid in user_selected_numbers:
         del user_selected_numbers[uid]
     
-    # Get current jackpot from prize pool
-    jackpot = get_current_pot()
+    # Get current jackpot from owner wallet on blockchain
+    jackpot = await get_real_balance(OWNER_WALLET)
     
     # Check for referral code in start command
     args = message.text.split()
