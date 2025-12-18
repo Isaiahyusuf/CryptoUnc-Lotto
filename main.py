@@ -1246,10 +1246,10 @@ def get_transparency_stats() -> Dict:
     c.execute("SELECT COUNT(DISTINCT user_id) FROM entries")
     unique_players = c.fetchone()[0] or 0
     
-    # Tickets sold in last 24 hours (rolling window)
+    # Tickets sold in last 24 hours (rolling window) - from round_participants table
     c.execute("""
-        SELECT COUNT(*) FROM entries 
-        WHERE created_at >= NOW() - INTERVAL '24 hours'
+        SELECT COUNT(*) FROM round_participants 
+        WHERE created_at >= NOW() - INTERVAL '24 hours' AND refunded = 0
     """)
     tickets_today = c.fetchone()[0] or 0
     
