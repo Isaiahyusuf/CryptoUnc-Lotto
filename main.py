@@ -1246,10 +1246,10 @@ def get_transparency_stats() -> Dict:
     c.execute("SELECT COUNT(DISTINCT user_id) FROM user_stats WHERE total_tickets > 0")
     unique_players = c.fetchone()[0] or 0
     
-    # Tickets sold today
+    # Tickets sold in last 24 hours (rolling window)
     c.execute("""
-        SELECT COUNT(*) FROM round_participants 
-        WHERE joined_at >= CURRENT_DATE
+        SELECT COUNT(*) FROM entries 
+        WHERE created_at >= NOW() - INTERVAL '24 hours'
     """)
     tickets_today = c.fetchone()[0] or 0
     
@@ -1257,17 +1257,17 @@ def get_transparency_stats() -> Dict:
     c.execute("SELECT COUNT(*) FROM scheduled_rounds WHERE status IN ('open', 'pending')")
     active_rounds = c.fetchone()[0] or 0
     
-    # Draws today
+    # Draws in last 24 hours (rolling window)
     c.execute("""
         SELECT COUNT(*) FROM draw_history 
-        WHERE drawn_at >= CURRENT_DATE
+        WHERE drawn_at >= NOW() - INTERVAL '24 hours'
     """)
     draws_today = c.fetchone()[0] or 0
     
-    # Winners today
+    # Winners in last 24 hours (rolling window)
     c.execute("""
         SELECT COUNT(*) FROM draw_history 
-        WHERE drawn_at >= CURRENT_DATE AND winner_id IS NOT NULL
+        WHERE drawn_at >= NOW() - INTERVAL '24 hours' AND winner_id IS NOT NULL
     """)
     winners_today = c.fetchone()[0] or 0
     
@@ -4003,8 +4003,8 @@ async def inline_handler(query: types.CallbackQuery):
             "📊 <b>TRANSPARENCY DASHBOARD</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n\n"
             
-            "<b>TODAY'S ACTIVITY</b>\n"
-            f"💰 <b>Current Jackpot (Owner Wallet):</b> {jackpot} SOL\n"
+            "<b>TODAY'S ACTIVITY (24h Rolling)</b>\n"
+            f"💰 <b>Current Jackpot:</b> {jackpot} SOL\n"
             f"🎫 <b>Tickets Today:</b> {stats.get('tickets_today', 0)}\n"
             f"🎲 <b>Draws Today:</b> {stats.get('draws_today', 0)}\n"
             f"🏆 <b>Winners Today:</b> {stats.get('winners_today', 0)}\n\n"
