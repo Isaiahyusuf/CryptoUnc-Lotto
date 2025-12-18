@@ -6518,7 +6518,12 @@ async def announce_round_cancelled(round_id: int, player_count: int, refund_coun
     """Announce when a round is cancelled due to insufficient players"""
     try:
         round_num = get_round_number(round_id)
-        jackpot = get_current_pot()
+        
+        # Get real jackpot from owner wallet
+        try:
+            jackpot = await get_real_balance(OWNER_WALLET)
+        except:
+            jackpot = Decimal("0")
         
         bot_info = await bot.get_me()
         bot_username = bot_info.username
@@ -6548,7 +6553,11 @@ async def announce_round_opened(round_id: int):
         bot_info = await bot.get_me()
         bot_username = bot_info.username
         
-        jackpot = get_current_pot()
+        # Get real jackpot from owner wallet
+        try:
+            jackpot = await get_real_balance(OWNER_WALLET)
+        except:
+            jackpot = Decimal("0")
         
         # Get total participants for this round
         conn = get_db_conn()
