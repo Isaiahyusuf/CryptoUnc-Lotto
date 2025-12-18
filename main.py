@@ -4117,19 +4117,25 @@ async def inline_handler(query: types.CallbackQuery):
             "🔍 <b>VERIFY A DRAW</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n\n"
             
-            "Enter the Round ID to verify:\n\n"
+            "<b>How to Find a Round ID:</b>\n"
+            "📜 View the 'Recent Draws' section\n"
+            "📈 Check 'Live Stats' for active rounds\n"
+            "🎲 Or type any round number (1-24)\n\n"
             
             "<b>How Verification Works:</b>\n"
-            "1. We show you the seed data used\n"
-            "2. The seed includes blockchain tx signatures\n"
-            "3. SHA256 hash generates winning numbers\n"
-            "4. You can reproduce this yourself!\n\n"
+            "1️⃣ We show you the seed data used\n"
+            "2️⃣ The seed includes blockchain signatures\n"
+            "3️⃣ SHA256 hash generates winning numbers\n"
+            "4️⃣ You can reproduce it yourself!\n\n"
             
-            "<i>Type the round number (e.g., 42) to verify:</i>"
+            "<b>Example:</b> Type <code>16</code> to verify Round 16\n\n"
+            
+            "<i>Enter the round number to verify:</i>"
         )
         
         keyboard = create_keyboard_with_nav([
             [InlineKeyboardButton(text="📜 View Recent Draws", callback_data="transparency_history")],
+            [InlineKeyboardButton(text="📈 View Live Stats", callback_data="transparency_live")],
             [InlineKeyboardButton(text="◀️ Back", callback_data="view_results")]
         ])
         
