@@ -3986,7 +3986,8 @@ async def inline_handler(query: types.CallbackQuery):
             [InlineKeyboardButton(text="📜 Recent Draws", callback_data="transparency_history")],
             [InlineKeyboardButton(text="🔍 Verify a Draw", callback_data="transparency_verify")],
             [InlineKeyboardButton(text="💰 Prize Pool Info", callback_data="transparency_pool")],
-            [InlineKeyboardButton(text="🔗 Blockchain Links", callback_data="transparency_links")]
+            [InlineKeyboardButton(text="🔗 Blockchain Links", callback_data="transparency_links")],
+            [InlineKeyboardButton(text="🔐 Wallet Security", callback_data="wallet_security_info")]
         ])
         
         try:
@@ -4207,7 +4208,52 @@ async def inline_handler(query: types.CallbackQuery):
             "<i>Click below to view live blockchain data</i>"
         )
         
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        keyboard = create_keyboard_with_nav([
+            [InlineKeyboardButton(text="🔗 Solscan Explorer", url=f"https://solscan.io/account/{OWNER_WALLET}")],
+            [InlineKeyboardButton(text="◀️ Back", callback_data="view_results")]
+        ])
+        
+        await bot.send_message(uid, text, reply_markup=keyboard, parse_mode="HTML")
+    
+    elif data == "wallet_security_info":
+        await query.answer("Loading wallet security info...")
+        
+        text = (
+            "🔐 <b>HOW YOUR WALLET IS PROTECTED</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            
+            "<b>🛡️ END-TO-END ENCRYPTION</b>\n"
+            "Your private key is encrypted using military-grade encryption (Fernet) that scrambles your key into random-looking code. Only you can unscramble it with your unique encryption key.\n\n"
+            
+            "<b>🔑 What is a Private Key?</b>\n"
+            "Think of it like a master password for your wallet. It proves you own the SOL. We NEVER see it or store it in plain text.\n\n"
+            
+            "<b>🗝️ How We Protect It:</b>\n"
+            "1️⃣ You set a PIN (like a bank PIN)\n"
+            "2️⃣ Your private key gets encrypted\n"
+            "3️⃣ We store only the encrypted version\n"
+            "4️⃣ To use your wallet, you enter your PIN\n"
+            "5️⃣ PIN unlocks the encrypted key\n\n"
+            
+            "<b>🚫 What We DON'T Do:</b>\n"
+            "❌ We never see your private key\n"
+            "❌ We never store it unencrypted\n"
+            "❌ We never share it with anyone\n"
+            "❌ We can't access your funds without your PIN\n\n"
+            
+            "<b>💡 Simple Analogy:</b>\n"
+            "Your private key is locked in a safe. The safe itself is locked in a vault. Even we can only access the vault, not the safe inside it. Only you have the safe key (your PIN).\n\n"
+            
+            "<b>✅ Your Security Checklist:</b>\n"
+            "✓ Set a strong PIN (not 0000)\n"
+            "✓ Never share your PIN\n"
+            "✓ Backup your private key securely\n"
+            "✓ Use 2-factor when available\n\n"
+            
+            "<i>Your funds are protected by Solana blockchain + our encryption</i>"
+        )
+        
+        keyboard = create_keyboard_with_nav([
             [InlineKeyboardButton(text="📊 View Wallet on Solscan", url=f"https://solscan.io/account/{OWNER_WALLET}")],
             [InlineKeyboardButton(text="📜 Transaction History", url=f"https://solscan.io/account/{OWNER_WALLET}#txs")],
             [InlineKeyboardButton(text="◀️ Back", callback_data="view_results")]
