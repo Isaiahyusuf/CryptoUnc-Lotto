@@ -4141,7 +4141,7 @@ async def inline_handler(query: types.CallbackQuery):
         await query.answer("Loading prize pool info...")
         
         try:
-            jackpot = get_current_pot()
+            jackpot = await get_real_balance(OWNER_WALLET)
             stats = get_transparency_stats()
             seeded = get_total_seeded()
         except:
