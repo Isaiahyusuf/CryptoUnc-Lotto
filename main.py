@@ -3992,7 +3992,7 @@ async def inline_handler(query: types.CallbackQuery):
         
         try:
             stats = get_transparency_stats()
-            jackpot = get_current_pot()
+            jackpot = await get_real_balance(OWNER_WALLET)
         except:
             stats = {"total_draws": 0, "total_distributed": Decimal("0"), "unique_players": 0, 
                      "tickets_today": 0, "draws_today": 0, "winners_today": 0, "volume_24h": Decimal("0"),
@@ -4030,7 +4030,7 @@ async def inline_handler(query: types.CallbackQuery):
         
         try:
             live_rounds = get_live_round_stats()
-            jackpot = get_current_pot()
+            jackpot = await get_real_balance(OWNER_WALLET)
         except:
             live_rounds = []
             jackpot = Decimal("0")
