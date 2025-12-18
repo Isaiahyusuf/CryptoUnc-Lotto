@@ -6563,7 +6563,7 @@ async def announce_round_opened(round_id: int):
         conn.close()
         
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=f"🎟️ Join Round ({player_count} players)", url=f"https://t.me/{bot_username}?start=play")],
+            [InlineKeyboardButton(text="🎟️ Join Round", url=f"https://t.me/{bot_username}?start=play")],
             [InlineKeyboardButton(text="💰 Check Jackpot", url=f"https://t.me/{bot_username}?start=jackpot")]
         ])
         
