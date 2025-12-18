@@ -1337,25 +1337,26 @@ def get_recent_draws_with_verification(limit: int = 10) -> List[Dict]:
     conn = get_db_conn()
     c = conn.cursor()
     c.execute("""
-        SELECT round_id, winning_numbers, seed_data, player_count, 
+        SELECT id, round_id, winning_numbers, seed_data, player_count, 
                total_pot, winner_id, prize_amount, tx_signature, drawn_at
         FROM draw_history
-        ORDER BY drawn_at DESC
+        WHERE winning_numbers IS NOT NULL
+        ORDER BY drawn_at DESC, id DESC
         LIMIT %s
     """, (limit,))
     rows = c.fetchall()
     conn.close()
     
     return [{
-        "round_id": r[0],
-        "winning_numbers": str_to_numbers(r[1]) if r[1] else [],
-        "seed_data": r[2],
-        "player_count": r[3],
-        "total_pot": Decimal(str(r[4] or 0)),
-        "winner_id": r[5],
-        "prize_amount": Decimal(str(r[6] or 0)),
-        "tx_signature": r[7],
-        "drawn_at": r[8]
+        "round_id": r[1],
+        "winning_numbers": str_to_numbers(r[2]) if r[2] else [],
+        "seed_data": r[3],
+        "player_count": r[4],
+        "total_pot": Decimal(str(r[5] or 0)),
+        "winner_id": r[6],
+        "prize_amount": Decimal(str(r[7] or 0)),
+        "tx_signature": r[8],
+        "drawn_at": r[9]
     } for r in rows]
 
 
@@ -1365,11 +1366,12 @@ def get_live_round_stats() -> List[Dict]:
     c = conn.cursor()
     c.execute("""
         SELECT sr.round_id, sr.round_number, sr.status, sr.start_time,
-               COUNT(rp.id) as ticket_count,
-               COALESCE(SUM(rp.stake_amount), 0) as total_pool
+               COUNT(DISTINCT rp.id) as ticket_count,
+               COALESCE(SUM(rs.stake_amount), 0) as total_pool
         FROM scheduled_rounds sr
-        LEFT JOIN round_participants rp ON sr.round_id = rp.round_id
-        WHERE sr.status IN ('open', 'pending')
+        LEFT JOIN round_stakes rs ON sr.round_id = rs.round_id AND rs.status = 'open'
+        LEFT JOIN round_participants rp ON rs.id = rp.round_stake_id AND rp.refunded = 0
+        WHERE sr.status IN ('open', 'locked')
         GROUP BY sr.round_id, sr.round_number, sr.status, sr.start_time
         ORDER BY sr.scheduled_time ASC
     """)
