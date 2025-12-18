@@ -1242,8 +1242,8 @@ def get_transparency_stats() -> Dict:
     c.execute("SELECT SUM(total_tickets) FROM user_stats")
     total_tickets_alltime = c.fetchone()[0] or 0
     
-    # Unique players (those who have bought at least one ticket)
-    c.execute("SELECT COUNT(DISTINCT user_id) FROM entries")
+    # Unique players (those who have bought at least one ticket) - from round_participants
+    c.execute("SELECT COUNT(DISTINCT user_id) FROM round_participants WHERE refunded = 0")
     unique_players = c.fetchone()[0] or 0
     
     # Tickets sold in last 24 hours (rolling window) - from round_participants table
@@ -6570,13 +6570,17 @@ async def announce_round_opened(round_id: int):
         message_text = (
             f"🎰 <b>Round {round_num} is NOW OPEN!</b>\n\n"
             f"🏆 <b>Current Jackpot: {jackpot} SOL</b>\n\n"
-            f"📋 <b>Rules:</b>\n"
+            f"📋 <b>Prize Structure (Tiered):</b>\n"
+            f"🥇 5 Numbers Match: 70% of Jackpot\n"
+            f"🥈 4 Numbers Match: 20% of Jackpot\n"
+            f"🥉 3 Numbers Match: 10% of Jackpot\n\n"
+            f"🎯 <b>How to Play:</b>\n"
             f"• Pick 5 numbers (1-40)\n"
-            f"• Match ALL 5 to win the ENTIRE jackpot!\n"
-            f"• If no winner, jackpot carries forward\n\n"
+            f"• Match 3+ numbers to WIN!\n"
+            f"• More matches = bigger prize\n\n"
             f"💰 <b>Ticket Price:</b> {TICKET_PRICE} SOL (Unlimited tickets!)\n"
             f"⏰ <b>Round Duration:</b> {ROUND_DURATION_MINUTES} minutes\n\n"
-            f"Join now for a chance to win the jackpot!"
+            f"Join now and win with tiered prizes!"
         )
         
         await send_to_announcements(message_text, keyboard)
