@@ -2604,11 +2604,8 @@ async def cmd_start(message: types.Message):
     if uid in user_selected_numbers:
         del user_selected_numbers[uid]
     
-    # Get current jackpot from owner wallet balance
-    try:
-        jackpot = await get_real_balance(OWNER_WALLET)
-    except:
-        jackpot = Decimal("0")
+    # Get current jackpot from prize pool
+    jackpot = get_current_pot()
     
     # Check for referral code in start command
     args = message.text.split()
@@ -3992,7 +3989,7 @@ async def inline_handler(query: types.CallbackQuery):
         
         try:
             stats = get_transparency_stats()
-            jackpot = await get_real_balance(OWNER_WALLET)
+            jackpot = get_current_pot()
         except:
             stats = {"total_draws": 0, "total_distributed": Decimal("0"), "unique_players": 0, 
                      "tickets_today": 0, "draws_today": 0, "winners_today": 0, "volume_24h": Decimal("0"),
@@ -4030,7 +4027,7 @@ async def inline_handler(query: types.CallbackQuery):
         
         try:
             live_rounds = get_live_round_stats()
-            jackpot = await get_real_balance(OWNER_WALLET)
+            jackpot = get_current_pot()
         except:
             live_rounds = []
             jackpot = Decimal("0")
@@ -4141,7 +4138,7 @@ async def inline_handler(query: types.CallbackQuery):
         await query.answer("Loading prize pool info...")
         
         try:
-            jackpot = await get_real_balance(OWNER_WALLET)
+            jackpot = get_current_pot()
             stats = get_transparency_stats()
             seeded = get_total_seeded()
         except:
@@ -6466,10 +6463,7 @@ async def announce_round_cancelled(round_id: int, player_count: int, refund_coun
     """Announce when a round is cancelled due to insufficient players"""
     try:
         round_num = get_round_number(round_id)
-        try:
-            jackpot = await get_real_balance(OWNER_WALLET)
-        except:
-            jackpot = Decimal("0")
+        jackpot = get_current_pot()
         
         bot_info = await bot.get_me()
         bot_username = bot_info.username
@@ -6499,10 +6493,7 @@ async def announce_round_opened(round_id: int):
         bot_info = await bot.get_me()
         bot_username = bot_info.username
         
-        try:
-            jackpot = await get_real_balance(OWNER_WALLET)
-        except:
-            jackpot = Decimal("0")
+        jackpot = get_current_pot()
         
         # Get total participants for this round
         conn = get_db_conn()
