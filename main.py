@@ -1242,8 +1242,8 @@ def get_transparency_stats() -> Dict:
     c.execute("SELECT SUM(total_tickets) FROM user_stats")
     total_tickets_alltime = c.fetchone()[0] or 0
     
-    # Unique players
-    c.execute("SELECT COUNT(DISTINCT user_id) FROM user_stats WHERE total_tickets > 0")
+    # Unique players (those who have bought at least one ticket)
+    c.execute("SELECT COUNT(DISTINCT user_id) FROM entries")
     unique_players = c.fetchone()[0] or 0
     
     # Tickets sold in last 24 hours (rolling window)
