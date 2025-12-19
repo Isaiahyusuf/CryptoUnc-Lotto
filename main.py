@@ -2700,7 +2700,15 @@ async def cmd_start(message: types.Message):
         referrer_id = get_referrer_by_code(ref_code)
         if referrer_id and referrer_id != message.from_user.id:
             if register_referral(referrer_id, message.from_user.id, ref_code):
-                await message.answer("🎁 You joined via referral! Your friend will earn bonuses when you play.")
+                await message.answer(
+                    "🎁 <b>Referral Link Applied!</b>\n\n"
+                    f"You joined via a friend's referral.\n\n"
+                    f"<b>Referral Reward System:</b>\n"
+                    f"When you buy your first ticket, your friend gets credit!\n"
+                    f"Every 2 successful referrals = 1 FREE TICKET\n\n"
+                    f"Invite more friends to earn more free tickets!",
+                    parse_mode="HTML"
+                )
     
     # Get user stats for VIP tier display
     stats = get_user_stats(message.from_user.id)
@@ -2731,7 +2739,8 @@ async def cmd_start(message: types.Message):
         f"• No winner? Prize rolls over to next round!\n\n"
         f"💰 Ticket Price: {TICKET_PRICE} SOL (Unlimited tickets!)\n"
         f"⏰ 24 Hourly Rounds (one per hour)\n\n"
-        f"🎁 Referral rewards coming soon!",
+        f"🎁 <b>Referral System Active!</b>\n"
+        f"Invite friends → 2 referrals = 1 FREE TICKET",
         reply_markup=keyboard,
         parse_mode="HTML"
     )
@@ -4126,19 +4135,38 @@ async def inline_handler(query: types.CallbackQuery):
     elif data == "referral":
         await query.answer()
         ref_code = get_user_referral_code(uid)
+        ref_stats = get_referral_stats(uid)
+        
+        # Check free tickets from referrals
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("SELECT free_ticket_balance FROM users WHERE user_id = %s", (uid,))
+        user_row = c.fetchone()
+        free_tickets = user_row[0] if user_row else 0
+        conn.close()
         
         bot_info = await bot.get_me()
         ref_link = f"https://t.me/{bot_info.username}?start={ref_code}"
         
-        text = f"🎁 <b>Invite Friends!</b>\n\n"
-        text += f"Share your referral link:\n"
+        text = f"🎁 <b>Invite Friends & Earn Free Tickets!</b>\n\n"
+        text += f"<b>Your Referral Link:</b>\n"
         text += f"<code>{ref_link}</code>\n\n"
-        text += f"<b>Referral rewards coming soon!</b>\n\n"
-        text += f"We're working on an exciting referral reward program.\n"
-        text += f"Start sharing now to build your network!\n"
+        text += f"<b>📊 Your Referral Stats:</b>\n"
+        text += f"👥 Friends Invited: <b>{ref_stats['total_referrals']}</b>\n"
+        text += f"✅ Successful Purchases: <b>{ref_stats['total_tickets']}</b>\n"
+        text += f"🎫 Free Tickets Earned: <b>{free_tickets}</b>\n\n"
+        text += f"<b>🎯 How It Works:</b>\n"
+        text += f"1️⃣ Share your link with friends\n"
+        text += f"2️⃣ When they buy their first ticket, you get credit\n"
+        text += f"3️⃣ Every 2 successful referrals = 1 FREE TICKET\n"
+        text += f"4️⃣ Use free tickets anytime to play without payment\n\n"
+        text += f"<b>💡 Unlimited Earnings:</b>\n"
+        text += f"The more you invite, the more free tickets you get!\n"
+        text += f"This reward repeats for every 2 successful referrals."
         
         keyboard = create_keyboard_with_nav([
-            [InlineKeyboardButton(text="📈 My Stats", callback_data="my_stats")]
+            [InlineKeyboardButton(text="📈 My Stats", callback_data="my_stats")],
+            [InlineKeyboardButton(text="🎫 Buy Ticket", callback_data="buy_ticket")]
         ])
         await query.message.answer(text, reply_markup=keyboard, parse_mode="HTML")
 
