@@ -996,6 +996,85 @@ def get_referral_stats(user_id: int) -> Dict:
     }
 
 
+def process_referral_on_first_ticket(user_id: int) -> Optional[int]:
+    """
+    Process referral bonus when user buys their first ticket.
+    Returns referrer_id if bonus awarded, None otherwise.
+    SYNC FUNCTION - database operations only.
+    """
+    conn = get_db_conn()
+    c = conn.cursor()
+    
+    try:
+        # Check if this is user's first ticket
+        c.execute("SELECT has_bought_ticket FROM users WHERE user_id = %s", (user_id,))
+        user_row = c.fetchone()
+        has_bought = user_row[0] if user_row else 0
+        
+        if has_bought:
+            conn.close()
+            return None  # Not first ticket
+        
+        # Mark user as having bought a ticket
+        c.execute("UPDATE users SET has_bought_ticket = 1 WHERE user_id = %s", (user_id,))
+        conn.commit()
+        
+        # Check if user was referred
+        c.execute("SELECT referrer_id FROM referrals WHERE referred_id = %s", (user_id,))
+        referral_row = c.fetchone()
+        
+        if not referral_row:
+            conn.close()
+            return None  # No referrer
+        
+        referrer_id = referral_row[0]
+        
+        # Mark referral as successful (first ticket purchased)
+        c.execute("UPDATE referrals SET tickets_from_referral = 1 WHERE referred_id = %s", (user_id,))
+        
+        # Increment referrer's referral_count counter
+        c.execute("UPDATE user_stats SET referral_count = referral_count + 1 WHERE user_id = %s", (referrer_id,))
+        conn.commit()
+        
+        # Check if referrer now has 2+ referrals and award free ticket
+        c.execute("SELECT referral_count FROM user_stats WHERE user_id = %s", (referrer_id,))
+        stats_row = c.fetchone()
+        referrer_count = stats_row[0] if stats_row else 0
+        
+        if referrer_count >= 2:
+            # Award free ticket and decrement counter by 2
+            c.execute("UPDATE users SET free_ticket_balance = free_ticket_balance + 1 WHERE user_id = %s", (referrer_id,))
+            c.execute("UPDATE user_stats SET referral_count = referral_count - 2 WHERE user_id = %s", (referrer_id,))
+            conn.commit()
+        
+        conn.close()
+        return referrer_id
+    except Exception as e:
+        conn.close()
+        print(f"Error processing referral for user {user_id}: {e}")
+        return None
+
+
+def decrement_free_ticket_balance(user_id: int) -> bool:
+    """
+    Decrement free ticket balance when user uses a free ticket.
+    Returns True if successful.
+    SYNC FUNCTION - database operations only.
+    """
+    conn = get_db_conn()
+    c = conn.cursor()
+    
+    try:
+        c.execute("UPDATE users SET free_ticket_balance = CASE WHEN free_ticket_balance > 0 THEN free_ticket_balance - 1 ELSE 0 END WHERE user_id = %s", (user_id,))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        conn.close()
+        print(f"Error decrementing free ticket for user {user_id}: {e}")
+        return False
+
+
 # ==============================================================================
 # USER STATS & VIP TIERS
 # ==============================================================================
@@ -3182,63 +3261,27 @@ async def inline_handler(query: types.CallbackQuery):
                 ticket_id = add_result.get("ticket_id", "")
                 ticket_count = add_result.get("ticket_count", 1)
                 
-                # Apply referral bonus if this is the user's first ticket purchase
-                conn = get_db_conn()
-                c = conn.cursor()
-                c.execute("SELECT has_bought_ticket FROM users WHERE user_id = %s", (uid,))
-                user_row = c.fetchone()
-                has_bought = user_row[0] if user_row else 0
+                # SYNC: Process referral on first ticket purchase (separate sync function)
+                referrer_id = process_referral_on_first_ticket(uid)
                 
-                if not has_bought:
-                    # Mark user as having bought a ticket
-                    c.execute("UPDATE users SET has_bought_ticket = 1 WHERE user_id = %s", (uid,))
-                    conn.commit()
-                    
-                    # Check if user was referred and apply bonus
-                    c.execute("SELECT referrer_id FROM referrals WHERE referred_id = %s", (uid,))
-                    referral_row = c.fetchone()
-                    
-                    if referral_row:
-                        referrer_id = referral_row[0]
-                        
-                        # Mark this referral as successful (first ticket purchase)
-                        c.execute("UPDATE referrals SET tickets_from_referral = 1 WHERE referred_id = %s", (uid,))
-                        conn.commit()
-                        
-                        # Increment referrer's referral_count counter (tracks successful referrals)
-                        c.execute("UPDATE user_stats SET referral_count = referral_count + 1 WHERE user_id = %s", (referrer_id,))
-                        conn.commit()
-                        
-                        # Check if referrer now has 2+ referrals to award free ticket
-                        c.execute("SELECT referral_count FROM user_stats WHERE user_id = %s", (referrer_id,))
-                        stats_row = c.fetchone()
-                        referrer_count = stats_row[0] if stats_row else 0
-                        
-                        if referrer_count >= 2:
-                            # Award free ticket and decrement counter by 2
-                            c.execute("UPDATE users SET free_ticket_balance = free_ticket_balance + 1 WHERE user_id = %s", (referrer_id,))
-                            c.execute("UPDATE user_stats SET referral_count = referral_count - 2 WHERE user_id = %s", (referrer_id,))
-                            conn.commit()
-                            
-                            try:
-                                await bot.send_message(
-                                    referrer_id,
-                                    f"🎉 <b>Referral Bonus Earned!</b>\n\n"
-                                    f"Your referred friends are buying tickets!\n\n"
-                                    f"🎫 You earned <b>1 FREE TICKET</b>\n"
-                                    f"(Every 2 successful referrals = 1 free ticket)\n\n"
-                                    f"Use your free tickets anytime to play without payment!",
-                                    parse_mode="HTML"
-                                )
-                            except:
-                                pass
+                # Send referral bonus notification if awarded
+                if referrer_id and referrer_id > 0:
+                    try:
+                        await bot.send_message(
+                            referrer_id,
+                            f"🎉 <b>Referral Bonus Earned!</b>\n\n"
+                            f"Your referred friends are buying tickets!\n\n"
+                            f"🎫 You earned <b>1 FREE TICKET</b>\n"
+                            f"(Every 2 successful referrals = 1 free ticket)\n\n"
+                            f"Use your free tickets anytime to play without payment!",
+                            parse_mode="HTML"
+                        )
+                    except:
+                        pass
                 
-                # Decrement free ticket balance if this was a free ticket
+                # SYNC: Decrement free ticket balance if this was a free ticket (separate sync function)
                 if is_free_ticket:
-                    c.execute("UPDATE users SET free_ticket_balance = CASE WHEN free_ticket_balance > 0 THEN free_ticket_balance - 1 ELSE 0 END WHERE user_id = %s", (uid,))
-                
-                conn.commit()
-                conn.close()
+                    decrement_free_ticket_balance(uid)
                 
                 network_fee = Decimal("0.00002") if not is_free_ticket else Decimal("0")
                 
