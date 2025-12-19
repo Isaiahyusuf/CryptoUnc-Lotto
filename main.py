@@ -69,7 +69,7 @@ MAX_WALLETS_PER_USER,
 log_wallet_transaction
 )
 
-from db import get_db_conn, init_all_tables, migrate_remove_unique_constraint, migrate_add_referral_column, migrate_add_ticket_id_column, force_fix_participants_constraint, q, save_security_question, get_security_question, verify_security_answer, has_security_question, add_announcement_group, remove_announcement_group, get_announcement_groups
+from db import get_db_conn, init_all_tables, migrate_remove_unique_constraint, migrate_add_referral_column, migrate_add_ticket_id_column, force_fix_participants_constraint, migrate_add_referral_reward_columns, q, save_security_question, get_security_question, verify_security_answer, has_security_question, add_announcement_group, remove_announcement_group, get_announcement_groups
 
 from wallet_buttons import router as wallet_router
 
@@ -783,6 +783,7 @@ def init_db():
     # Run migrations
     migrate_remove_unique_constraint()  # Allow unlimited tickets per user
     migrate_add_referral_column()  # Add missing referral tracking column
+    migrate_add_referral_reward_columns()  # Add has_bought_ticket and free_ticket_balance columns
     migrate_add_ticket_id_column()  # Add ticket_id column for multiple tickets per user
     
     # FORCE FIX: Ensure the unique constraint is removed - runs every startup
@@ -2945,6 +2946,31 @@ async def inline_handler(query: types.CallbackQuery):
 
     elif data == "buy_ticket":
         await query.answer()
+        
+        # Check for free tickets first
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("SELECT free_ticket_balance FROM users WHERE user_id = %s", (uid,))
+        user_row = c.fetchone()
+        free_tickets = user_row[0] if user_row else 0
+        conn.close()
+        
+        if free_tickets > 0:
+            # User has free tickets - use one without payment
+            user_states[uid] = {
+                "action": "picking_numbers",
+                "selected_numbers": [],
+                "stake_amount": 0,
+                "wallet": None,
+                "private_key": None,
+                "picker_message_id": None,
+                "is_free_ticket": True
+            }
+            picker_msg = await show_number_picker(uid, [])
+            if picker_msg and uid in user_states:
+                user_states[uid]["picker_message_id"] = picker_msg.message_id
+            return
+        
         wallet = get_active_wallet(uid)
         if not wallet:
             await bot.send_message(uid, "❌ Please create or connect a wallet first.")
@@ -3017,8 +3043,6 @@ async def inline_handler(query: types.CallbackQuery):
         await show_number_picker(uid, selected, query.message)
 
     elif data == "confirm_numbers":
-        await query.answer("Processing payment...")
-        
         if uid not in user_states or user_states[uid].get("action") != "picking_numbers":
             await bot.send_message(uid, "Your ticket is saved. You can return anytime to finish selecting your numbers.")
             return
@@ -3030,30 +3054,38 @@ async def inline_handler(query: types.CallbackQuery):
             await bot.send_message(uid, f"❌ Please select exactly 5 numbers. You have selected {len(selected)}.")
             return
         
+        is_free_ticket = state.get("is_free_ticket", False)
+        
+        if is_free_ticket:
+            await query.answer("Processing free ticket...")
+        else:
+            await query.answer("Processing payment...")
+        
         wallet = state.get("wallet")
         private_key = state.get("private_key")
         stake_amount = Decimal(str(state.get("stake_amount", float(TICKET_PRICE))))
         
-        if not wallet or not private_key:
-            await bot.send_message(uid, "Your ticket is saved. You can return anytime to finish selecting your numbers.")
-            if uid in user_states:
+        if not is_free_ticket:
+            if not wallet or not private_key:
+                await bot.send_message(uid, "Your ticket is saved. You can return anytime to finish selecting your numbers.")
+                if uid in user_states:
+                    del user_states[uid]
+                return
+            
+            # Re-check balance before payment (in case balance changed)
+            balance = await get_real_balance(wallet, use_cache=False)
+            required_amount = stake_amount + Decimal("0.00005")
+            
+            if balance < required_amount:
+                await bot.send_message(uid,
+                    f"⚠️ <b>Insufficient Balance</b>\n\n"
+                    f"Your balance: {balance} SOL\n"
+                    f"Required: {required_amount} SOL\n\n"
+                    f"Please deposit more SOL and try again.",
+                    parse_mode="HTML"
+                )
                 del user_states[uid]
-            return
-        
-        # Re-check balance before payment (in case balance changed)
-        balance = await get_real_balance(wallet, use_cache=False)
-        required_amount = stake_amount + Decimal("0.00005")
-        
-        if balance < required_amount:
-            await bot.send_message(uid,
-                f"⚠️ <b>Insufficient Balance</b>\n\n"
-                f"Your balance: {balance} SOL\n"
-                f"Required: {required_amount} SOL\n\n"
-                f"Please deposit more SOL and try again.",
-                parse_mode="HTML"
-            )
-            del user_states[uid]
-            return
+                return
         
         # FIRST: Check/create round BEFORE taking payment
         # This prevents money being taken when no round is available
@@ -3070,48 +3102,55 @@ async def inline_handler(query: types.CallbackQuery):
         
         # Update message to show processing
         try:
-            await query.message.edit_text("⏳ <b>Processing payment...</b>\n\nPlease wait...", parse_mode="HTML")
+            if is_free_ticket:
+                await query.message.edit_text("⏳ <b>Processing free ticket...</b>\n\nPlease wait...", parse_mode="HTML")
+            else:
+                await query.message.edit_text("⏳ <b>Processing payment...</b>\n\nPlease wait...", parse_mode="HTML")
         except:
             pass
         
-        # NOW process the payment (round is confirmed available)
-        team_fee = stake_amount * TEAM_FEE_PERCENTAGE
-        owner_amount = stake_amount * WINNER_SHARE_PERCENTAGE
+        tx_signature = None
         
-        # Send 80% to owner wallet (jackpot) first
-        result = await send_sol(wallet, OWNER_WALLET, owner_amount, private_key)
-        
-        if not result["success"]:
-            error_msg = result.get('error', 'Unknown error')
-            print(f"[Ticket] Payment failed for user {uid}: {error_msg}")
-            await bot.send_message(uid,
-                f"❌ <b>Transaction failed!</b>\n\n"
-                f"Error: {error_msg}\n\n"
-                f"Your SOL was NOT deducted. Please try again.",
-                parse_mode="HTML"
+        # Process payment only if not a free ticket
+        if not is_free_ticket:
+            # NOW process the payment (round is confirmed available)
+            team_fee = stake_amount * TEAM_FEE_PERCENTAGE
+            owner_amount = stake_amount * WINNER_SHARE_PERCENTAGE
+            
+            # Send 80% to owner wallet (jackpot) first
+            result = await send_sol(wallet, OWNER_WALLET, owner_amount, private_key)
+            
+            if not result["success"]:
+                error_msg = result.get('error', 'Unknown error')
+                print(f"[Ticket] Payment failed for user {uid}: {error_msg}")
+                await bot.send_message(uid,
+                    f"❌ <b>Transaction failed!</b>\n\n"
+                    f"Error: {error_msg}\n\n"
+                    f"Your SOL was NOT deducted. Please try again.",
+                    parse_mode="HTML"
+                )
+                del user_states[uid]
+                return
+            
+            tx_signature = result["signature"]
+            print(f"[Ticket] Payment successful for user {uid}: {tx_signature[:20]}...")
+            
+            # Send 20% to team wallet (non-critical - log but continue if fails)
+            if TEAM_WALLET and TEAM_WALLET != OWNER_WALLET:
+                team_result = await send_sol(wallet, TEAM_WALLET, team_fee, private_key)
+                if not team_result["success"]:
+                    print(f"[Ticket] Warning: Team wallet payment failed: {team_result.get('error')}")
+            
+            # Log lottery stake transaction
+            log_wallet_transaction(
+                user_id=uid,
+                wallet_address=wallet,
+                tx_type="lottery_stake",
+                amount=stake_amount,
+                to_address=OWNER_WALLET,
+                tx_signature=tx_signature,
+                status="completed"
             )
-            del user_states[uid]
-            return
-        
-        tx_signature = result["signature"]
-        print(f"[Ticket] Payment successful for user {uid}: {tx_signature[:20]}...")
-        
-        # Send 20% to team wallet (non-critical - log but continue if fails)
-        if TEAM_WALLET and TEAM_WALLET != OWNER_WALLET:
-            team_result = await send_sol(wallet, TEAM_WALLET, team_fee, private_key)
-            if not team_result["success"]:
-                print(f"[Ticket] Warning: Team wallet payment failed: {team_result.get('error')}")
-        
-        # Log lottery stake transaction
-        log_wallet_transaction(
-            user_id=uid,
-            wallet_address=wallet,
-            tx_type="lottery_stake",
-            amount=stake_amount,
-            to_address=OWNER_WALLET,
-            tx_signature=tx_signature,
-            status="completed"
-        )
         
         # Register ticket with retry logic
         add_result = None
@@ -3139,50 +3178,130 @@ async def inline_handler(query: types.CallbackQuery):
                 ticket_id = add_result.get("ticket_id", "")
                 ticket_count = add_result.get("ticket_count", 1)
                 
-                network_fee = Decimal("0.00002")
-                await bot.send_message(uid,
-                    f"✅ <b>Payment confirmed</b>\n"
-                    f"🎟 <b>Ticket successfully added</b>\n\n"
-                    f"🎫 Ticket #{participant_id}\n"
-                    f"🎲 Your Numbers: <b>{', '.join(map(str, selected_sorted))}</b>\n"
-                    f"💰 Stake: {stake_amount} SOL\n"
-                    f"⛽ Network Fee: ~{network_fee} SOL\n"
-                    f"📝 TX: <code>{tx_signature[:20]}...</code>\n\n"
-                    f"🎯 You can buy multiple tickets for this round.\n"
-                    f"🍀 Good luck! Results will be announced when the round ends.",
-                    parse_mode="HTML"
-                )
+                # Apply referral bonus if this is the user's first ticket purchase
+                conn = get_db_conn()
+                c = conn.cursor()
+                c.execute("SELECT has_bought_ticket FROM users WHERE user_id = %s", (uid,))
+                user_row = c.fetchone()
+                has_bought = user_row[0] if user_row else 0
+                
+                if not has_bought:
+                    # Mark user as having bought a ticket
+                    c.execute("UPDATE users SET has_bought_ticket = 1 WHERE user_id = %s", (uid,))
+                    conn.commit()
+                    
+                    # Check if user was referred and apply bonus
+                    c.execute("SELECT referrer_id FROM referrals WHERE referred_id = %s", (uid,))
+                    referral_row = c.fetchone()
+                    
+                    if referral_row:
+                        referrer_id = referral_row[0]
+                        # Increment referrer's referral count
+                        c.execute("UPDATE referrals SET tickets_from_referral = tickets_from_referral + 1 WHERE referrer_id = %s AND referred_id = %s", (referrer_id, uid))
+                        
+                        # Check if referrer now has 2+ referrals
+                        c.execute("SELECT tickets_from_referral FROM referrals WHERE referrer_id = %s AND referred_id = %s", (referrer_id, uid))
+                        ticket_count_row = c.fetchone()
+                        
+                        if ticket_count_row:
+                            # Count total valid referrals for this referrer
+                            c.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = %s AND tickets_from_referral > 0", (referrer_id,))
+                            valid_referral_count = c.fetchone()[0]
+                            
+                            # Award free tickets for every 2 referrals
+                            free_tickets_earned = valid_referral_count // 2
+                            if free_tickets_earned > 0:
+                                c.execute("UPDATE users SET free_ticket_balance = free_ticket_balance + %s WHERE user_id = %s", (free_tickets_earned, referrer_id))
+                                try:
+                                    await bot.send_message(
+                                        referrer_id,
+                                        f"🎉 <b>Referral Bonus Earned!</b>\n\n"
+                                        f"Your referred friend just bought their first ticket!\n\n"
+                                        f"🎫 You earned <b>{free_tickets_earned} FREE TICKET(S)</b>\n"
+                                        f"(Total referrals: {valid_referral_count})\n\n"
+                                        f"Use your free tickets anytime to play without payment!",
+                                        parse_mode="HTML"
+                                    )
+                                except:
+                                    pass
+                
+                # Decrement free ticket balance if this was a free ticket
+                if is_free_ticket:
+                    c.execute("UPDATE users SET free_ticket_balance = CASE WHEN free_ticket_balance > 0 THEN free_ticket_balance - 1 ELSE 0 END WHERE user_id = %s", (uid,))
+                
+                conn.commit()
+                conn.close()
+                
+                network_fee = Decimal("0.00002") if not is_free_ticket else Decimal("0")
+                
+                if is_free_ticket:
+                    await bot.send_message(uid,
+                        f"✅ <b>Free Ticket Confirmed</b>\n"
+                        f"🎟 <b>Ticket successfully added</b>\n\n"
+                        f"🎫 Ticket #{participant_id}\n"
+                        f"🎲 Your Numbers: <b>{', '.join(map(str, selected_sorted))}</b>\n"
+                        f"🎁 Type: FREE TICKET\n\n"
+                        f"🎯 You can buy multiple tickets for this round.\n"
+                        f"🍀 Good luck! Results will be announced when the round ends.",
+                        parse_mode="HTML"
+                    )
+                else:
+                    await bot.send_message(uid,
+                        f"✅ <b>Payment confirmed</b>\n"
+                        f"🎟 <b>Ticket successfully added</b>\n\n"
+                        f"🎫 Ticket #{participant_id}\n"
+                        f"🎲 Your Numbers: <b>{', '.join(map(str, selected_sorted))}</b>\n"
+                        f"💰 Stake: {stake_amount} SOL\n"
+                        f"⛽ Network Fee: ~{network_fee} SOL\n"
+                        f"📝 TX: <code>{tx_signature[:20]}...</code>\n\n"
+                        f"🎯 You can buy multiple tickets for this round.\n"
+                        f"🍀 Good luck! Results will be announced when the round ends.",
+                        parse_mode="HTML"
+                    )
                 
                 await announce_new_ticket(uid, participant_id, stake_amount, selected_sorted, round_id, ticket_count)
         else:
-            print(f"[CRITICAL] Ticket registration failed after payment for user {uid}. Attempting refund...")
-            refund_result = await send_sol(OWNER_WALLET, wallet, owner_amount, OWNER_WALLET_PRIVATE_KEY)
+            is_free_ticket = state.get("is_free_ticket", False)
             
-            if refund_result["success"]:
-                log_wallet_transaction(
-                    user_id=uid,
-                    wallet_address=wallet,
-                    tx_type="refund",
-                    amount=float(owner_amount),
-                    from_address=OWNER_WALLET,
-                    tx_signature=refund_result["signature"],
-                    status="completed"
-                )
+            if is_free_ticket:
+                # Free ticket registration failed - no payment to refund
+                print(f"[CRITICAL] Free ticket registration failed for user {uid}")
                 await bot.send_message(uid,
                     f"⚠️ <b>Ticket Registration Failed</b>\n\n"
-                    f"Your payment of {owner_amount} SOL has been automatically refunded.\n"
-                    f"Refund TX: <code>{refund_result['signature'][:20]}...</code>\n\n"
+                    f"There was an issue registering your free ticket.\n"
                     f"Please try again.",
                     parse_mode="HTML"
                 )
             else:
-                await bot.send_message(uid,
-                    f"⚠️ <b>Processing Issue</b>\n\n"
-                    f"There was an issue registering your ticket.\n"
-                    f"Payment was processed. Contact support with TX:\n"
-                    f"<code>{tx_signature}</code>",
-                    parse_mode="HTML"
-                )
+                # Paid ticket registration failed - attempt refund
+                print(f"[CRITICAL] Ticket registration failed after payment for user {uid}. Attempting refund...")
+                refund_result = await send_sol(OWNER_WALLET, wallet, owner_amount, OWNER_WALLET_PRIVATE_KEY)
+                
+                if refund_result["success"]:
+                    log_wallet_transaction(
+                        user_id=uid,
+                        wallet_address=wallet,
+                        tx_type="refund",
+                        amount=float(owner_amount),
+                        from_address=OWNER_WALLET,
+                        tx_signature=refund_result["signature"],
+                        status="completed"
+                    )
+                    await bot.send_message(uid,
+                        f"⚠️ <b>Ticket Registration Failed</b>\n\n"
+                        f"Your payment of {owner_amount} SOL has been automatically refunded.\n"
+                        f"Refund TX: <code>{refund_result['signature'][:20]}...</code>\n\n"
+                        f"Please try again.",
+                        parse_mode="HTML"
+                    )
+                else:
+                    await bot.send_message(uid,
+                        f"⚠️ <b>Processing Issue</b>\n\n"
+                        f"There was an issue registering your ticket.\n"
+                        f"Payment was processed. Contact support with TX:\n"
+                        f"<code>{tx_signature}</code>",
+                        parse_mode="HTML"
+                    )
 
     elif data == "cancel_number_pick":
         await query.answer()
@@ -3598,6 +3717,9 @@ async def inline_handler(query: types.CallbackQuery):
             f"• Unclaimed tier prizes keep growing!\n\n"
             f"<b>🎖️ VIP Tiers (by SOL spent):</b>\n"
             f"Bronze → Silver → Gold → Platinum → Diamond\n\n"
+            f"<b>🤝 Referral Bonus:</b>\n"
+            f"Every time you invite 2 users who successfully buy a ticket, you earn 1 FREE ticket.\n"
+            f"This reward repeats for every 2 successful referrals.\n\n"
             f"<b>🔐 Security:</b>\n"
             f"• Blockchain-based provably fair randomness\n"
             f"• All transactions on Solana\n"

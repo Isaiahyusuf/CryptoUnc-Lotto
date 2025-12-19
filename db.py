@@ -725,6 +725,36 @@ def migrate_add_referral_column():
         print(f"[Migration] Error adding tickets_from_referral column: {e}")
 
 
+def migrate_add_referral_reward_columns():
+    """Migration: Add has_bought_ticket and free_ticket_balance columns for referral rewards"""
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        
+        # Check and add has_bought_ticket
+        c.execute("""
+            SELECT column_name FROM information_schema.columns 
+            WHERE table_name = 'users' AND column_name = 'has_bought_ticket'
+        """)
+        if not c.fetchone():
+            c.execute("ALTER TABLE users ADD COLUMN has_bought_ticket INTEGER DEFAULT 0")
+            print("[Migration] Added has_bought_ticket column to users table")
+        
+        # Check and add free_ticket_balance
+        c.execute("""
+            SELECT column_name FROM information_schema.columns 
+            WHERE table_name = 'users' AND column_name = 'free_ticket_balance'
+        """)
+        if not c.fetchone():
+            c.execute("ALTER TABLE users ADD COLUMN free_ticket_balance INTEGER DEFAULT 0")
+            print("[Migration] Added free_ticket_balance column to users table")
+        
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[Migration] Error adding referral reward columns: {e}")
+
+
 # ==============================================================================
 # Security Question Functions
 # ==============================================================================
