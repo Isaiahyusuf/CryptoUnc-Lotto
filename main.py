@@ -2051,14 +2051,14 @@ async def send_winner_payout(winner_user_id: int, prize_amount: Decimal, round_s
         return {"success": False, "error": str(e)}
 
 
-def process_round_draw(round_id: int):
+def process_round_draw(round_id: int, owner_balance: Decimal = None):
     """
     Process the lottery draw for a round with TIERED PRIZE SYSTEM.
     
     TIERED PRIZE LOGIC:
     1. Generate 5 winning numbers (1-40) for the round
     2. Categorize tickets by matches: 5-match, 4-match, 3-match (ignore fewer)
-    3. Prize pool = owner's wallet balance (not calculated from stakes)
+    3. Prize pool = owner's wallet balance (passed as parameter)
     4. Split prize pool: 70% for 5-match, 20% for 4-match, 10% for 3-match
     5. If no winners in a tier, that tier's allocation rolls over to next round
     6. Run settlement only once per round (prevent double processing)
@@ -2121,16 +2121,19 @@ def process_round_draw(round_id: int):
         elif matches == 3:
             tier_3_winners.append((participant_id, user_id, stake_amount, user_numbers))
     
-    # Calculate prize pool: 80% of round stakes + rollover
-    previous_rollover = get_rollover()
-    round_prize_contribution = round_total * WINNER_SHARE_PERCENTAGE  # 80%
-    total_prize_pool = round_prize_contribution + previous_rollover
+    # Prize pool = owner's wallet balance (passed from async context)
+    if owner_balance is None:
+        # Fallback if not provided (shouldn't happen in normal operation)
+        previous_rollover = get_rollover()
+        round_prize_contribution = round_total * WINNER_SHARE_PERCENTAGE
+        total_prize_pool = round_prize_contribution + previous_rollover
+    else:
+        total_prize_pool = owner_balance
+        previous_rollover = Decimal("0")
     
     print(f"💰 Prize Pool Calculation:")
     print(f"   Round stakes: {round_total} SOL")
-    print(f"   Prize contribution (80%): {round_prize_contribution} SOL")
-    print(f"   Previous rollover: {previous_rollover} SOL")
-    print(f"   Total prize pool: {total_prize_pool} SOL")
+    print(f"   Owner Wallet Balance (Prize Pool): {total_prize_pool} SOL")
     
     # Calculate tier allocations
     tier_5_allocation = total_prize_pool * TIER_5_MATCH_PERCENTAGE  # 70%
@@ -2223,9 +2226,10 @@ def process_round_draw(round_id: int):
     set_rollover(new_rollover)
     print(f"💫 New rollover for next round: {new_rollover} SOL")
     
-    # Build result object
+    # Build result object (with owner_balance as prize pool)
     result = {
         "winning_numbers": winning_numbers,
+        "owner_balance": total_prize_pool,
         "player_count": len(participants),
         "round_total": round_total,
         "round_id": round_id,
@@ -6319,9 +6323,12 @@ async def manage_rounds():
 async def process_round_end(round_id: int):
     """
     Process the end of a round with TIERED PRIZE SYSTEM.
-    Pays out winners in all tiers (5/4/3 matches) and handles rollover.
+    Pays out winners in all tiers (5/4/3 matches) using owner's wallet balance as prize pool.
     """
-    result = process_round_draw(round_id)
+    # Fetch owner's wallet balance to use as prize pool
+    owner_balance = await get_real_balance(OWNER_WALLET)
+    
+    result = process_round_draw(round_id, owner_balance)
     
     if result:
         # Pay all tier winners
@@ -6335,12 +6342,13 @@ async def process_round_end(round_id: int):
 
 
 async def announce_draw_result(round_id: int, result: dict):
-    """Announce the draw results with TIERED PRIZE INFORMATION"""
+    """Announce the draw results with TIERED PRIZE INFORMATION using owner's wallet balance"""
     try:
         round_num = get_round_number(round_id)
         winning_nums = result['winning_numbers']
         player_count = result['player_count']
-        prize_pool = result.get('prize_pool', Decimal("0"))
+        # Use owner's wallet balance as prize pool
+        prize_pool = result.get('owner_balance', result.get('prize_pool', Decimal("0")))
         previous_rollover = result.get('previous_rollover', Decimal("0"))
         new_rollover = result.get('new_rollover', Decimal("0"))
         
@@ -6390,7 +6398,7 @@ async def announce_draw_result(round_id: int, result: dict):
         has_any_winners = tier_5_payouts or tier_4_payouts or tier_3_payouts
         
         if has_any_winners:
-            # Celebration message for winners
+            # Celebration message for winners (prize pool = owner's wallet balance)
             message_text = (
                 f"🎉 <b>Round {round_num} Results - WINNERS!</b> 🎉\n\n"
                 f"👥 Players: {player_count}\n"
@@ -6398,27 +6406,17 @@ async def announce_draw_result(round_id: int, result: dict):
                 f"💰 Prize Pool: <b>{prize_pool:.6f} SOL</b>\n\n"
                 f"<b>━━━ PRIZE BREAKDOWN ━━━</b>\n\n"
                 f"{tier_summary}\n\n"
+                f"🍀 Congratulations to all winners! 🍀"
             )
-            
-            # Add rollover info if any
-            if new_rollover > 0:
-                message_text += (
-                    f"<b>━━━ ROLLOVER ━━━</b>\n"
-                    f"💫 <b>{new_rollover:.6f} SOL</b> rolls over to next round!\n\n"
-                )
-            
-            message_text += "🍀 Congratulations to all winners! 🍀"
         else:
-            # No winners - all rolls over
+            # No winners message (prize pool = owner's wallet balance)
             message_text = (
                 f"📊 <b>Round {round_num} Results</b>\n\n"
                 f"👥 Players: {player_count}\n"
                 f"🎲 Winning Numbers: <b>{', '.join(map(str, winning_nums))}</b>\n"
                 f"💰 Prize Pool: <b>{prize_pool:.6f} SOL</b>\n\n"
                 f"❌ No winners matched 3+ numbers this round.\n\n"
-                f"<b>━━━ ROLLOVER ━━━</b>\n"
-                f"💫 <b>ENTIRE prize pool ({new_rollover:.6f} SOL)</b> rolls over!\n\n"
-                f"The prize pool keeps growing! Join the next round for a chance to win!"
+                f"The prize pool is available for the next lucky winners!"
             )
         
         await send_to_announcements(message_text)
@@ -6430,11 +6428,11 @@ async def announce_draw_result(round_id: int, result: dict):
 
 
 async def dm_round_results_to_players(round_id: int, result: dict):
-    """Send DM to each player with their personal results (tiered system)"""
+    """Send DM to each player with their personal results (tiered system with owner's balance)"""
     try:
         round_num = get_round_number(round_id)
         winning_nums = result['winning_numbers']
-        new_rollover = result.get('new_rollover', Decimal("0"))
+        owner_balance = result.get('owner_balance', Decimal("0"))
         
         # Build sets of winner user_ids for each tier (already paid via pay_tiered_winners)
         tier_5_winner_ids = set(p['user_id'] for p in result.get('tier_5_payouts', []))
@@ -6475,7 +6473,7 @@ async def dm_round_results_to_players(round_id: int, result: dict):
                     f"🎫 Your Numbers: <b>{', '.join(map(str, user_numbers))}</b>\n"
                     f"Match Count: <b>{matches}/5</b>\n\n"
                     f"{status_text}\n\n"
-                    f"💫 Next Round Rollover: <b>{new_rollover:.6f} SOL</b>\n\n"
+                    f"💰 Current Prize Pool: <b>{owner_balance:.6f} SOL</b>\n\n"
                     f"Play again for a chance to win!"
                 )
                 
