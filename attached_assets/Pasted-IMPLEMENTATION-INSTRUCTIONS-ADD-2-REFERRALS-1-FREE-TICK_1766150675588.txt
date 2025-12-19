@@ -1,0 +1,99 @@
+IMPLEMENTATION INSTRUCTIONS – ADD “2 REFERRALS = 1 FREE TICKET” TO EXISTING SYSTEM
+
+DO NOT create a new referral system.
+USE the current referral logic, tables, and invite flow already in the bot.
+	1.	WHAT TO ADD (HIGH LEVEL)
+
+	•	Keep existing referral tracking exactly as-is.
+	•	Add a counter-based reward:
+	•	Every time a user accumulates 2 successful referrals, grant 1 free ticket.
+	•	This must work repeatedly (2 → 1 free, 4 → 2 free, etc).
+
+	2.	DEFINE “SUCCESSFUL REFERRAL” (IMPORTANT)
+
+	•	A referral is successful ONLY when:
+	•	The referred user completes their FIRST ticket purchase.
+	•	If referred user buys more tickets later:
+	•	Do NOTHING (no extra credit).
+
+	3.	EXTEND EXISTING USER DATA (MINIMAL CHANGES)
+
+Add ONLY if missing:
+	•	has_bought_ticket (boolean, default false)
+	•	free_ticket_balance (integer, default 0)
+
+Use existing referral count field if it already exists.
+If referral_count already tracks valid referrals, reuse it.
+Do NOT create duplicate counters unless necessary.
+	4.	WHERE TO HOOK THE LOGIC (CRITICAL)
+
+Hook into the existing “ticket purchase success” handler.
+
+When payment is confirmed:
+	•	If user.has_bought_ticket == false:
+	•	Set user.has_bought_ticket = true
+	•	Check if user was referred (existing referred_by field)
+	•	If yes:
+	•	Increment inviter.referral_count by 1
+	•	IF inviter.referral_count >= 2:
+	•	inviter.free_ticket_balance += 1
+	•	inviter.referral_count -= 2
+	•	Save inviter
+
+Do NOT trigger this on bot start.
+Do NOT trigger on failed or pending payments.
+	5.	USING FREE TICKETS (NO UI REDESIGN)
+
+Modify existing “Buy Ticket / Play” logic:
+	•	Before asking for payment:
+	•	If user.free_ticket_balance > 0:
+	•	Automatically consume 1 free ticket
+	•	Generate ticket entry
+	•	Skip payment request entirely
+	•	Else:
+	•	Continue with normal payment flow (0.025 SOL)
+
+Free tickets must behave EXACTLY like paid tickets in draws.
+	6.	RULES TEXT UPDATE (SMALL CHANGE ONLY)
+
+Append this to existing rules text (do not rewrite everything):
+
+“Referral Bonus:
+Every time you invite 2 users who successfully buy a ticket, you earn 1 FREE ticket.
+This reward repeats for every 2 successful referrals.”
+	7.	DRAW & ANNOUNCEMENT POOL FIX (MANDATORY)
+
+This is a bug fix, not a feature.
+	•	At draw time:
+	•	Fetch owners_wallet on-chain balance.
+	•	Set draw_pool = owners_wallet_balance.
+	•	Use draw_pool in:
+	•	Group announcement
+	•	Winner private messages
+	•	Remove any logic that calculates pool from:
+	•	Ticket count
+	•	Entry fees
+	•	Percentages
+
+The pool prize must ALWAYS equal owners_wallet balance at draw time.
+	8.	DO NOT BREAK EXISTING FEATURES
+
+	•	Keep:
+	•	Current referral links
+	•	Current invite commands
+	•	Current ticket generation logic
+	•	Only extend behavior.
+
+	9.	BASIC PROTECTION (LIGHT TOUCH)
+
+	•	Same Telegram user can only be counted once as referral.
+	•	Same wallet address cannot generate multiple referral credits.
+
+	10.	TESTS AGENT MUST RUN
+
+	•	Existing referrals still work.
+	•	Invite 2 → both buy first ticket → inviter gets 1 free ticket.
+	•	Invite 4 → inviter gets 2 free tickets.
+	•	Free ticket used → no payment requested.
+	•	Draw → prize equals owners_wallet balance.
+	•	Group & DM announcements match exactly.
