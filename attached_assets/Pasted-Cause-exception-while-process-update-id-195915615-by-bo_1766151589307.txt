@@ -1,0 +1,59 @@
+Cause exception while process update id=195915615 by bot id=8126351608
+TelegramNetworkError: HTTP Client says - ClientOSError: [Errno 104] Connection reset by peer
+Traceback (most recent call last):
+  File "/root/.nix-profile/lib/python3.10/asyncio/selector_events.py", line 862, in _read_ready__data_received
+    data = self._sock.recv(self.max_size)
+ConnectionResetError: [Errno 104] Connection reset by peer
+The above exception was the direct cause of the following exception:
+Traceback (most recent call last):
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/client/session/aiohttp.py", line 167, in make_request
+    async with session.post(
+  File "/opt/venv/lib/python3.10/site-packages/aiohttp/client.py", line 1510, in __aenter__
+    self._resp: _RetType = await self._coro
+  File "/opt/venv/lib/python3.10/site-packages/aiohttp/client.py", line 779, in _request
+    resp = await handler(req)
+  File "/opt/venv/lib/python3.10/site-packages/aiohttp/client.py", line 757, in _connect_and_send_request
+    await resp.start(conn)
+  File "/opt/venv/lib/python3.10/site-packages/aiohttp/client_reqrep.py", line 539, in start
+    message, payload = await protocol.read()  # type: ignore[union-attr]
+  File "/opt/venv/lib/python3.10/site-packages/aiohttp/streams.py", line 680, in read
+    await self._waiter
+aiohttp.client_exceptions.ClientOSError: [Errno 104] Connection reset by peer
+During handling of the above exception, another exception occurred:
+Traceback (most recent call last):
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/dispatcher.py", line 320, in _process_update
+    response = await self.feed_update(bot, update, **kwargs)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/dispatcher.py", line 164, in feed_update
+    response = await self.update.wrap_outer_middleware(
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/middlewares/error.py", line 27, in __call__
+    return await handler(event, data)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/middlewares/user_context.py", line 58, in __call__
+    return await handler(event, data)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/fsm/middleware.py", line 43, in __call__
+    return await handler(event, data)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/event/telegram.py", line 126, in trigger
+    return await wrapped_inner(event, kwargs)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/event/handler.py", line 43, in call
+    return await wrapped()
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/dispatcher.py", line 283, in _listen_update
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/router.py", line 153, in _wrapped
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/methods/base.py", line 84, in emit
+    return await self._propagate_event(
+    return await bot(self)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/event/handler.py", line 43, in call
+  File "/app/main.py", line 4752, in inline_handler
+    return await self.propagate_event(update_type=update_type, event=event, **kwargs)
+    await query.answer()
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/router.py", line 161, in propagate_event
+    return await wrapped()
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/router.py", line 181, in _propagate_event
+    return await observer.wrap_outer_middleware(_wrapped, event=event, data=kwargs)
+    response = await observer.trigger(event, **kwargs)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/event/telegram.py", line 126, in trigger
+    return await wrapped_inner(event, kwargs)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/client/bot.py", line 485, in __call__
+    return await self.session(self, method, timeout=request_timeout)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/client/session/base.py", line 259, in __call__
+    return cast(TelegramType, await middleware(bot, method))
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/client/session/aiohttp.py", line 176, in make_request
+    raise TelegramNetworkError(method=method, message=f"{type(e).__name__}: {e}")
