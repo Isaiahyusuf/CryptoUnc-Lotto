@@ -726,7 +726,7 @@ def migrate_add_referral_column():
 
 
 def migrate_add_referral_reward_columns():
-    """Migration: Add has_bought_ticket and free_ticket_balance columns for referral rewards"""
+    """Migration: Add has_bought_ticket, free_ticket_balance, and referral_count columns for referral rewards"""
     try:
         conn = get_db_conn()
         c = conn.cursor()
@@ -748,6 +748,15 @@ def migrate_add_referral_reward_columns():
         if not c.fetchone():
             c.execute("ALTER TABLE users ADD COLUMN free_ticket_balance INTEGER DEFAULT 0")
             print("[Migration] Added free_ticket_balance column to users table")
+        
+        # Check and add referral_count (counter for awarded free tickets)
+        c.execute("""
+            SELECT column_name FROM information_schema.columns 
+            WHERE table_name = 'user_stats' AND column_name = 'referral_count'
+        """)
+        if not c.fetchone():
+            c.execute("ALTER TABLE user_stats ADD COLUMN referral_count INTEGER DEFAULT 0")
+            print("[Migration] Added referral_count column to user_stats table")
         
         conn.commit()
         conn.close()

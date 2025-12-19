@@ -3196,34 +3196,38 @@ async def inline_handler(query: types.CallbackQuery):
                     
                     if referral_row:
                         referrer_id = referral_row[0]
-                        # Increment referrer's referral count
-                        c.execute("UPDATE referrals SET tickets_from_referral = tickets_from_referral + 1 WHERE referrer_id = %s AND referred_id = %s", (referrer_id, uid))
                         
-                        # Check if referrer now has 2+ referrals
-                        c.execute("SELECT tickets_from_referral FROM referrals WHERE referrer_id = %s AND referred_id = %s", (referrer_id, uid))
-                        ticket_count_row = c.fetchone()
+                        # Mark this referral as successful (first ticket purchase)
+                        c.execute("UPDATE referrals SET tickets_from_referral = 1 WHERE referred_id = %s", (uid,))
+                        conn.commit()
                         
-                        if ticket_count_row:
-                            # Count total valid referrals for this referrer
-                            c.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = %s AND tickets_from_referral > 0", (referrer_id,))
-                            valid_referral_count = c.fetchone()[0]
+                        # Increment referrer's referral_count counter (tracks successful referrals)
+                        c.execute("UPDATE user_stats SET referral_count = referral_count + 1 WHERE user_id = %s", (referrer_id,))
+                        conn.commit()
+                        
+                        # Check if referrer now has 2+ referrals to award free ticket
+                        c.execute("SELECT referral_count FROM user_stats WHERE user_id = %s", (referrer_id,))
+                        stats_row = c.fetchone()
+                        referrer_count = stats_row[0] if stats_row else 0
+                        
+                        if referrer_count >= 2:
+                            # Award free ticket and decrement counter by 2
+                            c.execute("UPDATE users SET free_ticket_balance = free_ticket_balance + 1 WHERE user_id = %s", (referrer_id,))
+                            c.execute("UPDATE user_stats SET referral_count = referral_count - 2 WHERE user_id = %s", (referrer_id,))
+                            conn.commit()
                             
-                            # Award free tickets for every 2 referrals
-                            free_tickets_earned = valid_referral_count // 2
-                            if free_tickets_earned > 0:
-                                c.execute("UPDATE users SET free_ticket_balance = free_ticket_balance + %s WHERE user_id = %s", (free_tickets_earned, referrer_id))
-                                try:
-                                    await bot.send_message(
-                                        referrer_id,
-                                        f"🎉 <b>Referral Bonus Earned!</b>\n\n"
-                                        f"Your referred friend just bought their first ticket!\n\n"
-                                        f"🎫 You earned <b>{free_tickets_earned} FREE TICKET(S)</b>\n"
-                                        f"(Total referrals: {valid_referral_count})\n\n"
-                                        f"Use your free tickets anytime to play without payment!",
-                                        parse_mode="HTML"
-                                    )
-                                except:
-                                    pass
+                            try:
+                                await bot.send_message(
+                                    referrer_id,
+                                    f"🎉 <b>Referral Bonus Earned!</b>\n\n"
+                                    f"Your referred friends are buying tickets!\n\n"
+                                    f"🎫 You earned <b>1 FREE TICKET</b>\n"
+                                    f"(Every 2 successful referrals = 1 free ticket)\n\n"
+                                    f"Use your free tickets anytime to play without payment!",
+                                    parse_mode="HTML"
+                                )
+                            except:
+                                pass
                 
                 # Decrement free ticket balance if this was a free ticket
                 if is_free_ticket:
