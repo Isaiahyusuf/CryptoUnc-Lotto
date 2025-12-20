@@ -4107,6 +4107,14 @@ async def inline_handler(query: types.CallbackQuery):
         tier_info = VIP_TIERS.get(tier, VIP_TIERS[0])
         next_tier = VIP_TIERS.get(tier + 1)
         
+        # Get free tickets earned from referrals
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("SELECT free_ticket_balance FROM users WHERE user_id = %s", (uid,))
+        user_row = c.fetchone()
+        free_tickets = user_row[0] if user_row else 0
+        conn.close()
+        
         text = f"📈 <b>Your Statistics</b>\n\n"
         text += f"🎖️ <b>VIP Tier:</b> {tier_info['name']}\n"
         if next_tier:
@@ -4121,10 +4129,11 @@ async def inline_handler(query: types.CallbackQuery):
         text += f"🎯 <b>Wins:</b> {stats.get('wins', 0)}\n"
         text += f"🌟 <b>Biggest Win:</b> {stats.get('biggest_win', 0)} SOL\n\n"
         
-        text += f"🎁 <b>Referrals:</b>\n"
-        text += f"   Friends invited: {ref_stats['total_referrals']}\n"
-        text += f"   Bonus earned: {ref_stats['total_bonus']} SOL\n"
-        text += f"   Tickets from referrals: {ref_stats['total_tickets']}\n"
+        text += f"🎁 <b>Referral System:</b>\n"
+        text += f"👥 Friends Invited: <b>{ref_stats['total_referrals']}</b>\n"
+        text += f"✅ Successful Purchases: <b>{ref_stats['total_tickets']}</b>\n"
+        text += f"🎫 Free Tickets Earned: <b>{free_tickets}</b>\n"
+        text += f"   (Every 2 successful referrals = 1 free ticket)\n"
         
         keyboard = create_keyboard_with_nav([
             [InlineKeyboardButton(text="🎁 Invite Friends", callback_data="referral")],
