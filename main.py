@@ -6745,6 +6745,9 @@ async def announce_round_cancelled(round_id: int, player_count: int, refund_coun
             f"❌ Round ended without a winner.\n"
             f"✅ All {refund_count} participants have been notified.\n\n"
             f"💰 <b>Current Jackpot: {jackpot} SOL</b>\n\n"
+            f"🎁 <b>Referral Bonus:</b> Invite friends & earn FREE TICKETS!\n"
+            f"   • Every 2 successful referrals = 1 FREE TICKET\n"
+            f"   • Use free tickets to play without payment\n\n"
             f"Join the next round for a chance to win!"
         )
         
@@ -6800,6 +6803,8 @@ async def announce_round_opened(round_id: int):
             f"• More matches = bigger prize\n\n"
             f"💰 <b>Ticket Price:</b> {TICKET_PRICE} SOL (Unlimited tickets!)\n"
             f"⏰ <b>Round Duration:</b> {ROUND_DURATION_MINUTES} minutes\n\n"
+            f"🎁 <b>Referral Bonus:</b> Invite friends & earn FREE TICKETS!\n"
+            f"   Every 2 successful referrals = 1 FREE TICKET\n\n"
             f"Join now and win with tiered prizes!"
         )
         
