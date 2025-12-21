@@ -2776,10 +2776,16 @@ def process_vip_daily_bonus(user_id: int) -> dict:
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    save_user(message.from_user.id, message.from_user.username or "")
+    user_id = message.from_user.id
+    save_user(user_id, message.from_user.username or "")
+    
+    # Debug: Show VIP configuration and user ID
+    print(f"\n[DEBUG START] User ID: {user_id}")
+    print(f"[DEBUG START] VIP_TELEGRAM_ID configured: {VIP_TELEGRAM_ID}")
+    print(f"[DEBUG START] Match: {user_id == VIP_TELEGRAM_ID}")
     
     # Process VIP daily bonus if applicable
-    vip_result = process_vip_daily_bonus(message.from_user.id)
+    vip_result = process_vip_daily_bonus(user_id)
     
     # Clean up any abandoned number selection session for this user
     uid = message.from_user.id
@@ -3153,6 +3159,11 @@ async def inline_handler(query: types.CallbackQuery):
         user_row = c.fetchone()
         free_tickets = user_row[0] if user_row else 0
         conn.close()
+        
+        # Debug: Show free ticket status
+        print(f"\n[DEBUG BUY] User {uid} free_ticket_balance: {free_tickets}")
+        print(f"[DEBUG BUY] VIP_TELEGRAM_ID: {VIP_TELEGRAM_ID}")
+        print(f"[DEBUG BUY] Is VIP: {uid == VIP_TELEGRAM_ID}")
         
         if free_tickets > 0:
             # User has free tickets - use one without payment
