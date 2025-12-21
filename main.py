@@ -3167,6 +3167,13 @@ async def inline_handler(query: types.CallbackQuery):
         
         if free_tickets > 0:
             # User has free tickets - use one without payment
+            await query.message.edit_text(
+                f"🎁 <b>FREE TICKET!</b>\n\n"
+                f"You have <b>{free_tickets}</b> free tickets available!\n\n"
+                f"Pick your 5 lucky numbers below (no payment required):\n",
+                parse_mode="HTML"
+            )
+            
             user_states[uid] = {
                 "action": "picking_numbers",
                 "selected_numbers": [],
