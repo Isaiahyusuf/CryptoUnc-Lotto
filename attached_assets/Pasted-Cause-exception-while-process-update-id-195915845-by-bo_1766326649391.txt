@@ -1,0 +1,32 @@
+Cause exception while process update id=195915845 by bot id=8126351608
+UnboundLocalError: local variable 'time' referenced before assignment
+Traceback (most recent call last):
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/dispatcher.py", line 320, in _process_update
+    response = await self.feed_update(bot, update, **kwargs)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/dispatcher.py", line 164, in feed_update
+    response = await self.update.wrap_outer_middleware(
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/middlewares/error.py", line 27, in __call__
+    return await handler(event, data)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/middlewares/user_context.py", line 58, in __call__
+    return await handler(event, data)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/fsm/middleware.py", line 43, in __call__
+    return await handler(event, data)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/event/telegram.py", line 126, in trigger
+    return await wrapped_inner(event, kwargs)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/event/handler.py", line 43, in call
+    return await wrapped()
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/dispatcher.py", line 283, in _listen_update
+    return await self.propagate_event(update_type=update_type, event=event, **kwargs)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/router.py", line 161, in propagate_event
+    return await observer.wrap_outer_middleware(_wrapped, event=event, data=kwargs)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/router.py", line 153, in _wrapped
+    return await self._propagate_event(
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/router.py", line 181, in _propagate_event
+    response = await observer.trigger(event, **kwargs)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/event/telegram.py", line 126, in trigger
+    return await wrapped_inner(event, kwargs)
+  File "/opt/venv/lib/python3.10/site-packages/aiogram/dispatcher/event/handler.py", line 43, in call
+    return await wrapped()
+  File "/app/main.py", line 3333, in inline_handler
+    tx_signature = f"free_ticket_{uid}_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+UnboundLocalError: local variable 'time' referenced before assignment
