@@ -1188,7 +1188,7 @@ def get_top_winners(limit: int = 10) -> List[Dict]:
         LEFT JOIN users u ON us.user_id = u.user_id
         WHERE us.total_won > 0
         ORDER BY us.total_won DESC
-        LIMIT ?
+        LIMIT %s
     """, (limit,))
     rows = c.fetchall()
     conn.close()
@@ -1212,7 +1212,7 @@ def get_top_players(limit: int = 10) -> List[Dict]:
         LEFT JOIN users u ON us.user_id = u.user_id
         WHERE us.total_tickets > 0
         ORDER BY us.total_tickets DESC
-        LIMIT ?
+        LIMIT %s
     """, (limit,))
     rows = c.fetchall()
     conn.close()
