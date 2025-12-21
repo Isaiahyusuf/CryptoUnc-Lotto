@@ -1203,14 +1203,14 @@ def get_top_winners(limit: int = 10) -> List[Dict]:
 
 
 def get_top_players(limit: int = 10) -> List[Dict]:
-    """Get top players by total tickets purchased"""
+    """Get top players by total tickets purchased (excludes VIP players)"""
     conn = get_db_conn()
     c = conn.cursor()
     c.execute("""
         SELECT us.user_id, u.username, us.total_tickets, us.total_spent, us.vip_tier
         FROM user_stats us
         LEFT JOIN users u ON us.user_id = u.user_id
-        WHERE us.total_tickets > 0
+        WHERE us.total_tickets > 0 AND us.vip_tier = 0
         ORDER BY us.total_tickets DESC
         LIMIT %s
     """, (limit,))
