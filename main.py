@@ -2702,8 +2702,18 @@ def process_vip_daily_bonus(user_id: int) -> dict:
     
     This runs synchronously - called from async handlers.
     """
-    if VIP_TELEGRAM_ID <= 0 or user_id != VIP_TELEGRAM_ID:
+    # Debug: Log all VIP checks
+    print(f"[VIP] Checking user {user_id} against VIP_TELEGRAM_ID {VIP_TELEGRAM_ID}")
+    
+    if VIP_TELEGRAM_ID <= 0:
+        print(f"[VIP] VIP_TELEGRAM_ID not configured (value: {VIP_TELEGRAM_ID})")
         return {"claimed": False, "message": None}
+    
+    if user_id != VIP_TELEGRAM_ID:
+        print(f"[VIP] User {user_id} is not the VIP user {VIP_TELEGRAM_ID}")
+        return {"claimed": False, "message": None}
+    
+    print(f"[VIP] ✅ User {user_id} IS the VIP user! Processing bonus...")
     
     try:
         conn = get_db_conn()
@@ -2718,6 +2728,8 @@ def process_vip_daily_bonus(user_id: int) -> dict:
         """, (user_id,))
         row = c.fetchone()
         last_claim = row[0] if row else None
+        
+        print(f"[VIP] Last claim time: {last_claim}, Current time: {current_time}")
         
         # If never claimed or 24+ hours passed since last claim
         if last_claim is None or (current_time - last_claim) >= VIP_COOLDOWN_SECONDS:
@@ -2735,15 +2747,10 @@ def process_vip_daily_bonus(user_id: int) -> dict:
                 WHERE user_id = %s
             """, (new_balance, current_time, user_id))
             
-            # Log transaction
-            c.execute("""
-                INSERT INTO transactions (user_id, type, amount, tx_signature, status, created_at)
-                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
-            """, (user_id, 'VIP_DAILY_BONUS', VIP_DAILY_TICKETS, 'vip-bonus', 'completed'))
-            
             conn.commit()
             conn.close()
             
+            print(f"[VIP] ✅ Bonus awarded! Balance: {current_balance} → {new_balance}")
             return {
                 "claimed": True,
                 "message": f"🎁 <b>VIP Bonus: {VIP_DAILY_TICKETS} free tickets added!</b>\n\nUse /start to play!"
@@ -2754,12 +2761,15 @@ def process_vip_daily_bonus(user_id: int) -> dict:
             remaining_hours = (remaining_seconds + 3599) // 3600  # Round up to hours
             
             conn.close()
+            print(f"[VIP] ⏳ Cooldown active. Hours until next: {remaining_hours}")
             return {
                 "claimed": False,
                 "message": f"⏳ <b>VIP Tickets Coming Soon</b>\n\nNext bonus available in {remaining_hours} hours"
             }
     except Exception as e:
-        print(f"[VIP] Error processing bonus for user {user_id}: {e}")
+        print(f"[VIP] ❌ Error processing bonus for user {user_id}: {e}")
+        import traceback
+        traceback.print_exc()
         return {"claimed": False, "message": None}
 
 
