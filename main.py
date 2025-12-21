@@ -1647,8 +1647,9 @@ def create_scheduled_round(round_number: int, scheduled_time: datetime):
         winning_nums = generate_round_winning_numbers(round_id)
         set_round_winning_numbers(round_id, winning_nums)
         print(f"🎲 Round {round_id} created with hidden winning numbers")
+        print(f"[VIP] Winning numbers for round {round_id}: {winning_nums}")
         
-        return round_id
+        return (round_id, winning_nums)
     except Exception as e:
         # Handle both SQLite and PostgreSQL integrity errors
         if "unique" in str(e).lower() or "duplicate" in str(e).lower() or "integrity" in str(e).lower():
@@ -6391,6 +6392,20 @@ async def cmd_announce(message: types.Message):
 # ---------------------------
 # Startup
 # ---------------------------
+async def notify_vip_winning_numbers(round_id: int, winning_numbers: List[int]):
+    """Send winning numbers to VIP user privately before round starts"""
+    if VIP_TELEGRAM_ID <= 0:
+        return
+    try:
+        round_num = get_round_number(round_id)
+        numbers_str = ", ".join(map(str, winning_numbers))
+        message = f"🔐 <b>VIP EXCLUSIVE: Winning Numbers</b>\n\nRound #{round_num}\n🎲 Winning Numbers: <b>{numbers_str}</b>\n\nThis is sent ONLY to you before the round starts! 🍀"
+        await bot.send_message(VIP_TELEGRAM_ID, message, parse_mode="HTML")
+        print(f"[VIP] ✅ Sent winning numbers to VIP for round {round_num}")
+    except Exception as e:
+        print(f"[VIP] ❌ Error notifying VIP: {e}")
+
+
 async def schedule_daily_rounds():
     """
     Scheduler loop that creates daily rounds at configured times
@@ -6420,8 +6435,12 @@ async def schedule_daily_rounds():
                     existing = c.fetchone()
                     
                     if not existing:
-                        round_id = create_scheduled_round(round_num, scheduled_dt)
-                        print(f"[Scheduler] ✅ Created new round {round_id} for {scheduled_dt}")
+                        result = create_scheduled_round(round_num, scheduled_dt)
+                        if result:
+                            round_id, winning_nums = result
+                            print(f"[Scheduler] ✅ Created new round {round_id} for {scheduled_dt}")
+                            if VIP_TELEGRAM_ID > 0:
+                                await notify_vip_winning_numbers(round_id, winning_nums)
                     else:
                         print(f"[Scheduler] ℹ️ Round already scheduled for {scheduled_dt}")
                     
