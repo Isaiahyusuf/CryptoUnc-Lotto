@@ -3330,7 +3330,7 @@ async def inline_handler(query: types.CallbackQuery):
         # For VIP daily and referral reward tickets - no signature verification needed
         if is_free_ticket:
             import uuid
-            tx_signature = f"free_ticket_{user_id}_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+            tx_signature = f"free_ticket_{uid}_{int(time.time())}_{uuid.uuid4().hex[:8]}"
         else:
             tx_signature = None
         
