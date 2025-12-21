@@ -1,0 +1,89 @@
+TASK: Add ONE special Telegram user ID that gets 20 free tickets every 24 hours
+
+GOAL
+There is ONE special Telegram numeric ID.
+That ID must automatically receive 20 free tickets once every 24 hours.
+No other user must receive this bonus.
+This must continue working after bot restart or redeploy.
+
+STEP 1: ADD CONSTANT VALUES
+At the top of the bot or inside the config file, add:
+
+VIP_TELEGRAM_ID = 123456789
+VIP_DAILY_TICKETS = 20
+VIP_COOLDOWN_SECONDS = 86400
+
+Replace 123456789 with the real Telegram numeric ID.
+Do not use username.
+Do not use display name.
+
+STEP 2: UPDATE DATABASE
+In the users table, add ONE new column:
+
+free_ticket_last_claim INTEGER
+
+This value must store a UNIX timestamp.
+For new users, this value must be NULL.
+Do not store strings.
+Do not store formatted dates.
+
+STEP 3: WHEN THIS LOGIC MUST RUN
+Run this VIP check whenever the user interacts with the bot, for example:
+	•	/start
+	•	Play
+	•	My Tickets
+	•	Any main menu button
+
+Do not use cron jobs.
+Do not use background schedulers.
+
+STEP 4: VIP CHECK LOGIC (FOLLOW EXACTLY)
+
+When a user triggers any action:
+	1.	Read telegram_id
+	2.	If telegram_id is NOT equal to VIP_TELEGRAM_ID
+Stop immediately and do nothing.
+	3.	If telegram_id IS equal to VIP_TELEGRAM_ID
+Read free_ticket_last_claim from database.
+	4.	If free_ticket_last_claim is NULL
+Add 20 tickets to user balance.
+Save current UNIX timestamp into free_ticket_last_claim.
+Send message:
+🎁 VIP Bonus: 20 free tickets added
+	5.	If free_ticket_last_claim is NOT NULL
+Calculate current_time minus free_ticket_last_claim.
+	6.	If result is greater than or equal to 86400 seconds
+Add 20 tickets.
+Update free_ticket_last_claim to current time.
+Send message:
+🎁 VIP Bonus: 20 free tickets added
+	7.	If result is less than 86400 seconds
+Calculate remaining seconds.
+Convert to hours.
+Send message:
+⏳ Next VIP tickets available in X hours
+
+STEP 5: ADDING TICKETS SAFELY
+When adding tickets:
+	•	Increase the existing ticket balance
+	•	Do not overwrite the balance
+	•	Save changes immediately
+
+STEP 6: TRANSACTION LOGGING
+Insert a record into the transactions table with:
+	•	type = VIP_DAILY_BONUS
+	•	amount = 20
+	•	user_id = telegram_id
+	•	timestamp = current time
+
+STEP 7: DO NOT DO THESE THINGS
+Do not give free tickets to all users.
+Do not use username checks.
+Do not reset cooldown on bot restart.
+Do not expose the VIP ID in any message.
+Do not allow manual claiming.
+
+EXPECTED RESULT
+The VIP user can only receive 20 tickets once every 24 hours.
+Opening the bot multiple times in the same day must not give extra tickets.
+After 24 hours, the next interaction should auto-credit again.

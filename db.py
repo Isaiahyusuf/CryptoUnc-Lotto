@@ -764,6 +764,27 @@ def migrate_add_referral_reward_columns():
         print(f"[Migration] Error adding referral reward columns: {e}")
 
 
+def migrate_add_vip_claim_column():
+    """Migration: Add free_ticket_last_claim column to users table for VIP daily bonus tracking"""
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        
+        # Check and add free_ticket_last_claim (UNIX timestamp of last VIP bonus claim)
+        c.execute("""
+            SELECT column_name FROM information_schema.columns 
+            WHERE table_name = 'users' AND column_name = 'free_ticket_last_claim'
+        """)
+        if not c.fetchone():
+            c.execute("ALTER TABLE users ADD COLUMN free_ticket_last_claim INTEGER")
+            print("[Migration] Added free_ticket_last_claim column to users table (VIP bonus tracking)")
+        
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[Migration] Error adding VIP claim column: {e}")
+
+
 # ==============================================================================
 # Security Question Functions
 # ==============================================================================

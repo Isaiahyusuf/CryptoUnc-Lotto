@@ -69,7 +69,7 @@ MAX_WALLETS_PER_USER,
 log_wallet_transaction
 )
 
-from db import get_db_conn, init_all_tables, migrate_remove_unique_constraint, migrate_add_referral_column, migrate_add_ticket_id_column, force_fix_participants_constraint, migrate_add_referral_reward_columns, q, save_security_question, get_security_question, verify_security_answer, has_security_question, add_announcement_group, remove_announcement_group, get_announcement_groups
+from db import get_db_conn, init_all_tables, migrate_remove_unique_constraint, migrate_add_referral_column, migrate_add_ticket_id_column, force_fix_participants_constraint, migrate_add_referral_reward_columns, migrate_add_vip_claim_column, q, save_security_question, get_security_question, verify_security_answer, has_security_question, add_announcement_group, remove_announcement_group, get_announcement_groups
 
 from wallet_buttons import router as wallet_router
 
@@ -442,6 +442,19 @@ ROUND_CHANNEL = os.getenv("ROUND_CHANNEL_ID", "@cryptounclottoportal")
 ANNOUNCEMENTS_GROUP = os.getenv("ANNOUNCEMENTS_GROUP_ID")  # Optional group for additional announcements
 
 # ==============================================================================
+# VIP BONUS CONFIGURATION
+# ==============================================================================
+# ONE special Telegram user ID that receives 20 free tickets every 24 hours
+VIP_TELEGRAM_ID = int(os.getenv("VIP_TELEGRAM_ID", "0"))  # Set to the real Telegram numeric ID
+VIP_DAILY_TICKETS = 20  # Number of free tickets to award
+VIP_COOLDOWN_SECONDS = 86400  # 24 hours in seconds
+
+if VIP_TELEGRAM_ID > 0:
+    print(f"✅ VIP Bonus configured for user {VIP_TELEGRAM_ID} (20 tickets every 24h)")
+else:
+    print("ℹ️ VIP_TELEGRAM_ID not set - VIP bonus disabled")
+
+# ==============================================================================
 # SOLANA RPC CONFIGURATION
 # ==============================================================================
 # Uses SOLANA_RPC as primary with public Solana RPC as automatic fallback.
@@ -785,6 +798,7 @@ def init_db():
     migrate_add_referral_column()  # Add missing referral tracking column
     migrate_add_referral_reward_columns()  # Add has_bought_ticket and free_ticket_balance columns
     migrate_add_ticket_id_column()  # Add ticket_id column for multiple tickets per user
+    migrate_add_vip_claim_column()  # Add free_ticket_last_claim column for VIP daily bonus tracking
     
     # FORCE FIX: Ensure the unique constraint is removed - runs every startup
     force_fix_participants_constraint()
@@ -2681,9 +2695,80 @@ f"• Jackpot updates",
         print(f"[Bot] Removed from {chat.type}: {chat.title} ({chat.id})")
 
 
+def process_vip_daily_bonus(user_id: int) -> dict:
+    """
+    Check and process VIP daily bonus for a single special user.
+    Returns dict with success status and message to show user.
+    
+    This runs synchronously - called from async handlers.
+    """
+    if VIP_TELEGRAM_ID <= 0 or user_id != VIP_TELEGRAM_ID:
+        return {"claimed": False, "message": None}
+    
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        
+        # Get current time as UNIX timestamp
+        current_time = int(time.time())
+        
+        # Check user's last claim time
+        c.execute("""
+            SELECT free_ticket_last_claim FROM users WHERE user_id = %s
+        """, (user_id,))
+        row = c.fetchone()
+        last_claim = row[0] if row else None
+        
+        # If never claimed or 24+ hours passed since last claim
+        if last_claim is None or (current_time - last_claim) >= VIP_COOLDOWN_SECONDS:
+            # Get current free ticket balance
+            c.execute("""
+                SELECT free_ticket_balance FROM users WHERE user_id = %s
+            """, (user_id,))
+            row = c.fetchone()
+            current_balance = row[0] if row else 0
+            
+            # Add VIP tickets
+            new_balance = current_balance + VIP_DAILY_TICKETS
+            c.execute("""
+                UPDATE users SET free_ticket_balance = %s, free_ticket_last_claim = %s 
+                WHERE user_id = %s
+            """, (new_balance, current_time, user_id))
+            
+            # Log transaction
+            c.execute("""
+                INSERT INTO transactions (user_id, type, amount, tx_signature, status, created_at)
+                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+            """, (user_id, 'VIP_DAILY_BONUS', VIP_DAILY_TICKETS, 'vip-bonus', 'completed'))
+            
+            conn.commit()
+            conn.close()
+            
+            return {
+                "claimed": True,
+                "message": f"🎁 <b>VIP Bonus: {VIP_DAILY_TICKETS} free tickets added!</b>\n\nUse /start to play!"
+            }
+        else:
+            # Cooldown still active
+            remaining_seconds = VIP_COOLDOWN_SECONDS - (current_time - last_claim)
+            remaining_hours = (remaining_seconds + 3599) // 3600  # Round up to hours
+            
+            conn.close()
+            return {
+                "claimed": False,
+                "message": f"⏳ <b>VIP Tickets Coming Soon</b>\n\nNext bonus available in {remaining_hours} hours"
+            }
+    except Exception as e:
+        print(f"[VIP] Error processing bonus for user {user_id}: {e}")
+        return {"claimed": False, "message": None}
+
+
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     save_user(message.from_user.id, message.from_user.username or "")
+    
+    # Process VIP daily bonus if applicable
+    vip_result = process_vip_daily_bonus(message.from_user.id)
     
     # Clean up any abandoned number selection session for this user
     uid = message.from_user.id
@@ -2728,7 +2813,7 @@ async def cmd_start(message: types.Message):
          InlineKeyboardButton(text="🛠 Support", callback_data="support")],
         [InlineKeyboardButton(text="⚙️ Settings", callback_data="settings")]
     ])
-    await message.answer(
+    welcome_text = (
         f"🎟️ <b>Welcome to CryptoUnc Lotto!</b> {vip_badge}\n\n"
         f"🏆 <b>Current Jackpot: {jackpot} SOL</b>\n\n"
         f"📋 <b>How It Works:</b>\n"
@@ -2740,10 +2825,21 @@ async def cmd_start(message: types.Message):
         f"💰 Ticket Price: {TICKET_PRICE} SOL (Unlimited tickets!)\n"
         f"⏰ 24 Hourly Rounds (one per hour)\n\n"
         f"🎁 <b>Referral System Active!</b>\n"
-        f"Invite friends → 2 referrals = 1 FREE TICKET",
+        f"Invite friends → 2 referrals = 1 FREE TICKET"
+    )
+    
+    await message.answer(
+        welcome_text,
         reply_markup=keyboard,
         parse_mode="HTML"
     )
+    
+    # Send VIP bonus message if applicable
+    if vip_result["message"]:
+        await message.answer(
+            vip_result["message"],
+            parse_mode="HTML"
+        )
 
 
 async def show_wallet_menu(user_id: int):
