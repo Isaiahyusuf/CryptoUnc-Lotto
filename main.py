@@ -1203,17 +1203,26 @@ def get_top_winners(limit: int = 10) -> List[Dict]:
 
 
 def get_top_players(limit: int = 10) -> List[Dict]:
-    """Get top players by total tickets purchased (excludes VIP players)"""
+    """Get top players by total tickets purchased (excludes the VIP user ID from environment)"""
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute("""
+    
+    # Build WHERE clause to exclude VIP user if configured
+    where_clause = "us.total_tickets > 0"
+    params = (limit,)
+    
+    if VIP_TELEGRAM_ID > 0:
+        where_clause += " AND us.user_id != %s"
+        params = (VIP_TELEGRAM_ID, limit)
+    
+    c.execute(f"""
         SELECT us.user_id, u.username, us.total_tickets, us.total_spent, us.vip_tier
         FROM user_stats us
         LEFT JOIN users u ON us.user_id = u.user_id
-        WHERE us.total_tickets > 0 AND us.vip_tier = 0
+        WHERE {where_clause}
         ORDER BY us.total_tickets DESC
         LIMIT %s
-    """, (limit,))
+    """, params)
     rows = c.fetchall()
     conn.close()
     
