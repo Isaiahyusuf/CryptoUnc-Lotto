@@ -6264,6 +6264,40 @@ async def cmd_mark_refund(message: types.Message):
         await message.reply(f"❌ Error: {str(e)}")
 
 
+@dp.message(Command("test_vip"))
+async def cmd_test_vip_notification(message: types.Message):
+    """Test command to manually send VIP winning numbers (admin only)"""
+    if not is_admin(message.from_user.id):
+        await message.reply("⛔ Not authorized.")
+        return
+    
+    try:
+        # Get the most recent round
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("SELECT round_id, winning_numbers FROM scheduled_rounds WHERE winning_numbers IS NOT NULL ORDER BY round_id DESC LIMIT 1")
+        row = c.fetchone()
+        conn.close()
+        
+        if not row:
+            await message.reply("❌ No rounds with winning numbers found.")
+            return
+        
+        round_id, numbers_str = row
+        winning_nums = str_to_numbers(numbers_str) if numbers_str else []
+        
+        if VIP_TELEGRAM_ID <= 0:
+            await message.reply(f"⚠️ VIP_TELEGRAM_ID not configured (value: {VIP_TELEGRAM_ID})")
+            return
+        
+        print(f"[DEBUG] Testing VIP notification - Round: {round_id}, VIP ID: {VIP_TELEGRAM_ID}, Numbers: {winning_nums}")
+        await notify_vip_winning_numbers(round_id, winning_nums)
+        await message.reply(f"✅ Test VIP notification sent!\nRound: {round_id}\nNumbers: {winning_nums}\nVIP ID: {VIP_TELEGRAM_ID}")
+    except Exception as e:
+        print(f"[DEBUG] VIP test error: {e}")
+        await message.reply(f"❌ Error: {str(e)}")
+
+
 @dp.message(Command("force_draw"))
 async def cmd_force_draw(message: types.Message):
     if not is_admin(message.from_user.id):
@@ -6515,6 +6549,13 @@ async def manage_rounds():
             for round_id, scheduled_time in pending_rounds:
                 update_round_status(round_id, 'open')
                 print(f"[Round Manager] ✅ Round {round_id} is now OPEN! (scheduled for {scheduled_time})")
+                
+                # Notify VIP with winning numbers when round opens
+                if VIP_TELEGRAM_ID > 0:
+                    winning_nums = get_round_winning_numbers(round_id)
+                    if winning_nums:
+                        await notify_vip_winning_numbers(round_id, winning_nums)
+                
                 await announce_round_opened(round_id)
             
             c.execute(q("""
