@@ -1,0 +1,103 @@
+INSTRUCTIONS FOR REPLIT AGENT
+
+TASK
+Do NOT change the existing bot structure.
+Only modify validation so VIP daily tickets and referral reward tickets do NOT require transaction signatures.
+
+⸻
+
+GOAL
+	1.	VIP user gets 20 free tickets every 24 hours without wallet or signature.
+	2.	Referral reward gives free tickets only after 2 referred users BOTH complete their first PAID ticket purchase.
+	3.	Paid tickets continue to work exactly as they do now.
+
+⸻
+
+STEP 1: DO NOT TOUCH PAID TICKET FLOW
+
+Paid ticket logic must remain exactly the same:
+	•	Wallet required
+	•	Transaction signature required
+	•	On-chain verification required
+
+No changes here.
+
+⸻
+
+STEP 2: IDENTIFY SIGNATURE CHECK
+
+Find the exact place where the bot checks for:
+	•	transaction signature
+	•	payment verification
+
+This check currently runs for ALL tickets.
+That is the problem.
+
+⸻
+
+STEP 3: ADD A SIMPLE BYPASS (MINIMAL CHANGE)
+
+Before the signature check, add ONE condition:
+
+If ticket is being added because of:
+	•	VIP daily bonus
+	•	Referral reward
+
+Then:
+	•	Skip signature check
+	•	Skip payment verification
+	•	Continue adding ticket
+
+Do NOT move code.
+Do NOT rename functions.
+Just add a bypass condition.
+
+⸻
+
+STEP 4: VIP DAILY TICKETS
+
+When adding the 20 daily VIP tickets:
+	•	Do NOT request wallet
+	•	Do NOT request signature
+	•	Just add tickets directly
+	•	Save normally
+
+No other changes.
+
+⸻
+
+STEP 5: REFERRAL REWARD CONDITION
+
+Referral reward must trigger ONLY when:
+	•	User A invited User B and User C
+	•	User B completed FIRST PAID ticket purchase
+	•	User C completed FIRST PAID ticket purchase
+
+After both conditions are true:
+	•	Add referral free tickets
+	•	Do NOT ask for wallet
+	•	Do NOT ask for signature
+
+Referral tickets must be OFF-CHAIN.
+
+⸻
+
+STEP 6: VERY IMPORTANT
+
+Only this logic should bypass signature check:
+	•	VIP daily tickets
+	•	Referral reward tickets
+
+Nothing else.
+
+⸻
+
+STEP 7: DO NOT CHANGE PAYOUT LOGIC
+
+Do NOT change:
+	•	Winner selection
+	•	Payout flow
+	•	Wallet storage
+	•	Transaction sending
+
+Payout must continue using saved wallet if user wins.
