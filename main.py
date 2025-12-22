@@ -1257,7 +1257,7 @@ def save_draw_history(round_id: int, winning_numbers: List[int], seed_data: str,
     c.execute("""
         INSERT INTO draw_history 
         (round_id, winning_numbers, seed_data, player_count, total_pot, winner_id, prize_amount, tx_signature)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
     """, (round_id, numbers_to_str(winning_numbers), seed_data, player_count, 
           float(total_pot), winner_id, float(prize_amount) if prize_amount else None, tx_signature))
     conn.commit()
@@ -1272,7 +1272,7 @@ def get_draw_history(limit: int = 20) -> List[Dict]:
         SELECT round_id, winning_numbers, player_count, total_pot, winner_id, prize_amount, drawn_at
         FROM draw_history
         ORDER BY drawn_at DESC
-        LIMIT ?
+        LIMIT %s
     """, (limit,))
     rows = c.fetchall()
     conn.close()
@@ -1501,7 +1501,7 @@ def record_jackpot_seed(admin_id: int, amount: Decimal, tx_signature: str = None
     c = conn.cursor()
     c.execute("""
         INSERT INTO jackpot_seeds (admin_id, amount, tx_signature)
-        VALUES (?, ?, ?)
+        VALUES (%s, %s, %s)
     """, (admin_id, float(amount), tx_signature))
     conn.commit()
     conn.close()
