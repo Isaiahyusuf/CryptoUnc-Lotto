@@ -906,7 +906,7 @@ def get_user_referral_code(user_id: int) -> str:
     # SQLite fully removed. PostgreSQL only.
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute(q("SELECT referral_code FROM referrals WHERE referrer_id = ? LIMIT 1"), (user_id,))
+    c.execute("SELECT referral_code FROM referrals WHERE referrer_id = %s LIMIT 1", (user_id,))
     row = c.fetchone()
     if row:
         conn.close()
@@ -944,10 +944,10 @@ def register_referral(referrer_id: int, referred_id: int, code: str) -> bool:
     conn = get_db_conn()
     c = conn.cursor()
     try:
-        c.execute(q("""
+        c.execute("""
             INSERT INTO referrals (referrer_id, referred_id, referral_code)
-            VALUES (?, ?, ?)
-        """), (referrer_id, referred_id, code))
+            VALUES (%s, %s, %s)
+        """, (referrer_id, referred_id, code))
         conn.commit()
         conn.close()
         return True
@@ -962,7 +962,7 @@ def apply_referral_bonus(referred_id: int, ticket_amount: Decimal) -> Optional[D
     
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute(q("SELECT referrer_id FROM referrals WHERE referred_id = ?"), (referred_id,))
+    c.execute("SELECT referrer_id FROM referrals WHERE referred_id = %s", (referred_id,))
     row = c.fetchone()
     
     if not row:
@@ -973,17 +973,17 @@ def apply_referral_bonus(referred_id: int, ticket_amount: Decimal) -> Optional[D
     bonus_amount = ticket_amount * REFERRAL_BONUS_PERCENT
     
     # Update referral stats
-    c.execute(q("""
+    c.execute("""
         UPDATE referrals 
-        SET bonus_earned = bonus_earned + ?, tickets_from_referral = tickets_from_referral + 1
-        WHERE referred_id = ?
-    """), (float(bonus_amount), referred_id))
+        SET bonus_earned = bonus_earned + %s, tickets_from_referral = tickets_from_referral + 1
+        WHERE referred_id = %s
+    """, (float(bonus_amount), referred_id))
     
     # Update referrer's stats
-    c.execute(q("""
-        UPDATE user_stats SET referral_earnings = referral_earnings + ?
-        WHERE user_id = ?
-    """), (float(bonus_amount), referrer_id))
+    c.execute("""
+        UPDATE user_stats SET referral_earnings = referral_earnings + %s
+        WHERE user_id = %s
+    """, (float(bonus_amount), referrer_id))
     
     conn.commit()
     conn.close()
@@ -1121,7 +1121,7 @@ def update_user_stats(user_id: int, tickets: int = 0, spent: Decimal = Decimal("
     c.execute("INSERT INTO user_stats(user_id) VALUES (%s) ON CONFLICT DO NOTHING", (user_id,))
     
     # Get current stats
-    c.execute(q("SELECT total_tickets, biggest_win FROM user_stats WHERE user_id = ?"), (user_id,))
+    c.execute("SELECT total_tickets, biggest_win FROM user_stats WHERE user_id = %s", (user_id,))
     row = c.fetchone()
     current_tickets = row[0] if row else 0
     biggest_win = Decimal(str(row[1])) if row and row[1] else Decimal("0")
@@ -1131,16 +1131,16 @@ def update_user_stats(user_id: int, tickets: int = 0, spent: Decimal = Decimal("
     new_tier = compute_vip_tier(new_tickets)
     new_biggest = max(biggest_win, won)
     
-    c.execute(q("""
+    c.execute("""
         UPDATE user_stats SET 
-            total_tickets = total_tickets + ?,
-            total_spent = total_spent + ?,
-            total_won = total_won + ?,
-            wins = wins + ?,
-            biggest_win = ?,
-            vip_tier = ?
-        WHERE user_id = ?
-    """), (tickets, float(spent), float(won), 1 if is_win else 0, float(new_biggest), new_tier, user_id))
+            total_tickets = total_tickets + %s,
+            total_spent = total_spent + %s,
+            total_won = total_won + %s,
+            wins = wins + %s,
+            biggest_win = %s,
+            vip_tier = %s
+        WHERE user_id = %s
+    """, (tickets, float(spent), float(won), 1 if is_win else 0, float(new_biggest), new_tier, user_id))
     
     conn.commit()
     conn.close()
@@ -1153,7 +1153,7 @@ def get_user_stats(user_id: int) -> Dict:
     c = conn.cursor()
     
     c.execute("INSERT INTO user_stats(user_id) VALUES (%s) ON CONFLICT DO NOTHING", (user_id,))
-    c.execute(q("SELECT * FROM user_stats WHERE user_id = ?"), (user_id,))
+    c.execute("SELECT * FROM user_stats WHERE user_id = %s", (user_id,))
     row = c.fetchone()
     conn.close()
     
@@ -1526,11 +1526,11 @@ def toggle_notifications(user_id: int) -> bool:
     conn = get_db_conn()
     c = conn.cursor()
     c.execute("INSERT INTO user_stats(user_id) VALUES (%s) ON CONFLICT DO NOTHING", (user_id,))
-    c.execute(q("SELECT notification_enabled FROM user_stats WHERE user_id = ?"), (user_id,))
+    c.execute("SELECT notification_enabled FROM user_stats WHERE user_id = %s", (user_id,))
     row = c.fetchone()
     current = row[0] if row else 1
     new_state = 0 if current else 1
-    c.execute(q("UPDATE user_stats SET notification_enabled = ? WHERE user_id = ?"), (new_state, user_id))
+    c.execute("UPDATE user_stats SET notification_enabled = %s WHERE user_id = %s", (new_state, user_id))
     conn.commit()
     conn.close()
     return bool(new_state)
@@ -1549,9 +1549,9 @@ def get_users_with_notifications() -> List[int]:
 def add_entry(user_id: int, round_num: int, numbers, stake_amount: float, tx_signature: str = "", paid=0):
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute(q(
-        "INSERT INTO entries(user_id, round, numbers, stake_amount, tx_signature, paid) VALUES (?, ?, ?, ?, ?, ?)"
-    ), (user_id, round_num, numbers_to_str(numbers), stake_amount, tx_signature, paid))
+    c.execute(
+        "INSERT INTO entries(user_id, round, numbers, stake_amount, tx_signature, paid) VALUES (%s, %s, %s, %s, %s, %s)",
+        (user_id, round_num, numbers_to_str(numbers), stake_amount, tx_signature, paid))
     conn.commit()
     conn.close()
 
@@ -1559,7 +1559,7 @@ def add_entry(user_id: int, round_num: int, numbers, stake_amount: float, tx_sig
 def get_entries_for_round(round_num: int):
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute(q("SELECT id, user_id, numbers, paid FROM entries WHERE round = ?"), (round_num,))
+    c.execute("SELECT id, user_id, numbers, paid FROM entries WHERE round = %s", (round_num,))
     rows = c.fetchall()
     conn.close()
     return rows
