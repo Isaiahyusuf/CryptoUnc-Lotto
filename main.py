@@ -1436,14 +1436,14 @@ def get_draw_for_verification(round_id: int) -> Optional[Dict]:
 
 
 def get_recent_draws_with_verification(limit: int = 10) -> List[Dict]:
-    """Get recent draws with all verification data"""
+    """Get recent draws with all verification data - only shows draws with winners"""
     conn = get_db_conn()
     c = conn.cursor()
     c.execute("""
         SELECT id, round_id, winning_numbers, seed_data, player_count, 
                total_pot, winner_id, prize_amount, tx_signature, drawn_at
         FROM draw_history
-        WHERE winning_numbers IS NOT NULL
+        WHERE winner_id IS NOT NULL AND winning_numbers IS NOT NULL
         ORDER BY drawn_at DESC, id DESC
         LIMIT %s
     """, (limit,))
