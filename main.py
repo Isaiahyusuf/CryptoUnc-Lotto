@@ -1251,13 +1251,13 @@ def count_matching_numbers(player_nums: List[int], winning_nums: List[int]) -> i
 def save_draw_history(round_id: int, winning_numbers: List[int], seed_data: str, 
                       player_count: int, total_pot: Decimal, winner_id: int = None,
                       prize_amount: Decimal = None, tx_signature: str = None):
-    """Save draw to history for provably fair verification"""
+    """Save draw to history for provably fair verification with timestamp"""
     conn = get_db_conn()
     c = conn.cursor()
     c.execute("""
         INSERT INTO draw_history 
-        (round_id, winning_numbers, seed_data, player_count, total_pot, winner_id, prize_amount, tx_signature)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        (round_id, winning_numbers, seed_data, player_count, total_pot, winner_id, prize_amount, tx_signature, drawn_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
     """, (round_id, numbers_to_str(winning_numbers), seed_data, player_count, 
           float(total_pot), winner_id, float(prize_amount) if prize_amount else None, tx_signature))
     conn.commit()
@@ -2388,38 +2388,34 @@ def save_round_winners_to_database(round_id: int, result: dict):
             c = conn.cursor()
             c.execute("SELECT seed_data FROM scheduled_rounds WHERE round_id = %s", (round_id,))
             row = c.fetchone()
-            seed_data = row[0] if row else ''
+            if row and row[0]:
+                seed_data = row[0]
+            else:
+                # Generate seed if missing
+                seed_data = generate_provable_seed(round_id, "history", str(winning_numbers))
             conn.close()
         
-        # Save Tier 5 winners (5 matches)
-        for winner in result.get('tier_5_payouts', []):
+        # Ensure seed_data is never empty
+        if not seed_data or seed_data.strip() == '':
+            seed_data = f"seed_round_{round_id}_numbers_{','.join(map(str, winning_numbers))}"
+        
+        # Get all winners for this round
+        all_winners = []
+        all_winners.extend(result.get('tier_5_payouts', []))
+        all_winners.extend(result.get('tier_4_payouts', []))
+        all_winners.extend(result.get('tier_3_payouts', []))
+        
+        # Save each winner (one record per winner)
+        for winner in all_winners:
             user_id = winner.get('user_id')
             prize = winner.get('amount', Decimal("0"))
             save_draw_history(round_id, winning_numbers, seed_data, player_count, total_pot, 
                             winner_id=user_id, prize_amount=prize, tx_signature=None)
             update_user_stats(user_id, won=prize, is_win=True)
-            print(f"💾 Saved Tier 5 winner {user_id} to database with prize {prize}")
-        
-        # Save Tier 4 winners (4 matches)
-        for winner in result.get('tier_4_payouts', []):
-            user_id = winner.get('user_id')
-            prize = winner.get('amount', Decimal("0"))
-            save_draw_history(round_id, winning_numbers, seed_data, player_count, total_pot,
-                            winner_id=user_id, prize_amount=prize, tx_signature=None)
-            update_user_stats(user_id, won=prize, is_win=True)
-            print(f"💾 Saved Tier 4 winner {user_id} to database with prize {prize}")
-        
-        # Save Tier 3 winners (3 matches)
-        for winner in result.get('tier_3_payouts', []):
-            user_id = winner.get('user_id')
-            prize = winner.get('amount', Decimal("0"))
-            save_draw_history(round_id, winning_numbers, seed_data, player_count, total_pot,
-                            winner_id=user_id, prize_amount=prize, tx_signature=None)
-            update_user_stats(user_id, won=prize, is_win=True)
-            print(f"💾 Saved Tier 3 winner {user_id} to database with prize {prize}")
+            print(f"💾 Saved winner {user_id} to draw_history with prize {prize}")
         
         # If no winners, save a no-winner record for reference
-        if not any([result.get('tier_5_payouts'), result.get('tier_4_payouts'), result.get('tier_3_payouts')]):
+        if not all_winners:
             save_draw_history(round_id, winning_numbers, seed_data, player_count, total_pot)
             print(f"📊 Saved no-winner record for round {round_id}")
             
