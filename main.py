@@ -1180,26 +1180,37 @@ def get_user_stats(user_id: int) -> Dict:
 
 def get_top_winners(limit: int = 10) -> List[Dict]:
     """Get top winners by total amount won"""
-    conn = get_db_conn()
-    c = conn.cursor()
-    c.execute("""
-        SELECT us.user_id, u.username, us.total_won, us.wins, us.vip_tier
-        FROM user_stats us
-        LEFT JOIN users u ON us.user_id = u.user_id
-        WHERE us.total_won > 0
-        ORDER BY us.total_won DESC
-        LIMIT %s
-    """, (limit,))
-    rows = c.fetchall()
-    conn.close()
-    
-    return [{
-        "user_id": r[0],
-        "username": r[1] or f"User{r[0]}",
-        "total_won": Decimal(str(r[2])),
-        "wins": r[3],
-        "vip_tier": r[4]
-    } for r in rows]
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("""
+            SELECT us.user_id, u.username, us.total_won, us.wins, us.vip_tier
+            FROM user_stats us
+            LEFT JOIN users u ON us.user_id = u.user_id
+            WHERE us.total_won > 0
+            ORDER BY us.total_won DESC
+            LIMIT %s
+        """, (limit,))
+        rows = c.fetchall()
+        conn.close()
+        
+        print(f"🔍 DEBUG: get_top_winners found {len(rows)} winners")
+        
+        result = [{
+            "user_id": r[0],
+            "username": r[1] or f"User{r[0]}",
+            "total_won": Decimal(str(r[2])),
+            "wins": r[3],
+            "vip_tier": r[4]
+        } for r in rows]
+        
+        print(f"🔍 DEBUG: Returning {len(result)} winners: {result}")
+        return result
+    except Exception as e:
+        print(f"❌ ERROR in get_top_winners: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
 
 
 def get_top_players(limit: int = 10) -> List[Dict]:
@@ -1437,30 +1448,41 @@ def get_draw_for_verification(round_id: int) -> Optional[Dict]:
 
 def get_recent_draws_with_verification(limit: int = 10) -> List[Dict]:
     """Get recent draws with all verification data - only shows draws with winners"""
-    conn = get_db_conn()
-    c = conn.cursor()
-    c.execute("""
-        SELECT id, round_id, winning_numbers, seed_data, player_count, 
-               total_pot, winner_id, prize_amount, tx_signature, drawn_at
-        FROM draw_history
-        WHERE winner_id IS NOT NULL AND winning_numbers IS NOT NULL
-        ORDER BY drawn_at DESC, id DESC
-        LIMIT %s
-    """, (limit,))
-    rows = c.fetchall()
-    conn.close()
-    
-    return [{
-        "round_id": r[1],
-        "winning_numbers": str_to_numbers(r[2]) if r[2] else [],
-        "seed_data": r[3],
-        "player_count": r[4],
-        "total_pot": Decimal(str(r[5] or 0)),
-        "winner_id": r[6],
-        "prize_amount": Decimal(str(r[7] or 0)),
-        "tx_signature": r[8],
-        "drawn_at": r[9]
-    } for r in rows]
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("""
+            SELECT id, round_id, winning_numbers, seed_data, player_count, 
+                   total_pot, winner_id, prize_amount, tx_signature, drawn_at
+            FROM draw_history
+            WHERE winner_id IS NOT NULL AND winning_numbers IS NOT NULL
+            ORDER BY drawn_at DESC, id DESC
+            LIMIT %s
+        """, (limit,))
+        rows = c.fetchall()
+        conn.close()
+        
+        print(f"🔍 DEBUG: get_recent_draws_with_verification found {len(rows)} draws")
+        
+        result = [{
+            "round_id": r[1],
+            "winning_numbers": str_to_numbers(r[2]) if r[2] else [],
+            "seed_data": r[3],
+            "player_count": r[4],
+            "total_pot": Decimal(str(r[5] or 0)),
+            "winner_id": r[6],
+            "prize_amount": Decimal(str(r[7] or 0)),
+            "tx_signature": r[8],
+            "drawn_at": r[9]
+        } for r in rows]
+        
+        print(f"🔍 DEBUG: Returning {len(result)} draws: {result}")
+        return result
+    except Exception as e:
+        print(f"❌ ERROR in get_recent_draws_with_verification: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
 
 
 def get_live_round_stats() -> List[Dict]:
