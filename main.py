@@ -2374,6 +2374,61 @@ def process_round_draw(round_id: int, owner_balance: Decimal = None):
     return result
 
 
+def save_round_winners_to_database(round_id: int, result: dict):
+    """Save all tier winners to draw_history and update their stats"""
+    try:
+        winning_numbers = result.get('winning_numbers', [])
+        player_count = result.get('player_count', 0)
+        total_pot = result.get('prize_pool', Decimal("0"))
+        seed_data = result.get('seed_data', '')
+        
+        # Get seed from database if not in result
+        if not seed_data:
+            conn = get_db_conn()
+            c = conn.cursor()
+            c.execute("SELECT seed_data FROM scheduled_rounds WHERE round_id = %s", (round_id,))
+            row = c.fetchone()
+            seed_data = row[0] if row else ''
+            conn.close()
+        
+        # Save Tier 5 winners (5 matches)
+        for winner in result.get('tier_5_payouts', []):
+            user_id = winner.get('user_id')
+            prize = winner.get('amount', Decimal("0"))
+            save_draw_history(round_id, winning_numbers, seed_data, player_count, total_pot, 
+                            winner_id=user_id, prize_amount=prize, tx_signature=None)
+            update_user_stats(user_id, won=prize, is_win=True)
+            print(f"💾 Saved Tier 5 winner {user_id} to database with prize {prize}")
+        
+        # Save Tier 4 winners (4 matches)
+        for winner in result.get('tier_4_payouts', []):
+            user_id = winner.get('user_id')
+            prize = winner.get('amount', Decimal("0"))
+            save_draw_history(round_id, winning_numbers, seed_data, player_count, total_pot,
+                            winner_id=user_id, prize_amount=prize, tx_signature=None)
+            update_user_stats(user_id, won=prize, is_win=True)
+            print(f"💾 Saved Tier 4 winner {user_id} to database with prize {prize}")
+        
+        # Save Tier 3 winners (3 matches)
+        for winner in result.get('tier_3_payouts', []):
+            user_id = winner.get('user_id')
+            prize = winner.get('amount', Decimal("0"))
+            save_draw_history(round_id, winning_numbers, seed_data, player_count, total_pot,
+                            winner_id=user_id, prize_amount=prize, tx_signature=None)
+            update_user_stats(user_id, won=prize, is_win=True)
+            print(f"💾 Saved Tier 3 winner {user_id} to database with prize {prize}")
+        
+        # If no winners, save a no-winner record for reference
+        if not any([result.get('tier_5_payouts'), result.get('tier_4_payouts'), result.get('tier_3_payouts')]):
+            save_draw_history(round_id, winning_numbers, seed_data, player_count, total_pot)
+            print(f"📊 Saved no-winner record for round {round_id}")
+            
+    except Exception as e:
+        print(f"❌ Error saving winners to database: {e}")
+        import traceback
+        traceback.print_exc()
+
+
 def process_round_stake_draw(round_stake_id: int):
     """Legacy wrapper for compatibility - redirects to new process_round_draw"""
     conn = get_db_conn()
@@ -6610,6 +6665,9 @@ async def process_round_end(round_id: int):
     result = process_round_draw(round_id, owner_balance)
     
     if result:
+        # CRITICAL: Save winners to database and update their stats
+        save_round_winners_to_database(round_id, result)
+        
         # Pay all tier winners
         await pay_tiered_winners(result)
         
