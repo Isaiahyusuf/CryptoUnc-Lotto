@@ -1448,7 +1448,7 @@ def get_draw_for_verification(round_id: int) -> Optional[Dict]:
 
 
 def get_recent_draws_with_verification(limit: int = 10) -> List[Dict]:
-    """Get recent draws from payout logs with verification data"""
+    """Get recent draws from payout logs with winning numbers and winner's picked numbers"""
     try:
         conn = get_db_conn()
         c = conn.cursor()
@@ -1457,10 +1457,12 @@ def get_recent_draws_with_verification(limit: int = 10) -> List[Dict]:
                    pl.round_id, dh.winning_numbers, dh.seed_data, 
                    COUNT(DISTINCT pl.user_id) as player_count,
                    SUM(pl.amount) as total_prize,
-                   pl.user_id, pl.amount, pl.tx_signature, pl.created_at
+                   pl.user_id, pl.amount, pl.tx_signature, pl.created_at,
+                   rp.numbers as winner_numbers
             FROM payout_logs pl
             LEFT JOIN draw_history dh ON pl.round_id = dh.round_id
-            GROUP BY pl.round_id, dh.winning_numbers, dh.seed_data, pl.user_id, pl.amount, pl.tx_signature, pl.created_at
+            LEFT JOIN round_participants rp ON pl.user_id = rp.user_id AND pl.round_id = rp.round_stake_id
+            GROUP BY pl.round_id, dh.winning_numbers, dh.seed_data, pl.user_id, pl.amount, pl.tx_signature, pl.created_at, rp.numbers
             ORDER BY pl.round_id DESC, pl.created_at DESC
             LIMIT %s
         """, (limit,))
@@ -1478,7 +1480,8 @@ def get_recent_draws_with_verification(limit: int = 10) -> List[Dict]:
             "winner_id": r[5],
             "prize_amount": Decimal(str(r[6] or 0)),
             "tx_signature": r[7],
-            "drawn_at": r[8]
+            "drawn_at": r[8],
+            "winner_numbers": str_to_numbers(r[9]) if r[9] else []
         } for r in rows]
         
         print(f"🔍 DEBUG: Returning {len(result)} draws: {result}")
@@ -4506,7 +4509,8 @@ async def inline_handler(query: types.CallbackQuery):
         
         if draws:
             for d in draws:
-                nums_str = ", ".join(str(n) for n in d["winning_numbers"]) if d["winning_numbers"] else "N/A"
+                winning_nums_str = ", ".join(str(n) for n in d["winning_numbers"]) if d["winning_numbers"] else "N/A"
+                winner_nums_str = ", ".join(str(n) for n in d["winner_numbers"]) if d["winner_numbers"] else "N/A"
                 winner_text = f"Winner: User {d['winner_id']}" if d["winner_id"] else "No winner"
                 prize_text = f"{d['prize_amount']:.4f} SOL" if d["prize_amount"] else "Rolled over"
                 
@@ -4522,7 +4526,8 @@ async def inline_handler(query: types.CallbackQuery):
                 round_num = get_round_number(d['round_id'])
                 text += (
                     f"🎲 <b>Round {round_num}</b> ({date_str})\n"
-                    f"   Numbers: <code>{nums_str}</code>\n"
+                    f"   🎯 Winning Numbers: <code>{winning_nums_str}</code>\n"
+                    f"   🎪 Winner Picked: <code>{winner_nums_str}</code>\n"
                     f"   {winner_text}\n"
                     f"   Prize: {prize_text}\n"
                     f"   Players: {d['player_count']}\n\n"
