@@ -1448,33 +1448,37 @@ def get_draw_for_verification(round_id: int) -> Optional[Dict]:
 
 
 def get_recent_draws_with_verification(limit: int = 10) -> List[Dict]:
-    """Get recent draws with all verification data - only shows draws with winners"""
+    """Get recent draws from payout logs with verification data"""
     try:
         conn = get_db_conn()
         c = conn.cursor()
         c.execute("""
-            SELECT id, round_id, winning_numbers, seed_data, player_count, 
-                   total_pot, winner_id, prize_amount, tx_signature, drawn_at
-            FROM draw_history
-            WHERE winner_id IS NOT NULL AND winning_numbers IS NOT NULL
-            ORDER BY drawn_at DESC, id DESC
+            SELECT DISTINCT ON (pl.round_id)
+                   pl.round_id, dh.winning_numbers, dh.seed_data, 
+                   COUNT(DISTINCT pl.user_id) as player_count,
+                   SUM(pl.amount) as total_prize,
+                   pl.user_id, pl.amount, pl.tx_signature, pl.created_at
+            FROM payout_logs pl
+            LEFT JOIN draw_history dh ON pl.round_id = dh.round_id
+            GROUP BY pl.round_id, dh.winning_numbers, dh.seed_data, pl.user_id, pl.amount, pl.tx_signature, pl.created_at
+            ORDER BY pl.round_id DESC, pl.created_at DESC
             LIMIT %s
         """, (limit,))
         rows = c.fetchall()
         conn.close()
         
-        print(f"🔍 DEBUG: get_recent_draws_with_verification found {len(rows)} draws")
+        print(f"🔍 DEBUG: get_recent_draws_with_verification found {len(rows)} draws from payout_logs")
         
         result = [{
-            "round_id": r[1],
-            "winning_numbers": str_to_numbers(r[2]) if r[2] else [],
-            "seed_data": r[3],
-            "player_count": r[4],
-            "total_pot": Decimal(str(r[5] or 0)),
-            "winner_id": r[6],
-            "prize_amount": Decimal(str(r[7] or 0)),
-            "tx_signature": r[8],
-            "drawn_at": r[9]
+            "round_id": r[0],
+            "winning_numbers": str_to_numbers(r[1]) if r[1] else [],
+            "seed_data": r[2],
+            "player_count": r[3] or 0,
+            "total_pot": Decimal(str(r[4] or 0)),
+            "winner_id": r[5],
+            "prize_amount": Decimal(str(r[6] or 0)),
+            "tx_signature": r[7],
+            "drawn_at": r[8]
         } for r in rows]
         
         print(f"🔍 DEBUG: Returning {len(result)} draws: {result}")
