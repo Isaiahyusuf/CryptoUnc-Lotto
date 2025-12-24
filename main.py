@@ -1179,29 +1179,30 @@ def get_user_stats(user_id: int) -> Dict:
 # ==============================================================================
 
 def get_top_winners(limit: int = 10) -> List[Dict]:
-    """Get top winners by total amount won"""
+    """Get top winners by total amount won from payout logs"""
     try:
         conn = get_db_conn()
         c = conn.cursor()
         c.execute("""
-            SELECT us.user_id, u.username, us.total_won, us.wins, us.vip_tier
-            FROM user_stats us
-            LEFT JOIN users u ON us.user_id = u.user_id
-            WHERE us.total_won > 0
-            ORDER BY us.total_won DESC
+            SELECT pl.user_id, u.username, SUM(pl.amount) as total_won, COUNT(*) as wins, us.vip_tier
+            FROM payout_logs pl
+            LEFT JOIN users u ON pl.user_id = u.user_id
+            LEFT JOIN user_stats us ON pl.user_id = us.user_id
+            GROUP BY pl.user_id, u.username, us.vip_tier
+            ORDER BY total_won DESC
             LIMIT %s
         """, (limit,))
         rows = c.fetchall()
         conn.close()
         
-        print(f"🔍 DEBUG: get_top_winners found {len(rows)} winners")
+        print(f"🔍 DEBUG: get_top_winners found {len(rows)} winners from payout_logs")
         
         result = [{
             "user_id": r[0],
             "username": r[1] or f"User{r[0]}",
-            "total_won": Decimal(str(r[2])),
-            "wins": r[3],
-            "vip_tier": r[4]
+            "total_won": Decimal(str(r[2] or 0)),
+            "wins": r[3] or 0,
+            "vip_tier": r[4] or 0
         } for r in rows]
         
         print(f"🔍 DEBUG: Returning {len(result)} winners: {result}")
@@ -1348,8 +1349,8 @@ def get_transparency_stats() -> Dict:
     c.execute("SELECT COUNT(*) FROM draw_history")
     total_draws = c.fetchone()[0] or 0
     
-    # Total prizes distributed
-    c.execute("SELECT SUM(prize_amount) FROM draw_history WHERE winner_id IS NOT NULL")
+    # Total prizes distributed from payout_logs
+    c.execute("SELECT SUM(amount) FROM payout_logs")
     total_distributed = Decimal(str(c.fetchone()[0] or 0))
     
     # Total tickets sold all time
