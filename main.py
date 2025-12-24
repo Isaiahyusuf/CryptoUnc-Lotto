@@ -1321,8 +1321,8 @@ def get_overall_stats() -> Dict:
     c.execute("SELECT SUM(total_tickets) FROM user_stats")
     total_tickets = c.fetchone()[0] or 0
     
-    # Biggest jackpot
-    c.execute("SELECT MAX(prize_amount) FROM draw_history")
+    # Biggest jackpot from payout_logs
+    c.execute("SELECT MAX(amount) FROM payout_logs")
     biggest_jackpot = Decimal(str(c.fetchone()[0] or 0))
     
     conn.close()
@@ -1390,8 +1390,8 @@ def get_transparency_stats() -> Dict:
     c.execute("SELECT AVG(total_pot) FROM draw_history WHERE total_pot > 0")
     avg_pot = Decimal(str(c.fetchone()[0] or 0))
     
-    # Biggest jackpot ever
-    c.execute("SELECT MAX(prize_amount) FROM draw_history")
+    # Biggest jackpot ever from payout_logs
+    c.execute("SELECT MAX(amount) FROM payout_logs")
     biggest_jackpot = Decimal(str(c.fetchone()[0] or 0))
     
     # Last 24h volume
