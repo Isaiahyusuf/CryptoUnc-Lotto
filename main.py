@@ -4472,11 +4472,10 @@ async def inline_handler(query: types.CallbackQuery):
         if live_rounds:
             for r in live_rounds:
                 status_emoji = "🟢" if r["status"] == "open" else "🟡"
-                prize_pool = r["total_pool"] * Decimal("0.8")
                 text += (
                     f"{status_emoji} <b>Round {r['round_number']}</b>\n"
                     f"   🎫 Tickets Sold: {r['ticket_count']}\n"
-                    f"   💵 Prize Pool: {prize_pool:.4f} SOL\n"
+                    f"   💵 Prize Pool: {jackpot:.4f} SOL\n"
                     f"   📊 Status: {r['status'].upper()}\n\n"
                 )
         else:
@@ -4484,7 +4483,7 @@ async def inline_handler(query: types.CallbackQuery):
         
         text += (
             "━━━━━━━━━━━━━━━━━━━━━━\n"
-            "💡 Prize pool = 80% of ticket sales\n"
+            "💡 Prize pool = Owner wallet balance\n"
             "🔄 Updates in real-time!"
         )
         
