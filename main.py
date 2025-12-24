@@ -4412,7 +4412,6 @@ async def inline_handler(query: types.CallbackQuery):
         keyboard = create_keyboard_with_nav([
             [InlineKeyboardButton(text="📈 Live Stats", callback_data="transparency_live")],
             [InlineKeyboardButton(text="📜 Recent Draws", callback_data="transparency_history")],
-            [InlineKeyboardButton(text="🔍 Verify a Draw", callback_data="transparency_verify")],
             [InlineKeyboardButton(text="💰 Prize Pool Info", callback_data="transparency_pool")],
             [InlineKeyboardButton(text="🔗 Blockchain Links", callback_data="transparency_links")],
             [InlineKeyboardButton(text="🔐 Wallet Security", callback_data="wallet_security_info")]
@@ -4533,44 +4532,10 @@ async def inline_handler(query: types.CallbackQuery):
             text += "<i>No draws completed yet</i>\n\n"
         
         keyboard = create_keyboard_with_nav([
-            [InlineKeyboardButton(text="🔍 Verify a Draw", callback_data="transparency_verify")],
             [InlineKeyboardButton(text="◀️ Back", callback_data="view_results")]
         ])
         
         await bot.send_message(uid, text, reply_markup=keyboard, parse_mode="HTML")
-    
-    elif data == "transparency_verify":
-        await query.answer()
-        
-        text = (
-            "🔍 <b>VERIFY A DRAW</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            
-            "<b>How to Find a Round ID:</b>\n"
-            "📜 View the 'Recent Draws' section\n"
-            "📈 Check 'Live Stats' for active rounds\n"
-            "🎲 Or type any round number (1-24)\n\n"
-            
-            "<b>How Verification Works:</b>\n"
-            "1️⃣ We show you the seed data used\n"
-            "2️⃣ The seed includes blockchain signatures\n"
-            "3️⃣ SHA256 hash generates winning numbers\n"
-            "4️⃣ You can reproduce it yourself!\n\n"
-            
-            "<b>Example:</b> Type <code>16</code> to verify Round 16\n\n"
-            
-            "<i>Enter the round number to verify:</i>"
-        )
-        
-        keyboard = create_keyboard_with_nav([
-            [InlineKeyboardButton(text="📜 View Recent Draws", callback_data="transparency_history")],
-            [InlineKeyboardButton(text="📈 View Live Stats", callback_data="transparency_live")],
-            [InlineKeyboardButton(text="◀️ Back", callback_data="view_results")]
-        ])
-        
-        await bot.send_message(uid, text, reply_markup=keyboard, parse_mode="HTML")
-        
-        user_states[uid] = {"action": "awaiting_verify_round"}
     
     elif data == "transparency_pool":
         await query.answer("Loading prize pool info...")
@@ -5163,7 +5128,6 @@ async def generic_message_handler(message: types.Message):
                     text="🔗 View TX on Solscan", 
                     url=f"https://solscan.io/tx/{draw['tx_signature']}"
                 )])
-            keyboard_buttons.append([InlineKeyboardButton(text="🔍 Verify Another", callback_data="transparency_verify")])
             keyboard_buttons.append([InlineKeyboardButton(text="◀️ Back", callback_data="view_results")])
             
             keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
