@@ -1345,8 +1345,8 @@ def get_transparency_stats() -> Dict:
     conn = get_db_conn()
     c = conn.cursor()
     
-    # Total draws completed
-    c.execute("SELECT COUNT(*) FROM draw_history")
+    # Total draws completed - count distinct rounds that had payouts from payout_logs
+    c.execute("SELECT COUNT(DISTINCT round_id) FROM payout_logs")
     total_draws = c.fetchone()[0] or 0
     
     # Total prizes distributed from payout_logs
@@ -1372,10 +1372,10 @@ def get_transparency_stats() -> Dict:
     c.execute("SELECT COUNT(*) FROM scheduled_rounds WHERE status IN ('open', 'pending')")
     active_rounds = c.fetchone()[0] or 0
     
-    # Draws in last 24 hours (rolling window)
+    # Draws in last 24 hours (rolling window) - count distinct rounds from payout_logs
     c.execute("""
-        SELECT COUNT(*) FROM draw_history 
-        WHERE drawn_at >= NOW() - INTERVAL '24 hours'
+        SELECT COUNT(DISTINCT round_id) FROM payout_logs 
+        WHERE created_at >= NOW() - INTERVAL '24 hours'
     """)
     draws_today = c.fetchone()[0] or 0
     
