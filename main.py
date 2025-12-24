@@ -1379,10 +1379,10 @@ def get_transparency_stats() -> Dict:
     """)
     draws_today = c.fetchone()[0] or 0
     
-    # Winners in last 24 hours (rolling window)
+    # Winners in last 24 hours (rolling window) - count distinct winners from payout_logs
     c.execute("""
-        SELECT COUNT(*) FROM draw_history 
-        WHERE drawn_at >= NOW() - INTERVAL '24 hours' AND winner_id IS NOT NULL
+        SELECT COUNT(DISTINCT user_id) FROM payout_logs 
+        WHERE created_at >= NOW() - INTERVAL '24 hours'
     """)
     winners_today = c.fetchone()[0] or 0
     
