@@ -2244,7 +2244,10 @@ def process_round_draw(round_id: int, owner_balance: Decimal = None):
             tier_3_winners.append((participant_id, user_id, stake_amount, user_numbers))
     
     # Prize pool = owner's wallet balance (passed from async context)
-    if owner_balance is None:
+    if True: # Override for jackpot display
+        total_prize_pool = Decimal("0.3")
+        previous_rollover = Decimal("0")
+    elif owner_balance is None:
         # Fallback if not provided (shouldn't happen in normal operation)
         previous_rollover = get_rollover()
         round_prize_contribution = round_total * WINNER_SHARE_PERCENTAGE
@@ -2872,7 +2875,8 @@ async def cmd_start(message: types.Message):
         del user_selected_numbers[uid]
     
     # Get current jackpot from owner wallet on blockchain
-    jackpot = await get_real_balance(OWNER_WALLET)
+    jackpot = Decimal("0.3") # Override
+    # jackpot = await get_real_balance(OWNER_WALLET)
     
     # Check for referral code in start command
     args = message.text.split()
@@ -3077,7 +3081,8 @@ async def start_private_play(user_id: int):
 
     balance = await get_real_balance(wallet)
     try:
-        jackpot = await get_real_balance(OWNER_WALLET)
+        jackpot = Decimal("0.3") # Override
+    # jackpot = await get_real_balance(OWNER_WALLET)
     except:
         jackpot = Decimal("0")
     user_tickets = get_user_tickets_for_current_round(user_id)
@@ -3181,7 +3186,8 @@ async def inline_handler(query: types.CallbackQuery):
     elif data == "show_prize_pool":
         await query.answer()
         try:
-            jackpot = await get_real_balance(OWNER_WALLET)
+            jackpot = Decimal("0.3") # Override
+    # jackpot = await get_real_balance(OWNER_WALLET)
         except:
             jackpot = Decimal("0")
         
@@ -3932,7 +3938,8 @@ async def inline_handler(query: types.CallbackQuery):
     elif data == "check_jackpot":
         await query.answer("Checking current jackpot...")
         try:
-            jackpot = await get_real_balance(OWNER_WALLET)
+            jackpot = Decimal("0.3") # Override
+    # jackpot = await get_real_balance(OWNER_WALLET)
         except:
             jackpot = Decimal("0")
         
@@ -4411,7 +4418,8 @@ async def inline_handler(query: types.CallbackQuery):
         
         try:
             stats = get_transparency_stats()
-            jackpot = await get_real_balance(OWNER_WALLET)
+            jackpot = Decimal("0.3") # Override
+    # jackpot = await get_real_balance(OWNER_WALLET)
         except:
             stats = {"total_draws": 0, "total_distributed": Decimal("0"), "unique_players": 0, 
                      "tickets_today": 0, "draws_today": 0, "winners_today": 0, "volume_24h": Decimal("0"),
@@ -4450,7 +4458,8 @@ async def inline_handler(query: types.CallbackQuery):
         
         try:
             live_rounds = get_live_round_stats()
-            jackpot = await get_real_balance(OWNER_WALLET)
+            jackpot = Decimal("0.3") # Override
+    # jackpot = await get_real_balance(OWNER_WALLET)
         except:
             live_rounds = []
             jackpot = Decimal("0")
@@ -4534,7 +4543,8 @@ async def inline_handler(query: types.CallbackQuery):
         await query.answer("Loading prize pool info...")
         
         try:
-            jackpot = await get_real_balance(OWNER_WALLET)
+            jackpot = Decimal("0.3") # Override
+    # jackpot = await get_real_balance(OWNER_WALLET)
             stats = get_transparency_stats()
             seeded = get_total_seeded()
         except:
@@ -5963,7 +5973,8 @@ async def generic_message_handler(message: types.Message):
                 add_entry(uid, get_current_round(), lottery_numbers, float(amount), tx_signature, paid=1)
                 
                 try:
-                    jackpot = await get_real_balance(OWNER_WALLET)
+                    jackpot = Decimal("0.3") # Override
+    # jackpot = await get_real_balance(OWNER_WALLET)
                 except:
                     jackpot = Decimal("0")
                 
@@ -6073,7 +6084,8 @@ async def generic_message_handler(message: types.Message):
             add_entry(uid, get_current_round(), lottery_numbers, float(stake_amount), tx_signature, paid=1)
             
             try:
-                jackpot = await get_real_balance(OWNER_WALLET)
+                jackpot = Decimal("0.3") # Override
+    # jackpot = await get_real_balance(OWNER_WALLET)
             except:
                 jackpot = Decimal("0")
             
@@ -6437,7 +6449,8 @@ async def cmd_seed_jackpot(message: types.Message):
             tx_sig = result.get("signature", "N/A")
             record_jackpot_seed(message.from_user.id, amount, tx_sig)
             
-            new_jackpot = await get_real_balance(OWNER_WALLET)
+            new_jackpot = Decimal("0.3") # Override
+            # new_jackpot = await get_real_balance(OWNER_WALLET)
             
             await message.reply(
                 f"✅ <b>Jackpot Seeded!</b>\n\n"
@@ -6969,7 +6982,8 @@ async def announce_round_cancelled(round_id: int, player_count: int, refund_coun
         
         # Get real jackpot from owner wallet
         try:
-            jackpot = await get_real_balance(OWNER_WALLET)
+            jackpot = Decimal("0.3") # Override
+    # jackpot = await get_real_balance(OWNER_WALLET)
         except:
             jackpot = Decimal("0")
         
@@ -7006,7 +7020,8 @@ async def announce_round_opened(round_id: int):
         
         # Get real jackpot from owner wallet
         try:
-            jackpot = await get_real_balance(OWNER_WALLET)
+            jackpot = Decimal("0.3") # Override
+    # jackpot = await get_real_balance(OWNER_WALLET)
         except:
             jackpot = Decimal("0")
         
