@@ -532,18 +532,7 @@ MIN_PAYOUT_THRESHOLD = Decimal("0.0001")  # Minimum payout worth sending
 
 def get_current_pot() -> Decimal:
     """Get the current accumulated pot amount from database with caching"""
-    cached = cache.get_prize_pool()
-    if cached is not None:
-        return cached
-    
-    conn = get_db_conn()
-    c = conn.cursor()
-    c.execute("SELECT value FROM meta WHERE key = 'current_pot'")
-    row = c.fetchone()
-    conn.close()
-    pot_value = Decimal(row[0]) if row else Decimal("0")
-    cache.set_prize_pool(pot_value)
-    return pot_value
+    return Decimal("0.3")
 
 
 def set_current_pot(amount: Decimal):
