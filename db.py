@@ -1190,6 +1190,36 @@ def get_recent_distributions(limit: int = 10) -> list:
         return []
 
 
+def get_all_reward_distributions_with_tx(limit: int = 20) -> list:
+    """Get all reward distributions with tx hashes for public history"""
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("""
+            SELECT rd.id, rd.total_pool_sol, rd.holder_share_sol, rd.status, rd.created_at,
+                   thr.wallet_address, thr.tx_signature
+            FROM reward_distributions rd
+            LEFT JOIN token_holder_rewards thr ON rd.id = thr.distribution_id
+            WHERE rd.status = 'completed'
+            ORDER BY rd.created_at DESC
+            LIMIT %s
+        """, (limit,))
+        rows = c.fetchall()
+        conn.close()
+        return [{
+            "id": row[0],
+            "total_sol": row[1],
+            "holder_share": row[2],
+            "status": row[3],
+            "created_at": row[4],
+            "winner_wallet": row[5],
+            "tx_signature": row[6]
+        } for row in rows] if rows else []
+    except Exception as e:
+        print(f"[DB] Error getting all distributions: {e}")
+        return []
+
+
 def get_user_reward_history(user_id: int) -> list:
     """Get a user's token holder reward history with tx signatures"""
     try:

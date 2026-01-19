@@ -74,7 +74,11 @@ from wallet import (
     LOTTERY_TOKEN_MINT,
     MIN_TOKEN_BALANCE,
     TOKEN_CREATOR_WALLET,
-    TOKEN_CREATOR_WALLET_PRIVATE_KEY
+    TOKEN_CREATOR_WALLET_PRIVATE_KEY,
+    # On-chain eligibility functions
+    has_sent_sol_to_wallet,
+    get_all_token_holders,
+    get_onchain_eligible_holders
 )
 
 from db import (
@@ -89,7 +93,7 @@ from db import (
     create_reward_distribution, complete_reward_distribution, 
     log_token_holder_reward, get_users_with_tickets, get_user_wallet_for_rewards,
     get_recent_distributions, has_received_holder_reward, get_eligible_unrewarded_users,
-    get_user_reward_history
+    get_user_reward_history, get_all_reward_distributions_with_tx
 )
 
 from wallet_buttons import router as wallet_router
@@ -3669,6 +3673,7 @@ async def inline_handler(query: types.CallbackQuery):
                 "Rewards are distributed automatically when creator fees reach $100."
             )
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="📜 All Rewards History", callback_data="rewards_history")],
                 [InlineKeyboardButton(text="🔙 Back", callback_data="main_menu")]
             ])
         else:
@@ -3687,8 +3692,52 @@ async def inline_handler(query: types.CallbackQuery):
             
             text += f"<i>Total rewards received: {len(rewards)}</i>"
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="📜 All Rewards History", callback_data="rewards_history")],
                 [InlineKeyboardButton(text="🔙 Back", callback_data="main_menu")]
             ])
+        
+        await query.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML", disable_web_page_preview=True)
+
+    elif data == "rewards_history":
+        await query.answer()
+        # Show all past reward distributions with tx hashes (public history)
+        distributions = get_all_reward_distributions_with_tx(10)
+        
+        if not distributions:
+            text = (
+                "📜 <b>Creator Rewards History</b>\n\n"
+                "No rewards have been distributed yet.\n\n"
+                "Rewards are distributed automatically when:\n"
+                f"• Creator fees reach $100\n"
+                f"• There's at least 1 eligible holder\n\n"
+                f"Check back soon!"
+            )
+        else:
+            text = "📜 <b>Creator Rewards History</b>\n\n"
+            text += "All past token holder reward transactions:\n\n"
+            
+            for i, dist in enumerate(distributions, 1):
+                created = dist["created_at"]
+                date_str = created.strftime("%Y-%m-%d %H:%M") if hasattr(created, 'strftime') else str(created)[:16]
+                tx_sig = dist["tx_signature"] or "N/A"
+                wallet = dist["winner_wallet"] or "Unknown"
+                wallet_short = f"{wallet[:6]}...{wallet[-4:]}" if wallet and len(wallet) > 10 else wallet
+                
+                text += (
+                    f"<b>#{i}</b> - {date_str}\n"
+                    f"💰 Holder Prize: {dist['holder_share']:.6f} SOL\n"
+                    f"👤 Winner: <code>{wallet_short}</code>\n"
+                )
+                if tx_sig and tx_sig != "N/A":
+                    text += f"🔗 <a href='https://solscan.io/tx/{tx_sig}'>View TX on Solscan</a>\n"
+                text += "\n"
+            
+            text += f"<i>Showing last {len(distributions)} distributions</i>"
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🎁 My Rewards", callback_data="my_rewards")],
+            [InlineKeyboardButton(text="🔙 Back", callback_data="main_menu")]
+        ])
         
         await query.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML", disable_web_page_preview=True)
 
@@ -7152,25 +7201,26 @@ async def get_sol_price_usd() -> float:
 async def find_eligible_holder_winner() -> dict:
     """
     Find ONE random eligible holder to receive the reward.
-    Eligibility:
-    - Must have purchased at least 1 ticket
-    - Must hold 100k+ lottery tokens
-    - Must NOT have received a reward before
     
-    Returns dict with user_id, wallet_address, token_balance or None
+    HYBRID APPROACH:
+    1. First check registered bot users (can notify via Telegram)
+    2. Also check on-chain holders who sent SOL to OWNER_WALLET (may not be registered)
+    
+    Eligibility:
+    - Must hold MIN_TOKEN_BALANCE tokens
+    - Must have sent SOL to OWNER_WALLET (bought tickets)
+    - Must NOT have received a reward before (for registered users)
+    
+    Returns dict with user_id (or None for on-chain only), wallet_address, token_balance, is_registered
     """
     import random
     
-    # Get users who have tickets and haven't been rewarded
-    unrewarded_users = get_eligible_unrewarded_users()
-    if not unrewarded_users:
-        print("[Rewards] No unrewarded users with tickets found")
-        return None
-    
-    print(f"[Rewards] Checking {len(unrewarded_users)} unrewarded users for token eligibility...")
-    
-    # Check token balances and build eligible list
     eligible_holders = []
+    
+    # OPTION A: Check registered bot users first (they have Telegram)
+    unrewarded_users = get_eligible_unrewarded_users()
+    print(f"[Rewards] Checking {len(unrewarded_users)} registered unrewarded users...")
+    
     for user_id in unrewarded_users:
         wallet = get_user_wallet_for_rewards(user_id)
         if not wallet:
@@ -7181,16 +7231,38 @@ async def find_eligible_holder_winner() -> dict:
             eligible_holders.append({
                 "user_id": user_id,
                 "wallet_address": wallet,
-                "token_balance": balance
+                "token_balance": balance,
+                "is_registered": True
             })
     
+    print(f"[Rewards] Found {len(eligible_holders)} eligible registered users")
+    
+    # OPTION B: Also check on-chain holders (may not be registered)
+    if OWNER_WALLET:
+        print("[Rewards] Also checking on-chain token holders...")
+        onchain_holders = await get_onchain_eligible_holders(OWNER_WALLET)
+        
+        # Add on-chain holders that aren't already in our list
+        registered_wallets = {h["wallet_address"] for h in eligible_holders}
+        for holder in onchain_holders:
+            if holder["wallet_address"] not in registered_wallets:
+                eligible_holders.append({
+                    "user_id": None,  # Not registered
+                    "wallet_address": holder["wallet_address"],
+                    "token_balance": holder["token_balance"],
+                    "is_registered": False
+                })
+        
+        print(f"[Rewards] Total eligible (registered + on-chain): {len(eligible_holders)}")
+    
     if not eligible_holders:
-        print("[Rewards] No eligible token holders found (need 100k+ tokens)")
+        print(f"[Rewards] No eligible token holders found (need {MIN_TOKEN_BALANCE:,}+ tokens)")
         return None
     
     # Pick ONE random winner
     winner = random.choice(eligible_holders)
-    print(f"[Rewards] Selected winner: User {winner['user_id']} with {winner['token_balance']:,.0f} tokens")
+    user_info = f"User {winner['user_id']}" if winner.get('user_id') else f"Wallet {winner['wallet_address'][:12]}..."
+    print(f"[Rewards] Selected winner: {user_info} with {winner['token_balance']:,.0f} tokens (registered: {winner.get('is_registered', False)})")
     return winner
 
 
@@ -7301,30 +7373,37 @@ async def distribute_creator_fee_rewards():
             mark_fees_distributed(dist_id)
             complete_reward_distribution(dist_id)
             
-            # Notify winner
-            try:
-                await bot.send_message(
-                    winner["user_id"],
-                    f"🎉🎉🎉 <b>CONGRATULATIONS!</b> 🎉🎉🎉\n\n"
-                    f"You've been selected as a <b>Token Holder Reward Winner!</b>\n\n"
-                    f"💰 <b>Reward: {holder_amount:.6f} SOL</b>\n"
-                    f"🪙 Your balance: {winner['token_balance']:,.0f} tokens\n\n"
-                    f"📝 TX: <code>{tx_sig[:20]}...</code>\n\n"
-                    f"Thank you for holding and playing!\n"
-                    f"View on Solscan: https://solscan.io/tx/{tx_sig}",
-                    parse_mode="HTML"
-                )
-            except Exception as e:
-                print(f"[Rewards] Could not notify winner: {e}")
+            # Notify winner (only if registered with Telegram)
+            if winner.get("user_id"):
+                try:
+                    await bot.send_message(
+                        winner["user_id"],
+                        f"🎉🎉🎉 <b>CONGRATULATIONS!</b> 🎉🎉🎉\n\n"
+                        f"You've been selected as a <b>Token Holder Reward Winner!</b>\n\n"
+                        f"💰 <b>Reward: {holder_amount:.6f} SOL</b>\n"
+                        f"🪙 Your balance: {winner['token_balance']:,.0f} tokens\n\n"
+                        f"📝 TX: <code>{tx_sig}</code>\n\n"
+                        f"Thank you for holding and playing!\n"
+                        f"🔗 View on Solscan: https://solscan.io/tx/{tx_sig}",
+                        parse_mode="HTML"
+                    )
+                except Exception as e:
+                    print(f"[Rewards] Could not notify winner: {e}")
+            else:
+                print(f"[Rewards] Winner is on-chain only (no Telegram ID) - cannot send DM")
             
-            # Announce to channel
+            # Announce to channel WITH TX HASH
+            winner_wallet_short = f"{winner['wallet_address'][:6]}...{winner['wallet_address'][-4:]}"
             await send_to_announcements(
-                f"🏆 <b>Token Holder Reward Winner!</b>\n\n"
+                f"🏆 <b>Token Holder Reward Winner!</b> 🏆\n\n"
                 f"A lucky token holder just won <b>{holder_amount:.6f} SOL</b>!\n\n"
-                f"💎 Hold 100k+ $CRYPTOUNC tokens\n"
-                f"🎟️ Buy at least 1 lottery ticket\n"
-                f"🎁 Get a chance to win creator fee rewards!\n\n"
-                f"Next distribution when fees reach $100"
+                f"👤 Winner: <code>{winner_wallet_short}</code>\n"
+                f"📝 TX: <code>{tx_sig[:30]}...</code>\n"
+                f"🔗 <a href='https://solscan.io/tx/{tx_sig}'>Verify on Solscan</a>\n\n"
+                f"<b>How to qualify:</b>\n"
+                f"💎 Hold {MIN_TOKEN_BALANCE:,}+ $CRYPTOUNC tokens\n"
+                f"🎟️ Buy at least 1 lottery ticket\n\n"
+                f"🔄 Next distribution when fees reach $100"
             )
             
             print(f"✅ Distribution #{dist_id} completed successfully!")
@@ -7354,6 +7433,53 @@ async def token_holder_rewards_scheduler():
         except Exception as e:
             print(f"[Rewards] Scheduler error: {e}")
             await asyncio.sleep(60)  # Wait 1 min on error
+
+
+async def hourly_rewards_announcement():
+    """
+    Background task that announces token holder rewards info every hour.
+    Helps attract token holders and explain the reward system.
+    """
+    print("📢 Hourly rewards announcement scheduler started")
+    
+    while True:
+        try:
+            await asyncio.sleep(60 * 60)  # Every hour
+            
+            if not LOTTERY_TOKEN_MINT:
+                continue  # Token not configured yet
+            
+            # Get current stats
+            pending = get_pending_creator_fees()
+            total_usd = pending.get("total_usd", 0)
+            total_sol = pending.get("total_sol", 0)
+            
+            # Get recent distributions count
+            recent = get_recent_distributions(5)
+            total_distributed = sum(d.get("holder_share", 0) for d in recent)
+            
+            announcement = (
+                "🎁 <b>TOKEN HOLDER REWARDS</b> 🎁\n\n"
+                f"💰 <b>Current Fee Pool: {total_sol:.4f} SOL (${total_usd:.2f})</b>\n"
+                f"🎯 Distribution at: $100\n\n"
+                f"<b>How to Qualify:</b>\n"
+                f"• Hold {MIN_TOKEN_BALANCE:,}+ $CRYPTOUNC tokens\n"
+                f"• Buy at least 1 lottery ticket\n"
+                f"• That's it! You're automatically entered\n\n"
+                f"<b>Prize Split:</b>\n"
+                f"• 30% → Jackpot Prize Pool\n"
+                f"• 30% → Team\n"
+                f"• 40% → ONE Lucky Holder\n\n"
+                f"📊 <i>Recently distributed: {total_distributed:.4f} SOL to holders</i>\n\n"
+                f"🔄 Distributions happen automatically every {REWARD_CHECK_INTERVAL_MINUTES} min when threshold is met!"
+            )
+            
+            await send_to_announcements(announcement)
+            print("[Announcements] Hourly holder rewards info posted")
+            
+        except Exception as e:
+            print(f"[Announcements] Hourly announcement error: {e}")
+            await asyncio.sleep(60)
 
 
 async def send_to_announcements(message_text: str, keyboard=None):
@@ -7747,8 +7873,10 @@ async def main():
     asyncio.create_task(schedule_daily_rounds())
     asyncio.create_task(manage_rounds())
     asyncio.create_task(token_holder_rewards_scheduler())
+    asyncio.create_task(hourly_rewards_announcement())
     print("📅 Background scheduler started!")
     print("🎁 Token holder rewards scheduler started!")
+    print("📢 Hourly rewards announcement scheduler started!")
     
     # Start web server for keep-alive
     asyncio.create_task(start_web_server())
