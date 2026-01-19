@@ -7545,19 +7545,15 @@ async def send_to_announcements(message_text: str, keyboard=None):
     # Get all registered groups/channels from database
     db_groups = get_announcement_groups()
     
-    # Collect all target groups from database (auto-registered when bot is added to groups)
+    # Collect all target groups (database groups + configured channels)
     all_groups = list(db_groups) if db_groups else []
     
-    # Track existing chat_ids to avoid duplicates
-    existing_ids = {str(g["chat_id"]) for g in all_groups}
-    
-    # Add ROUND_CHANNEL if it looks valid (starts with @ for username or - for ID)
-    if ROUND_CHANNEL and (ROUND_CHANNEL.startswith("-") or ROUND_CHANNEL.startswith("@")) and str(ROUND_CHANNEL) not in existing_ids:
+    # Always add ROUND_CHANNEL if configured
+    if ROUND_CHANNEL:
         all_groups.append({"chat_id": ROUND_CHANNEL, "chat_title": "Main Channel"})
-        existing_ids.add(str(ROUND_CHANNEL))
     
-    # Add optional ANNOUNCEMENTS_GROUP_ID if configured
-    if ANNOUNCEMENTS_GROUP and str(ANNOUNCEMENTS_GROUP) not in existing_ids:
+    # Add optional ANNOUNCEMENTS_GROUP if configured
+    if ANNOUNCEMENTS_GROUP:
         all_groups.append({"chat_id": ANNOUNCEMENTS_GROUP, "chat_title": "Configured Group"})
     
     if not all_groups:
