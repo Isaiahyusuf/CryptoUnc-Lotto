@@ -7406,12 +7406,21 @@ async def distribute_creator_fee_rewards():
                 )
             else:
                 print(f"   ❌ Holder payment failed: {holder_result.get('error')}")
+                await send_to_announcements(
+                    f"💰 <b>Creator Fees Distributed!</b>\n\n"
+                    f"{'✅' if jackpot_success else '❌'} {jackpot_amount:.6f} SOL → Prize Pool\n"
+                    f"{'✅' if team_success else '❌'} {team_amount:.6f} SOL → Team\n"
+                    f"❌ {holder_amount:.6f} SOL → Holder payment failed (will retry)\n\n"
+                    f"<b>How to qualify for rewards:</b>\n"
+                    f"💎 Hold {MIN_TOKEN_BALANCE:,}+ $CRYPTOUNC tokens\n"
+                    f"🎟️ Use the SAME wallet to buy tickets"
+                )
         else:
             print(f"   ⏭️ No eligible holder - 40% stays in wallet for next round")
             await send_to_announcements(
                 f"💰 <b>Creator Fees Distributed!</b>\n\n"
-                f"✅ {jackpot_amount:.6f} SOL → Prize Pool\n"
-                f"✅ {team_amount:.6f} SOL → Team\n"
+                f"{'✅' if jackpot_success else '❌'} {jackpot_amount:.6f} SOL → Prize Pool\n"
+                f"{'✅' if team_success else '❌'} {team_amount:.6f} SOL → Team\n"
                 f"⏳ {holder_amount:.6f} SOL → Waiting for eligible holder\n\n"
                 f"<b>No eligible token holders this round!</b>\n"
                 f"The 40% holder share stays in the wallet.\n\n"
