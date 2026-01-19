@@ -7292,16 +7292,13 @@ async def distribute_creator_fee_rewards():
     
     print(f"[Rewards] Pending fees from DB: {total_sol:.6f} SOL (${total_usd:.2f})")
     
-    # Get actual TOKEN_CREATOR_WALLET balance (this is what we'll distribute)
     creator_wallet_balance = await get_real_balance(TOKEN_CREATOR_WALLET) if TOKEN_CREATOR_WALLET else Decimal("0")
     print(f"[Rewards] Creator wallet actual balance: {creator_wallet_balance:.6f} SOL")
     
-    # Use the actual wallet balance for distribution (not DB tracking)
     if creator_wallet_balance < Decimal("0.001"):
         print(f"[Rewards] Creator wallet balance too low ({creator_wallet_balance:.6f} SOL) - skipping")
         return False
     
-    # Use actual wallet balance for distribution
     total_sol = float(creator_wallet_balance)
     
     print(f"[Rewards] Starting distribution of {total_sol:.6f} SOL...")
@@ -7454,14 +7451,12 @@ async def rewards_announcement_scheduler():
             await asyncio.sleep(60 * 20)  # Every 20 minutes
             
             if not LOTTERY_TOKEN_MINT or not TOKEN_CREATOR_WALLET:
-                continue  # Token not configured yet
+                continue
             
-            # Get ACTUAL creator wallet balance (not DB tracking)
             creator_balance = await get_real_balance(TOKEN_CREATOR_WALLET)
             sol_price = await get_sol_price()
             balance_usd = float(creator_balance) * sol_price
             
-            # Get recent distributions count
             recent = get_recent_distributions(5)
             total_distributed = sum(d.get("holder_share", 0) for d in recent)
             
