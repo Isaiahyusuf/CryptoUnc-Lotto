@@ -70,6 +70,37 @@ The lottery uses a 3-tier prize structure:
 - `ANNOUNCEMENTS_GROUP_ID` - Additional announcement group
 - `GROQ_API_KEY` - Groq API key for AI assistant
 
+## Token Holder Rewards Environment Variables
+- `LOTTERY_TOKEN_MINT` - **Required** - Token address from pump.fun (set after launch)
+- `MIN_TOKEN_BALANCE` - Minimum tokens to qualify (default: 200,000)
+- `REWARD_THRESHOLD_USD` - USD threshold to trigger distribution (default: $100)
+- `REWARD_CHECK_INTERVAL` - Minutes between checks (default: 20)
+
+## Token Holder Rewards System
+Automatic distribution of pump.fun creator fees to token holders.
+
+**Fee Split (from 20% creator fee):**
+- 30% to jackpot prize pool
+- 30% to team wallet  
+- 40% to ONE random eligible token holder
+
+**Eligibility:**
+- Must hold 200,000+ lottery tokens
+- Must have purchased at least 1 ticket
+- Can only win once (marked after receiving reward)
+
+**How it works:**
+1. Bot tracks creator fees from each ticket purchase
+2. Every 20 minutes, checks if fees reached $100 threshold
+3. If threshold met, picks ONE random eligible holder
+4. Sends 40% of accumulated fees to winner
+5. Winner is marked and won't be selected again
+
+**Admin Commands:**
+- `/rewards_status` - View current status and pending fees
+- `/force_distribute` - Force immediate distribution
+- `/check_holder <user_id>` - Check user eligibility
+
 ## Recent Changes (December 2025)
 - **Groq-only AI** - Removed OpenAI and Gemini, using Groq exclusively for faster responses
 - **Async AI handling** - Non-blocking AI calls using asyncio.to_thread()
