@@ -7531,7 +7531,9 @@ async def send_to_announcements(message_text: str, keyboard=None):
         print("⚠️ No announcement channels configured. Set ROUND_CHANNEL_ID or add bot to groups.")
         return
     
-    # Send to all registered groups/channels
+    print(f"[Announce] Sending to {len(all_groups)} group(s): {[g.get('chat_title', g['chat_id']) for g in all_groups]}")
+    
+    success_count = 0
     for group in all_groups:
         try:
             chat_id = group["chat_id"]
@@ -7539,8 +7541,12 @@ async def send_to_announcements(message_text: str, keyboard=None):
                 await bot.send_message(chat_id, full_message, reply_markup=keyboard, parse_mode="HTML", disable_web_page_preview=True)
             else:
                 await bot.send_message(chat_id, full_message, parse_mode="HTML", disable_web_page_preview=True)
+            success_count += 1
+            print(f"✅ Sent to {group.get('chat_title', chat_id)}")
         except Exception as e:
-            print(f"❌ Failed to send announcement to {group.get('chat_title', chat_id)}: {e}")
+            print(f"❌ Failed to send to {group.get('chat_title', chat_id)}: {e}")
+    
+    print(f"[Announce] Completed: {success_count}/{len(all_groups)} successful")
 
 
 async def announce_new_ticket(user_id: int, ticket_id: int, stake_amount, numbers: list, round_id: int, ticket_count: int):
