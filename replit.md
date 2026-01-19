@@ -72,6 +72,8 @@ The lottery uses a 3-tier prize structure:
 
 ## Token Holder Rewards Environment Variables
 - `LOTTERY_TOKEN_MINT` - **Required** - Token address from pump.fun (set after launch)
+- `TOKEN_CREATOR_WALLET` - **Required** - Public address of pump.fun launch wallet (receives creator fees)
+- `TOKEN_CREATOR_WALLET_PRIVATE_KEY` - **Required** - Private key of pump.fun launch wallet (to sign distributions)
 - `MIN_TOKEN_BALANCE` - Minimum tokens to qualify (default: 200,000)
 - `REWARD_THRESHOLD_USD` - USD threshold to trigger distribution (default: $100)
 - `REWARD_CHECK_INTERVAL` - Minutes between checks (default: 20)

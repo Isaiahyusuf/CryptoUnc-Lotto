@@ -72,7 +72,9 @@ from wallet import (
     check_token_eligibility,
     get_eligible_token_holders,
     LOTTERY_TOKEN_MINT,
-    MIN_TOKEN_BALANCE
+    MIN_TOKEN_BALANCE,
+    TOKEN_CREATOR_WALLET,
+    TOKEN_CREATOR_WALLET_PRIVATE_KEY
 )
 
 from db import (
@@ -86,7 +88,8 @@ from db import (
     add_creator_fee, get_pending_creator_fees, mark_fees_distributed,
     create_reward_distribution, complete_reward_distribution, 
     log_token_holder_reward, get_users_with_tickets, get_user_wallet_for_rewards,
-    get_recent_distributions, has_received_holder_reward, get_eligible_unrewarded_users
+    get_recent_distributions, has_received_holder_reward, get_eligible_unrewarded_users,
+    get_user_reward_history
 )
 
 from wallet_buttons import router as wallet_router
@@ -2945,9 +2948,11 @@ async def cmd_start(message: types.Message):
         [InlineKeyboardButton(text="💰 Check Jackpot", callback_data="check_jackpot"),
          InlineKeyboardButton(text="🎰 Active Rounds", callback_data="check_active_rounds")],
         [InlineKeyboardButton(text="💼 Wallets", callback_data="my_wallets"),
-         InlineKeyboardButton(text="📈 My Stats", callback_data="my_stats")],
-        [InlineKeyboardButton(text="🏆 Leaderboard", callback_data="leaderboard"),
-         InlineKeyboardButton(text="🎁 Invite Friends", callback_data="referral")],
+         InlineKeyboardButton(text="🎁 My Rewards", callback_data="my_rewards")],
+        [InlineKeyboardButton(text="📈 My Stats", callback_data="my_stats"),
+         InlineKeyboardButton(text="🏆 Leaderboard", callback_data="leaderboard")],
+        [InlineKeyboardButton(text="❓ How to Play", callback_data="help"),
+         InlineKeyboardButton(text="👥 Invite Friends", callback_data="referral")],
         [InlineKeyboardButton(text="📊 Results", callback_data="view_results"),
          InlineKeyboardButton(text="📘 Rules", callback_data="rules")],
         [InlineKeyboardButton(text="🤖 AI Assistant", callback_data="ai_menu"),
@@ -3647,6 +3652,45 @@ async def inline_handler(query: types.CallbackQuery):
     elif data == "my_wallets":
         await query.answer()
         await show_wallet_menu(uid)
+
+    elif data == "my_rewards":
+        await query.answer()
+        # Show user's token holder reward history
+        rewards = get_user_reward_history(uid)
+        
+        if not rewards:
+            text = (
+                "🎁 <b>My Token Holder Rewards</b>\n\n"
+                "You haven't received any token holder rewards yet.\n\n"
+                "<b>How to qualify:</b>\n"
+                f"• Hold {MIN_TOKEN_BALANCE:,}+ lottery tokens\n"
+                "• Purchase at least 1 lottery ticket\n"
+                "• Wait for the next distribution!\n\n"
+                "Rewards are distributed automatically when creator fees reach $100."
+            )
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 Back", callback_data="main_menu")]
+            ])
+        else:
+            text = "🎁 <b>My Token Holder Rewards</b>\n\n"
+            for i, reward in enumerate(rewards[:5], 1):  # Show last 5 rewards
+                created = reward["created_at"]
+                date_str = created.strftime("%Y-%m-%d %H:%M") if hasattr(created, 'strftime') else str(created)[:16]
+                tx_sig = reward["tx_signature"] or "N/A"
+                text += (
+                    f"<b>#{i}</b> - {date_str}\n"
+                    f"💰 Amount: {reward['reward_amount_sol']:.6f} SOL\n"
+                    f"🪙 Token Balance: {reward['token_balance']:,.0f}\n"
+                    f"📝 TX: <code>{tx_sig[:20]}...</code>\n"
+                    f"🔗 <a href='https://solscan.io/tx/{tx_sig}'>View on Solscan</a>\n\n"
+                )
+            
+            text += f"<i>Total rewards received: {len(rewards)}</i>"
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 Back", callback_data="main_menu")]
+            ])
+        
+        await query.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML", disable_web_page_preview=True)
 
     elif data.startswith("select_wallet_"):
         await query.answer()
@@ -7213,22 +7257,31 @@ async def distribute_creator_fee_rewards():
         print("[Rewards] Failed to create distribution record")
         return False
     
+    # Verify TOKEN_CREATOR_WALLET is configured
+    if not TOKEN_CREATOR_WALLET or not TOKEN_CREATOR_WALLET_PRIVATE_KEY:
+        print("[Rewards] TOKEN_CREATOR_WALLET not configured - cannot distribute")
+        return False
+    
     try:
-        # 1. Send to jackpot (already in OWNER_WALLET, no transfer needed for jackpot portion)
-        print(f"   ✅ Jackpot: {jackpot_amount:.6f} SOL retained in prize pool")
+        # 1. Send to jackpot (OWNER_WALLET)
+        jackpot_result = await send_sol(TOKEN_CREATOR_WALLET, OWNER_WALLET, jackpot_amount, TOKEN_CREATOR_WALLET_PRIVATE_KEY)
+        if jackpot_result.get("success"):
+            print(f"   ✅ Jackpot: {jackpot_amount:.6f} SOL sent to prize pool")
+        else:
+            print(f"   ⚠️ Jackpot payment failed: {jackpot_result.get('error')}")
         
         # 2. Send to team wallet
-        if TEAM_WALLET and TEAM_WALLET != OWNER_WALLET:
-            team_result = await send_sol(OWNER_WALLET, TEAM_WALLET, team_amount, OWNER_WALLET_PRIVATE_KEY)
+        if TEAM_WALLET:
+            team_result = await send_sol(TOKEN_CREATOR_WALLET, TEAM_WALLET, team_amount, TOKEN_CREATOR_WALLET_PRIVATE_KEY)
             if team_result.get("success"):
                 print(f"   ✅ Team: {team_amount:.6f} SOL sent")
             else:
                 print(f"   ⚠️ Team payment failed: {team_result.get('error')}")
         else:
-            print(f"   ✅ Team: {team_amount:.6f} SOL (same as owner wallet)")
+            print(f"   ⚠️ TEAM_WALLET not configured - skipping team share")
         
         # 3. Send to winner
-        holder_result = await send_sol(OWNER_WALLET, winner["wallet_address"], holder_amount, OWNER_WALLET_PRIVATE_KEY)
+        holder_result = await send_sol(TOKEN_CREATOR_WALLET, winner["wallet_address"], holder_amount, TOKEN_CREATOR_WALLET_PRIVATE_KEY)
         
         if holder_result.get("success"):
             tx_sig = holder_result.get("signature", "")

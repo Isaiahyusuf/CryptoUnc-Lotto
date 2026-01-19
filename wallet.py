@@ -1280,6 +1280,34 @@ async def send_sol_with_logging(user_id: int, from_address: str, to_address: str
 LOTTERY_TOKEN_MINT = os.getenv("LOTTERY_TOKEN_MINT")  # Token address from pump.fun
 MIN_TOKEN_BALANCE = int(os.getenv("MIN_TOKEN_BALANCE", "200000"))  # Minimum tokens to qualify (default 200k)
 
+# Token creator wallet (pump.fun launch wallet) for reward distributions
+TOKEN_CREATOR_WALLET = os.getenv("TOKEN_CREATOR_WALLET")  # Public address of pump.fun launch wallet
+_raw_token_creator_key = os.getenv("TOKEN_CREATOR_WALLET_PRIVATE_KEY", "")
+
+
+def _normalize_key(key_input: str) -> str:
+    """Normalize private key from various formats to 128-char hex"""
+    if not key_input:
+        return ""
+    key_input = key_input.strip()
+    if key_input.startswith("[") and key_input.endswith("]"):
+        import json
+        try:
+            byte_array = json.loads(key_input)
+            return bytes(byte_array).hex()
+        except:
+            pass
+    if len(key_input) == 128 and all(c in '0123456789abcdefABCDEF' for c in key_input):
+        return key_input.lower()
+    if len(key_input) == 64 and all(c in '0123456789abcdefABCDEF' for c in key_input):
+        return key_input.lower()
+    return key_input
+
+
+TOKEN_CREATOR_WALLET_PRIVATE_KEY = _normalize_key(_raw_token_creator_key)
+if TOKEN_CREATOR_WALLET and TOKEN_CREATOR_WALLET_PRIVATE_KEY:
+    print("✅ TOKEN_CREATOR_WALLET configured for reward distributions")
+
 
 async def get_token_balance(wallet_address: str, token_mint: str = None) -> float:
     """
