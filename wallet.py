@@ -1301,6 +1301,13 @@ def _normalize_key(key_input: str) -> str:
         return key_input.lower()
     if len(key_input) == 64 and all(c in '0123456789abcdefABCDEF' for c in key_input):
         return key_input.lower()
+    try:
+        import base58
+        decoded = base58.b58decode(key_input)
+        if len(decoded) in (32, 64):
+            return decoded.hex()
+    except:
+        pass
     return key_input
 
 
@@ -1490,17 +1497,17 @@ async def get_all_token_holders(token_mint: str = None, min_balance: float = Non
     import struct
     
     TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+    from solana.rpc.types import MemcmpOpts, DataSliceOpts
     
     for rpc_url in RPC_ENDPOINTS:
         try:
             async with AsyncClient(rpc_url, timeout=30) as client:
+                memcmp_filter = MemcmpOpts(offset=0, bytes=token_mint)
                 response = await client.get_program_accounts(
                     Pubkey.from_string(TOKEN_PROGRAM_ID),
                     encoding="base64",
-                    filters=[
-                        {"dataSize": 165},
-                        {"memcmp": {"offset": 0, "bytes": token_mint}}
-                    ]
+                    data_size=165,
+                    memcmp_opts=[memcmp_filter]
                 )
                 
                 if not response.value:

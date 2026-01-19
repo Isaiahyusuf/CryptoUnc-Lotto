@@ -1,0 +1,41 @@
+Rewards] Starting distribution of 0.144787 SOL...
+==================================================
+[Rewards] Checking 0 registered unrewarded users...
+[Rewards] Found 0 eligible registered users
+[Rewards] Pending fees from DB: 0.000000 SOL ($0.00)
+[Rewards] Also checking on-chain token holders...
+[RPC Manager] Primary: SOLANA_RPC configured
+[Token] RPC error fetching holders: 'dict' object has no attribute 'offset'
+[Token] RPC error fetching holders: 'dict' object has no attribute 'offset'
+[Token] All RPCs failed for token holders
+   Jackpot (30%): 0.043436 SOL
+   Team (30%): 0.043436 SOL
+   Holder (40%): 0.057915 SOL -> NO ELIGIBLE HOLDERS (will rollover)
+Transaction: 77tZoJz5... -> HFktHmiy...
+  Amount: 0.04343610480 SOL + 0.00002 SOL fee = 0.04345610480 SOL required
+  Current balance: 0.144787016 SOL
+  RPC error (https://mainnet.helius-rpc.com...): non-hexadecimal number found in fromhex() arg at position 1, trying fallback...
+  RPC error (https://api.mainnet-beta.solan...): non-hexadecimal number found in fromhex() arg at position 1, trying fallback...
+Error sending SOL after all RPC attempts: non-hexadecimal number found in fromhex() arg at position 1
+NoneType: None
+   ⚠️ Jackpot payment failed: non-hexadecimal number found in fromhex() arg at position 1
+Transaction: 77tZoJz5... -> 4cUxvDkP...
+  Amount: 0.04343610480 SOL + 0.00002 SOL fee = 0.04345610480 SOL required
+  Current balance: 0.144787016 SOL
+  RPC error (https://mainnet.helius-rpc.com...): non-hexadecimal number found in fromhex() arg at position 1, trying fallback...
+  RPC error (https://api.mainnet-beta.solan...): non-hexadecimal number found in fromhex() arg at position 1, trying fallback...
+Error sending SOL after all RPC attempts: non-hexadecimal number found in fromhex() arg at position 1
+NoneType: None
+   ⚠️ Team payment failed: non-hexadecimal number found in fromhex() arg at position 1
+   ⏭️ No eligible holder - 40% stays in wallet for next round
+❌ Failed to send announcement to Main Channel: Telegram server says - Bad Request: chat not found
+❌ Distribution #1 failed - no payments succeeded
+[Round Manager] Round 1: 56.5 min remaining
+[Round Manager] Round 1: 56.0 min remaining
+[Round Manager] Round 1: 55.5 min remaining
+[Round Manager] Round 1: 55.0 min remaining
+[Round Manager] Round 1: 54.5 min remaining
+[Round Manager] Round 1: 54.0 min remaining
+[Round Manager] Round 1: 53.5 min remaining
+[Round Manager] Round 1: 53.0 min remaining
+[Round Manager] Round 1: 52.5 min remaining
