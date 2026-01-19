@@ -7518,8 +7518,8 @@ async def send_to_announcements(message_text: str, keyboard=None):
     # Track existing chat_ids to avoid duplicates
     existing_ids = {str(g["chat_id"]) for g in all_groups}
     
-    # Add ROUND_CHANNEL only if it looks like a valid ID (not placeholder)
-    if ROUND_CHANNEL and ROUND_CHANNEL.startswith("-") and str(ROUND_CHANNEL) not in existing_ids:
+    # Add ROUND_CHANNEL if it looks valid (starts with @ for username or - for ID)
+    if ROUND_CHANNEL and (ROUND_CHANNEL.startswith("-") or ROUND_CHANNEL.startswith("@")) and str(ROUND_CHANNEL) not in existing_ids:
         all_groups.append({"chat_id": ROUND_CHANNEL, "chat_title": "Main Channel"})
         existing_ids.add(str(ROUND_CHANNEL))
     
