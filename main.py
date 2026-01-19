@@ -6662,7 +6662,7 @@ async def cmd_test_announce(message: types.Message):
 
 @dp.message(Command("register_group"))
 async def cmd_register_group(message: types.Message):
-    """Admin command to manually register current group for announcements"""
+    """Admin command to manually register current group/channel for announcements"""
     if not is_admin(message.from_user.id):
         await message.reply("⛔ Not authorized.")
         return
@@ -6679,9 +6679,48 @@ async def cmd_register_group(message: types.Message):
     )
     
     if success:
-        await message.reply(f"✅ Group registered for announcements!\n\nChat ID: {message.chat.id}\nTitle: {message.chat.title}")
+        await message.reply(f"✅ Registered for announcements!\n\nChat ID: {message.chat.id}\nType: {message.chat.type}\nTitle: {message.chat.title}")
     else:
-        await message.reply("❌ Failed to register group. Check logs for details.")
+        await message.reply("❌ Failed to register. Check logs for details.")
+
+
+@dp.message(Command("register_channel"))
+async def cmd_register_channel(message: types.Message):
+    """Admin command to register a channel by ID (use when bot can't receive commands in channel)"""
+    if not is_admin(message.from_user.id):
+        await message.reply("⛔ Not authorized.")
+        return
+    
+    args = message.text.split()
+    if len(args) < 2:
+        await message.reply(
+            "📢 <b>Register a Channel</b>\n\n"
+            "Usage: /register_channel <channel_id>\n\n"
+            "Example:\n"
+            "/register_channel -1001234567890\n"
+            "/register_channel @channelname\n\n"
+            "<i>Get channel ID by forwarding a message from the channel to @userinfobot</i>",
+            parse_mode="HTML"
+        )
+        return
+    
+    channel_id = args[1]
+    
+    try:
+        chat = await bot.get_chat(channel_id)
+        success = add_announcement_group(
+            chat_id=chat.id,
+            chat_type=chat.type,
+            chat_title=chat.title,
+            added_by=message.from_user.id
+        )
+        
+        if success:
+            await message.reply(f"✅ Channel registered!\n\nID: {chat.id}\nTitle: {chat.title}")
+        else:
+            await message.reply("❌ Failed to register channel. Check logs.")
+    except Exception as e:
+        await message.reply(f"❌ Could not access channel: {e}\n\nMake sure the bot is an admin in the channel.")
 
 
 @dp.message(Command("rewards_status"))
