@@ -518,6 +518,49 @@ def init_all_tables():
         )
     """)
     
+    # Creator fees accumulator - tracks accumulated fees for token holder rewards
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS creator_fee_pool (
+            id SERIAL PRIMARY KEY,
+            amount_sol REAL NOT NULL,
+            amount_usd REAL NOT NULL,
+            source TEXT NOT NULL,
+            tx_signature TEXT,
+            distributed INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
+    # Token holder rewards distribution history
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS token_holder_rewards (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT NOT NULL,
+            wallet_address TEXT NOT NULL,
+            token_balance REAL NOT NULL,
+            reward_amount_sol REAL NOT NULL,
+            tx_signature TEXT,
+            distribution_id INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
+    # Distribution batches - tracks each distribution event
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS reward_distributions (
+            id SERIAL PRIMARY KEY,
+            total_pool_usd REAL NOT NULL,
+            total_pool_sol REAL NOT NULL,
+            jackpot_share_sol REAL NOT NULL,
+            team_share_sol REAL NOT NULL,
+            holder_share_sol REAL NOT NULL,
+            eligible_holders INTEGER NOT NULL,
+            status TEXT DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            completed_at TIMESTAMP
+        )
+    """)
+    
     # Initialize meta values
     try:
         c.execute("INSERT INTO meta (key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING", ('current_round', '1'))
@@ -930,6 +973,189 @@ def is_announcement_group(chat_id: int) -> bool:
         return result
     except:
         return False
+
+
+# ==============================================================================
+# Token Holder Rewards Functions
+# ==============================================================================
+
+def add_creator_fee(amount_sol: float, amount_usd: float, source: str, tx_signature: str = None) -> bool:
+    """Add a creator fee to the accumulator pool"""
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO creator_fee_pool (amount_sol, amount_usd, source, tx_signature)
+            VALUES (%s, %s, %s, %s)
+        """, (amount_sol, amount_usd, source, tx_signature))
+        conn.commit()
+        conn.close()
+        print(f"[DB] Added creator fee: {amount_sol} SOL (${amount_usd})")
+        return True
+    except Exception as e:
+        print(f"[DB] Error adding creator fee: {e}")
+        return False
+
+
+def get_pending_creator_fees() -> dict:
+    """Get total undistributed creator fees"""
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("""
+            SELECT COALESCE(SUM(amount_sol), 0), COALESCE(SUM(amount_usd), 0), COUNT(*)
+            FROM creator_fee_pool
+            WHERE distributed = 0
+        """)
+        row = c.fetchone()
+        conn.close()
+        return {
+            "total_sol": float(row[0]) if row else 0,
+            "total_usd": float(row[1]) if row else 0,
+            "count": int(row[2]) if row else 0
+        }
+    except Exception as e:
+        print(f"[DB] Error getting pending fees: {e}")
+        return {"total_sol": 0, "total_usd": 0, "count": 0}
+
+
+def mark_fees_distributed(distribution_id: int) -> bool:
+    """Mark all pending fees as distributed"""
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("""
+            UPDATE creator_fee_pool 
+            SET distributed = %s
+            WHERE distributed = 0
+        """, (distribution_id,))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"[DB] Error marking fees distributed: {e}")
+        return False
+
+
+def create_reward_distribution(total_usd: float, total_sol: float, jackpot_share: float, 
+                                team_share: float, holder_share: float, eligible_count: int) -> int:
+    """Create a new reward distribution record and return its ID"""
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO reward_distributions 
+            (total_pool_usd, total_pool_sol, jackpot_share_sol, team_share_sol, holder_share_sol, eligible_holders)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """, (total_usd, total_sol, jackpot_share, team_share, holder_share, eligible_count))
+        row = c.fetchone()
+        distribution_id = row[0] if row else None
+        conn.commit()
+        conn.close()
+        return distribution_id
+    except Exception as e:
+        print(f"[DB] Error creating distribution: {e}")
+        return None
+
+
+def complete_reward_distribution(distribution_id: int) -> bool:
+    """Mark a distribution as completed"""
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("""
+            UPDATE reward_distributions 
+            SET status = 'completed', completed_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+        """, (distribution_id,))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"[DB] Error completing distribution: {e}")
+        return False
+
+
+def log_token_holder_reward(user_id: int, wallet_address: str, token_balance: float,
+                            reward_amount: float, tx_signature: str, distribution_id: int) -> bool:
+    """Log a reward payment to a token holder"""
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO token_holder_rewards 
+            (user_id, wallet_address, token_balance, reward_amount_sol, tx_signature, distribution_id)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (user_id, wallet_address, token_balance, reward_amount, tx_signature, distribution_id))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"[DB] Error logging token holder reward: {e}")
+        return False
+
+
+def get_users_with_tickets() -> list:
+    """Get all users who have purchased at least one ticket"""
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("""
+            SELECT DISTINCT user_id FROM round_participants
+        """)
+        rows = c.fetchall()
+        conn.close()
+        return [row[0] for row in rows] if rows else []
+    except Exception as e:
+        print(f"[DB] Error getting users with tickets: {e}")
+        return []
+
+
+def get_user_wallet_for_rewards(user_id: int) -> str:
+    """Get user's active wallet address for rewards"""
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("""
+            SELECT active_wallet_address FROM user_active_wallet WHERE user_id = %s
+        """, (user_id,))
+        row = c.fetchone()
+        conn.close()
+        return row[0] if row else None
+    except Exception as e:
+        print(f"[DB] Error getting user wallet: {e}")
+        return None
+
+
+def get_recent_distributions(limit: int = 10) -> list:
+    """Get recent reward distributions for admin view"""
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("""
+            SELECT id, total_pool_usd, total_pool_sol, jackpot_share_sol, team_share_sol, 
+                   holder_share_sol, eligible_holders, status, created_at
+            FROM reward_distributions
+            ORDER BY created_at DESC
+            LIMIT %s
+        """, (limit,))
+        rows = c.fetchall()
+        conn.close()
+        return [{
+            "id": row[0],
+            "total_usd": row[1],
+            "total_sol": row[2],
+            "jackpot_share": row[3],
+            "team_share": row[4],
+            "holder_share": row[5],
+            "eligible_holders": row[6],
+            "status": row[7],
+            "created_at": row[8]
+        } for row in rows] if rows else []
+    except Exception as e:
+        print(f"[DB] Error getting distributions: {e}")
+        return []
 
 
 # ==============================================================================
