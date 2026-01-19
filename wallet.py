@@ -1420,62 +1420,50 @@ async def has_sent_sol_to_wallet(sender_wallet: str, recipient_wallet: str, limi
     """
     Check if a wallet has ever sent SOL to another wallet (on-chain check).
     Uses getSignaturesForAddress to check transaction history.
-    
-    Args:
-        sender_wallet: The wallet to check transaction history for
-        recipient_wallet: The wallet to look for as a recipient
-        limit: Max number of recent transactions to check
-    
-    Returns:
-        True if sender has sent SOL to recipient, False otherwise
     """
-    rpc_manager = get_rpc_manager()
-    rpc_url = rpc_manager.get_best_rpc()
-    
-    try:
-        async with AsyncClient(rpc_url, timeout=RPC_TIMEOUT) as client:
-            # Get recent signatures for this wallet
-            response = await client.get_signatures_for_address(
-                Pubkey.from_string(sender_wallet),
-                limit=limit
-            )
-            
-            if not response.value:
+    for rpc_url in RPC_ENDPOINTS:
+        try:
+            async with AsyncClient(rpc_url, timeout=RPC_TIMEOUT) as client:
+                response = await client.get_signatures_for_address(
+                    Pubkey.from_string(sender_wallet),
+                    limit=limit
+                )
+                
+                if not response.value:
+                    return False
+                
+                for sig_info in response.value[:20]:
+                    try:
+                        tx_response = await client.get_transaction(
+                            sig_info.signature,
+                            max_supported_transaction_version=0
+                        )
+                        
+                        if tx_response.value and tx_response.value.transaction:
+                            tx_data = tx_response.value.transaction
+                            account_keys = None
+                            
+                            if hasattr(tx_data, 'message') and hasattr(tx_data.message, 'account_keys'):
+                                account_keys = tx_data.message.account_keys
+                            elif hasattr(tx_data, 'transaction'):
+                                inner_tx = tx_data.transaction
+                                if hasattr(inner_tx, 'message') and hasattr(inner_tx.message, 'account_keys'):
+                                    account_keys = inner_tx.message.account_keys
+                            
+                            if account_keys:
+                                for key in account_keys:
+                                    if str(key) == recipient_wallet:
+                                        return True
+                    except Exception:
+                        continue
+                
                 return False
-            
-            # Check each transaction for transfers to recipient
-            for sig_info in response.value[:20]:  # Check last 20 transactions max
-                try:
-                    tx_response = await client.get_transaction(
-                        sig_info.signature,
-                        max_supported_transaction_version=0
-                    )
-                    
-                    if tx_response.value and tx_response.value.transaction:
-                        tx_data = tx_response.value.transaction
-                        
-                        # Handle different response structures from solana-py
-                        account_keys = None
-                        
-                        # Try different paths to get account keys
-                        if hasattr(tx_data, 'message') and hasattr(tx_data.message, 'account_keys'):
-                            account_keys = tx_data.message.account_keys
-                        elif hasattr(tx_data, 'transaction'):
-                            inner_tx = tx_data.transaction
-                            if hasattr(inner_tx, 'message') and hasattr(inner_tx.message, 'account_keys'):
-                                account_keys = inner_tx.message.account_keys
-                        
-                        if account_keys:
-                            for key in account_keys:
-                                if str(key) == recipient_wallet:
-                                    return True
-                except Exception as e:
-                    continue
-            
-            return False
-    except Exception as e:
-        print(f"[Wallet] Error checking tx history for {sender_wallet[:8]}...: {e}")
-        return False
+        except Exception as e:
+            print(f"[Wallet] RPC error checking tx history: {e}")
+            continue
+    
+    print(f"[Wallet] All RPCs failed for tx history check")
+    return False
 
 
 async def get_all_token_holders(token_mint: str = None, min_balance: float = None) -> list:
@@ -1498,55 +1486,50 @@ async def get_all_token_holders(token_mint: str = None, min_balance: float = Non
     if min_balance is None:
         min_balance = MIN_TOKEN_BALANCE
     
-    rpc_manager = get_rpc_manager()
-    rpc_url = rpc_manager.get_best_rpc()
+    import base64
+    import struct
     
-    try:
-        import base64
-        import struct
-        
-        # SPL Token Program ID
-        TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
-        
-        async with AsyncClient(rpc_url, timeout=30) as client:
-            # Query all token accounts for this mint
-            response = await client.get_program_accounts(
-                Pubkey.from_string(TOKEN_PROGRAM_ID),
-                encoding="base64",
-                filters=[
-                    {"dataSize": 165},  # Token account size
-                    {"memcmp": {"offset": 0, "bytes": token_mint}}  # Filter by mint
-                ]
-            )
-            
-            if not response.value:
-                return []
-            
-            holders = []
-            for account in response.value:
-                try:
-                    # Decode token account data
-                    data = base64.b64decode(account.account.data[0])
-                    # Token account layout: mint (32) + owner (32) + amount (8) + ...
-                    owner = str(Pubkey.from_bytes(data[32:64]))
-                    amount = struct.unpack("<Q", data[64:72])[0]
-                    
-                    # Convert to token amount (assuming 6 decimals for pump.fun tokens)
-                    token_balance = amount / 1e6
-                    
-                    if token_balance >= min_balance:
-                        holders.append({
-                            "wallet_address": owner,
-                            "token_balance": token_balance
-                        })
-                except Exception:
-                    continue
-            
-            print(f"[Token] Found {len(holders)} wallets holding {min_balance:,.0f}+ tokens")
-            return holders
-    except Exception as e:
-        print(f"[Token] Error fetching token holders: {e}")
-        return []
+    TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+    
+    for rpc_url in RPC_ENDPOINTS:
+        try:
+            async with AsyncClient(rpc_url, timeout=30) as client:
+                response = await client.get_program_accounts(
+                    Pubkey.from_string(TOKEN_PROGRAM_ID),
+                    encoding="base64",
+                    filters=[
+                        {"dataSize": 165},
+                        {"memcmp": {"offset": 0, "bytes": token_mint}}
+                    ]
+                )
+                
+                if not response.value:
+                    return []
+                
+                holders = []
+                for account in response.value:
+                    try:
+                        data = base64.b64decode(account.account.data[0])
+                        owner = str(Pubkey.from_bytes(data[32:64]))
+                        amount = struct.unpack("<Q", data[64:72])[0]
+                        token_balance = amount / 1e6
+                        
+                        if token_balance >= min_balance:
+                            holders.append({
+                                "wallet_address": owner,
+                                "token_balance": token_balance
+                            })
+                    except Exception:
+                        continue
+                
+                print(f"[Token] Found {len(holders)} wallets holding {min_balance:,.0f}+ tokens")
+                return holders
+        except Exception as e:
+            print(f"[Token] RPC error fetching holders: {e}")
+            continue
+    
+    print(f"[Token] All RPCs failed for token holders")
+    return []
 
 
 async def get_onchain_eligible_holders(owner_wallet: str) -> list:
