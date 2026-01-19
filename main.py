@@ -7303,13 +7303,8 @@ async def distribute_creator_fee_rewards():
     
     print(f"[Rewards] Starting distribution of {total_sol:.6f} SOL...")
     
-    # Find eligible winner
     winner = await find_eligible_holder_winner()
-    if not winner:
-        print("[Rewards] No eligible holders found - distribution postponed")
-        return False
     
-    # Calculate distribution amounts
     jackpot_amount = Decimal(str(total_sol)) * CREATOR_FEE_JACKPOT_SHARE
     team_amount = Decimal(str(total_sol)) * CREATOR_FEE_TEAM_SHARE
     holder_amount = Decimal(str(total_sol)) * CREATOR_FEE_HOLDER_SHARE
@@ -7317,7 +7312,10 @@ async def distribute_creator_fee_rewards():
     print(f"[Rewards] Distribution breakdown:")
     print(f"   Jackpot (30%): {jackpot_amount:.6f} SOL")
     print(f"   Team (30%): {team_amount:.6f} SOL")
-    print(f"   Holder (40%): {holder_amount:.6f} SOL -> User {winner['user_id']}")
+    if winner:
+        print(f"   Holder (40%): {holder_amount:.6f} SOL -> {winner.get('wallet_address', 'Unknown')[:12]}...")
+    else:
+        print(f"   Holder (40%): {holder_amount:.6f} SOL -> NO ELIGIBLE HOLDERS (will rollover)")
     
     # Create distribution record
     dist_id = create_reward_distribution(
@@ -7339,81 +7337,97 @@ async def distribute_creator_fee_rewards():
         return False
     
     try:
-        # 1. Send to jackpot (OWNER_WALLET)
+        jackpot_success = False
+        team_success = False
+        holder_success = False
+        tx_sig = ""
+        
         jackpot_result = await send_sol(TOKEN_CREATOR_WALLET, OWNER_WALLET, jackpot_amount, TOKEN_CREATOR_WALLET_PRIVATE_KEY)
         if jackpot_result.get("success"):
             print(f"   ✅ Jackpot: {jackpot_amount:.6f} SOL sent to prize pool")
+            jackpot_success = True
         else:
             print(f"   ⚠️ Jackpot payment failed: {jackpot_result.get('error')}")
         
-        # 2. Send to team wallet
         if TEAM_WALLET:
             team_result = await send_sol(TOKEN_CREATOR_WALLET, TEAM_WALLET, team_amount, TOKEN_CREATOR_WALLET_PRIVATE_KEY)
             if team_result.get("success"):
                 print(f"   ✅ Team: {team_amount:.6f} SOL sent")
+                team_success = True
             else:
                 print(f"   ⚠️ Team payment failed: {team_result.get('error')}")
         else:
             print(f"   ⚠️ TEAM_WALLET not configured - skipping team share")
         
-        # 3. Send to winner
-        holder_result = await send_sol(TOKEN_CREATOR_WALLET, winner["wallet_address"], holder_amount, TOKEN_CREATOR_WALLET_PRIVATE_KEY)
-        
-        if holder_result.get("success"):
-            tx_sig = holder_result.get("signature", "")
-            print(f"   ✅ Holder reward sent: {holder_amount:.6f} SOL to {winner['wallet_address'][:12]}...")
+        if winner:
+            holder_result = await send_sol(TOKEN_CREATOR_WALLET, winner["wallet_address"], holder_amount, TOKEN_CREATOR_WALLET_PRIVATE_KEY)
             
-            # Log the reward (marks user as rewarded)
-            log_token_holder_reward(
-                user_id=winner["user_id"],
-                wallet_address=winner["wallet_address"],
-                token_balance=winner["token_balance"],
-                reward_amount=float(holder_amount),
-                tx_signature=tx_sig,
-                distribution_id=dist_id
-            )
-            
-            # Mark fees as distributed
-            mark_fees_distributed(dist_id)
-            complete_reward_distribution(dist_id)
-            
-            # Notify winner (only if registered with Telegram)
-            if winner.get("user_id"):
-                try:
-                    await bot.send_message(
-                        winner["user_id"],
-                        f"🎉🎉🎉 <b>CONGRATULATIONS!</b> 🎉🎉🎉\n\n"
-                        f"You've been selected as a <b>Token Holder Reward Winner!</b>\n\n"
-                        f"💰 <b>Reward: {holder_amount:.6f} SOL</b>\n"
-                        f"🪙 Your balance: {winner['token_balance']:,.0f} tokens\n\n"
-                        f"📝 TX: <code>{tx_sig}</code>\n\n"
-                        f"Thank you for holding and playing!\n"
-                        f"🔗 View on Solscan: https://solscan.io/tx/{tx_sig}",
-                        parse_mode="HTML"
-                    )
-                except Exception as e:
-                    print(f"[Rewards] Could not notify winner: {e}")
+            if holder_result.get("success"):
+                tx_sig = holder_result.get("signature", "")
+                print(f"   ✅ Holder reward sent: {holder_amount:.6f} SOL to {winner['wallet_address'][:12]}...")
+                holder_success = True
+                
+                log_token_holder_reward(
+                    user_id=winner.get("user_id"),
+                    wallet_address=winner["wallet_address"],
+                    token_balance=winner["token_balance"],
+                    reward_amount=float(holder_amount),
+                    tx_signature=tx_sig,
+                    distribution_id=dist_id
+                )
+                
+                if winner.get("user_id"):
+                    try:
+                        await bot.send_message(
+                            winner["user_id"],
+                            f"🎉🎉🎉 <b>CONGRATULATIONS!</b> 🎉🎉🎉\n\n"
+                            f"You've been selected as a <b>Token Holder Reward Winner!</b>\n\n"
+                            f"💰 <b>Reward: {holder_amount:.6f} SOL</b>\n"
+                            f"🪙 Your balance: {winner['token_balance']:,.0f} tokens\n\n"
+                            f"📝 TX: <code>{tx_sig}</code>\n\n"
+                            f"Thank you for holding and playing!\n"
+                            f"🔗 View on Solscan: https://solscan.io/tx/{tx_sig}",
+                            parse_mode="HTML"
+                        )
+                    except Exception as e:
+                        print(f"[Rewards] Could not notify winner: {e}")
+                
+                winner_wallet_short = f"{winner['wallet_address'][:6]}...{winner['wallet_address'][-4:]}"
+                await send_to_announcements(
+                    f"🏆 <b>Token Holder Reward Winner!</b> 🏆\n\n"
+                    f"A lucky token holder just won <b>{holder_amount:.6f} SOL</b>!\n\n"
+                    f"👤 Winner: <code>{winner_wallet_short}</code>\n"
+                    f"📝 TX Hash:\n<code>{tx_sig}</code>\n"
+                    f"🔗 <a href='https://solscan.io/tx/{tx_sig}'>Verify on Solscan</a>\n\n"
+                    f"<b>How to qualify:</b>\n"
+                    f"💎 Hold {MIN_TOKEN_BALANCE:,}+ $CRYPTOUNC tokens\n"
+                    f"🎟️ Use the SAME wallet to buy tickets\n\n"
+                    f"🔄 Distributions every {REWARD_CHECK_INTERVAL_MINUTES} min!"
+                )
             else:
-                print(f"[Rewards] Winner is on-chain only (no Telegram ID) - cannot send DM")
-            
-            # Announce to channel WITH FULL TX HASH
-            winner_wallet_short = f"{winner['wallet_address'][:6]}...{winner['wallet_address'][-4:]}"
+                print(f"   ❌ Holder payment failed: {holder_result.get('error')}")
+        else:
+            print(f"   ⏭️ No eligible holder - 40% stays in wallet for next round")
             await send_to_announcements(
-                f"🏆 <b>Token Holder Reward Winner!</b> 🏆\n\n"
-                f"A lucky token holder just won <b>{holder_amount:.6f} SOL</b>!\n\n"
-                f"👤 Winner: <code>{winner_wallet_short}</code>\n"
-                f"📝 TX Hash:\n<code>{tx_sig}</code>\n"
-                f"🔗 <a href='https://solscan.io/tx/{tx_sig}'>Verify on Solscan</a>\n\n"
+                f"💰 <b>Creator Fees Distributed!</b>\n\n"
+                f"✅ {jackpot_amount:.6f} SOL → Prize Pool\n"
+                f"✅ {team_amount:.6f} SOL → Team\n"
+                f"⏳ {holder_amount:.6f} SOL → Waiting for eligible holder\n\n"
+                f"<b>No eligible token holders this round!</b>\n"
+                f"The 40% holder share stays in the wallet.\n\n"
                 f"<b>How to qualify:</b>\n"
                 f"💎 Hold {MIN_TOKEN_BALANCE:,}+ $CRYPTOUNC tokens\n"
-                f"🎟️ Buy at least 1 lottery ticket\n\n"
-                f"🔄 Next distribution when fees reach $100"
+                f"🎟️ Use the SAME wallet to buy tickets"
             )
-            
-            print(f"✅ Distribution #{dist_id} completed successfully!")
+        
+        mark_fees_distributed(dist_id)
+        complete_reward_distribution(dist_id)
+        
+        if jackpot_success or team_success:
+            print(f"✅ Distribution #{dist_id} completed (jackpot: {jackpot_success}, team: {team_success}, holder: {holder_success})")
             return True
         else:
-            print(f"   ❌ Holder payment failed: {holder_result.get('error')}")
+            print(f"❌ Distribution #{dist_id} failed - no payments succeeded")
             return False
             
     except Exception as e:
