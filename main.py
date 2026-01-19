@@ -7290,14 +7290,21 @@ async def distribute_creator_fee_rewards():
     total_usd = pending["total_usd"]
     total_sol = pending["total_sol"]
     
-    print(f"[Rewards] Pending fees: {total_sol:.6f} SOL (${total_usd:.2f})")
+    print(f"[Rewards] Pending fees from DB: {total_sol:.6f} SOL (${total_usd:.2f})")
     
-    # Check threshold
-    if total_usd < REWARD_DISTRIBUTION_THRESHOLD_USD:
-        print(f"[Rewards] Below ${REWARD_DISTRIBUTION_THRESHOLD_USD} threshold - waiting for more fees")
+    # Get actual TOKEN_CREATOR_WALLET balance (this is what we'll distribute)
+    creator_wallet_balance = await get_real_balance(TOKEN_CREATOR_WALLET) if TOKEN_CREATOR_WALLET else Decimal("0")
+    print(f"[Rewards] Creator wallet actual balance: {creator_wallet_balance:.6f} SOL")
+    
+    # Use the actual wallet balance for distribution (not DB tracking)
+    if creator_wallet_balance < Decimal("0.001"):
+        print(f"[Rewards] Creator wallet balance too low ({creator_wallet_balance:.6f} SOL) - skipping")
         return False
     
-    print(f"[Rewards] Threshold reached! Starting distribution...")
+    # Use actual wallet balance for distribution
+    total_sol = float(creator_wallet_balance)
+    
+    print(f"[Rewards] Starting distribution of {total_sol:.6f} SOL...")
     
     # Find eligible winner
     winner = await find_eligible_holder_winner()
@@ -7435,24 +7442,24 @@ async def token_holder_rewards_scheduler():
             await asyncio.sleep(60)  # Wait 1 min on error
 
 
-async def hourly_rewards_announcement():
+async def rewards_announcement_scheduler():
     """
-    Background task that announces token holder rewards info every hour.
+    Background task that announces token holder rewards info every 20 minutes.
     Helps attract token holders and explain the reward system.
     """
-    print("📢 Hourly rewards announcement scheduler started")
+    print("📢 Rewards announcement scheduler started (every 20 min)")
     
     while True:
         try:
-            await asyncio.sleep(60 * 60)  # Every hour
+            await asyncio.sleep(60 * 20)  # Every 20 minutes
             
-            if not LOTTERY_TOKEN_MINT:
+            if not LOTTERY_TOKEN_MINT or not TOKEN_CREATOR_WALLET:
                 continue  # Token not configured yet
             
-            # Get current stats
-            pending = get_pending_creator_fees()
-            total_usd = pending.get("total_usd", 0)
-            total_sol = pending.get("total_sol", 0)
+            # Get ACTUAL creator wallet balance (not DB tracking)
+            creator_balance = await get_real_balance(TOKEN_CREATOR_WALLET)
+            sol_price = await get_sol_price()
+            balance_usd = float(creator_balance) * sol_price
             
             # Get recent distributions count
             recent = get_recent_distributions(5)
@@ -7460,8 +7467,8 @@ async def hourly_rewards_announcement():
             
             announcement = (
                 "🎁 <b>TOKEN HOLDER REWARDS</b> 🎁\n\n"
-                f"💰 <b>Current Fee Pool: {total_sol:.4f} SOL (${total_usd:.2f})</b>\n"
-                f"🎯 Distribution at: $100\n\n"
+                f"💰 <b>Current Fee Pool: {float(creator_balance):.4f} SOL (${balance_usd:.2f})</b>\n"
+                f"🎯 Distributions every {REWARD_CHECK_INTERVAL_MINUTES} minutes\n\n"
                 f"<b>⚠️ IMPORTANT - How to Qualify:</b>\n"
                 f"1️⃣ Hold {MIN_TOKEN_BALANCE:,}+ $CRYPTOUNC tokens\n"
                 f"2️⃣ Use the <b>SAME wallet</b> to purchase lottery tickets\n\n"
@@ -7471,7 +7478,7 @@ async def hourly_rewards_announcement():
                 f"• 30% → Team\n"
                 f"• 40% → ONE Lucky Holder\n\n"
                 f"📊 <i>Recently distributed: {total_distributed:.4f} SOL to holders</i>\n\n"
-                f"🔄 Distributions happen automatically every {REWARD_CHECK_INTERVAL_MINUTES} min when threshold is met!"
+                f"🔄 Distributions happen automatically every {REWARD_CHECK_INTERVAL_MINUTES} min!"
             )
             
             await send_to_announcements(announcement)
@@ -7873,10 +7880,10 @@ async def main():
     asyncio.create_task(schedule_daily_rounds())
     asyncio.create_task(manage_rounds())
     asyncio.create_task(token_holder_rewards_scheduler())
-    asyncio.create_task(hourly_rewards_announcement())
+    asyncio.create_task(rewards_announcement_scheduler())
     print("📅 Background scheduler started!")
     print("🎁 Token holder rewards scheduler started!")
-    print("📢 Hourly rewards announcement scheduler started!")
+    print("📢 Rewards announcement scheduler started (every 20 min)!")
     
     # Start web server for keep-alive
     asyncio.create_task(start_web_server())

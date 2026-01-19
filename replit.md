@@ -88,15 +88,16 @@ Automatic distribution of pump.fun creator fees to token holders.
 
 **Eligibility:**
 - Must hold 200,000+ lottery tokens
-- Must have purchased at least 1 ticket
+- Must use the **SAME wallet** to purchase lottery tickets
+- Bot verifies on-chain that the token-holding wallet sent SOL for tickets
 - Can only win once (marked after receiving reward)
 
 **How it works:**
-1. Bot tracks creator fees from each ticket purchase
-2. Every 20 minutes, checks if fees reached $100 threshold
-3. If threshold met, picks ONE random eligible holder
-4. Sends 40% of accumulated fees to winner
-5. Winner is marked and won't be selected again
+1. Every 20 minutes, bot checks TOKEN_CREATOR_WALLET balance
+2. If balance > 0.001 SOL, distributes to eligible holder
+3. Picks ONE random eligible holder (hybrid: registered users + on-chain verified)
+4. Sends 40% of wallet balance to winner
+5. Announces with full TX hash to channel
 
 **Admin Commands:**
 - `/rewards_status` - View current status and pending fees
