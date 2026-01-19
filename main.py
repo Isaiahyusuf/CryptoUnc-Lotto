@@ -48,28 +48,46 @@ from dotenv import load_dotenv
 from aiohttp import web
 
 from wallet import (
-get_user_wallets,
-get_active_wallet,
-save_external_wallet,
-get_real_balance,
-send_sol,
-estimate_transaction_fee,
-create_wallet,
-set_active_wallet,
-get_wallet_private_key,
-get_user_wallet_count,
-delete_wallet,
-set_user_pin,
-verify_user_pin,
-has_user_pin,
-delete_user_pin,
-init_wallet_db,
-import_wallet_from_private_key,
-MAX_WALLETS_PER_USER,
-log_wallet_transaction
+    get_user_wallets,
+    get_active_wallet,
+    save_external_wallet,
+    get_real_balance,
+    send_sol,
+    estimate_transaction_fee,
+    create_wallet,
+    set_active_wallet,
+    get_wallet_private_key,
+    get_user_wallet_count,
+    delete_wallet,
+    set_user_pin,
+    verify_user_pin,
+    has_user_pin,
+    delete_user_pin,
+    init_wallet_db,
+    import_wallet_from_private_key,
+    MAX_WALLETS_PER_USER,
+    log_wallet_transaction,
+    # Token holder rewards functions
+    get_token_balance,
+    check_token_eligibility,
+    get_eligible_token_holders,
+    LOTTERY_TOKEN_MINT,
+    MIN_TOKEN_BALANCE
 )
 
-from db import get_db_conn, init_all_tables, migrate_remove_unique_constraint, migrate_add_referral_column, migrate_add_ticket_id_column, force_fix_participants_constraint, migrate_add_referral_reward_columns, migrate_add_vip_claim_column, q, save_security_question, get_security_question, verify_security_answer, has_security_question, add_announcement_group, remove_announcement_group, get_announcement_groups
+from db import (
+    get_db_conn, init_all_tables, migrate_remove_unique_constraint, 
+    migrate_add_referral_column, migrate_add_ticket_id_column, 
+    force_fix_participants_constraint, migrate_add_referral_reward_columns, 
+    migrate_add_vip_claim_column, q, save_security_question, get_security_question, 
+    verify_security_answer, has_security_question, add_announcement_group, 
+    remove_announcement_group, get_announcement_groups,
+    # Token holder rewards functions
+    add_creator_fee, get_pending_creator_fees, mark_fees_distributed,
+    create_reward_distribution, complete_reward_distribution, 
+    log_token_holder_reward, get_users_with_tickets, get_user_wallet_for_rewards,
+    get_recent_distributions, has_received_holder_reward, get_eligible_unrewarded_users
+)
 
 from wallet_buttons import router as wallet_router
 
@@ -499,6 +517,29 @@ JOIN_TIMEOUT_MINUTES = 30     # Legacy alias
 TEAM_FEE_PERCENTAGE = Decimal("0.20")  # 20% to team (always deducted first)
 WINNER_SHARE_PERCENTAGE = Decimal("0.80")  # 80% to prize pool
 NETWORK_FEE_PERCENTAGE = Decimal("0.00")  # No refund fees since no refunds
+
+# ==============================================================================
+# TOKEN HOLDER REWARDS SYSTEM
+# ==============================================================================
+# Creator fees (20%) are split:
+# - 30% to jackpot prize pool
+# - 30% to team wallet
+# - 40% to eligible token holders
+#
+# Eligibility requirements:
+# - Must hold minimum 100,000 tokens (configurable via MIN_TOKEN_BALANCE)
+# - Must have purchased at least 1 ticket
+#
+# Distribution triggers when:
+# - Accumulated creator fees reach $100 USD
+# - Checked every 15-30 minutes
+
+CREATOR_FEE_JACKPOT_SHARE = Decimal("0.30")  # 30% to jackpot
+CREATOR_FEE_TEAM_SHARE = Decimal("0.30")  # 30% to team
+CREATOR_FEE_HOLDER_SHARE = Decimal("0.40")  # 40% to token holders
+
+REWARD_DISTRIBUTION_THRESHOLD_USD = float(os.getenv("REWARD_THRESHOLD_USD", "100"))  # $100 threshold
+REWARD_CHECK_INTERVAL_MINUTES = int(os.getenv("REWARD_CHECK_INTERVAL", "20"))  # Check every 20 min
 
 # Legacy compatibility aliases
 MIN_PLAYERS_PER_STAKE = MIN_PLAYERS_TO_DRAW  # Alias for legacy code
@@ -3448,6 +3489,19 @@ async def inline_handler(query: types.CallbackQuery):
                 team_result = await send_sol(wallet, TEAM_WALLET, team_fee, private_key)
                 if not team_result["success"]:
                     print(f"[Ticket] Warning: Team wallet payment failed: {team_result.get('error')}")
+            
+            # Track creator fee for token holder rewards distribution
+            try:
+                sol_price = await get_sol_price_usd()
+                fee_usd = float(team_fee) * sol_price if sol_price > 0 else 0
+                add_creator_fee(
+                    amount_sol=float(team_fee),
+                    amount_usd=fee_usd,
+                    source="ticket_purchase",
+                    tx_signature=tx_signature
+                )
+            except Exception as e:
+                print(f"[Ticket] Warning: Failed to track creator fee: {e}")
             
             # Log lottery stake transaction
             log_wallet_transaction(
@@ -6476,6 +6530,106 @@ async def cmd_seed_jackpot(message: types.Message):
         await message.reply(f"❌ Error: {str(e)}")
 
 
+@dp.message(Command("rewards_status"))
+async def cmd_rewards_status(message: types.Message):
+    """Admin command to check token holder rewards status"""
+    if not is_admin(message.from_user.id):
+        await message.reply("⛔ Not authorized.")
+        return
+    
+    try:
+        # Get pending fees
+        pending = get_pending_creator_fees()
+        
+        # Get recent distributions
+        distributions = get_recent_distributions(5)
+        
+        # Check token config
+        token_configured = "✅ Configured" if LOTTERY_TOKEN_MINT else "❌ Not configured"
+        
+        msg = (
+            f"🎁 <b>Token Holder Rewards Status</b>\n\n"
+            f"<b>Configuration:</b>\n"
+            f"• Token: {token_configured}\n"
+            f"• Min Balance: {MIN_TOKEN_BALANCE:,} tokens\n"
+            f"• Threshold: ${REWARD_DISTRIBUTION_THRESHOLD_USD}\n"
+            f"• Check Interval: {REWARD_CHECK_INTERVAL_MINUTES} min\n\n"
+            f"<b>Pending Fees:</b>\n"
+            f"• SOL: {pending['total_sol']:.6f}\n"
+            f"• USD: ${pending['total_usd']:.2f}\n"
+            f"• Tickets: {pending['count']}\n\n"
+        )
+        
+        if distributions:
+            msg += "<b>Recent Distributions:</b>\n"
+            for d in distributions[:5]:
+                msg += f"• #{d['id']}: {d['holder_share']:.4f} SOL ({d['status']})\n"
+        else:
+            msg += "<i>No distributions yet</i>"
+        
+        await message.reply(msg, parse_mode="HTML")
+    except Exception as e:
+        await message.reply(f"❌ Error: {e}")
+
+
+@dp.message(Command("force_distribute"))
+async def cmd_force_distribute(message: types.Message):
+    """Admin command to force a token holder reward distribution"""
+    if not is_admin(message.from_user.id):
+        await message.reply("⛔ Not authorized.")
+        return
+    
+    await message.reply("⏳ Forcing token holder reward distribution...")
+    
+    try:
+        result = await distribute_creator_fee_rewards()
+        if result:
+            await message.reply("✅ Distribution completed successfully!")
+        else:
+            await message.reply("⚠️ Distribution not executed. Check logs for details (no eligible holders or below threshold).")
+    except Exception as e:
+        await message.reply(f"❌ Error: {e}")
+
+
+@dp.message(Command("check_holder"))
+async def cmd_check_holder(message: types.Message):
+    """Admin command to check a user's token holder eligibility"""
+    if not is_admin(message.from_user.id):
+        await message.reply("⛔ Not authorized.")
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) < 2:
+            await message.reply("Usage: /check_holder <user_id>")
+            return
+        
+        user_id = int(parts[1])
+        wallet = get_user_wallet_for_rewards(user_id)
+        
+        if not wallet:
+            await message.reply(f"❌ User {user_id} has no active wallet.")
+            return
+        
+        balance = await get_token_balance(wallet)
+        has_tickets = user_id in get_users_with_tickets()
+        already_rewarded = has_received_holder_reward(user_id)
+        eligible = balance >= MIN_TOKEN_BALANCE and has_tickets and not already_rewarded
+        
+        await message.reply(
+            f"👤 <b>User {user_id} Status</b>\n\n"
+            f"Wallet: <code>{wallet[:12]}...</code>\n"
+            f"Token Balance: {balance:,.0f}\n"
+            f"Min Required: {MIN_TOKEN_BALANCE:,}\n"
+            f"Has Tickets: {'✅' if has_tickets else '❌'}\n"
+            f"Already Rewarded: {'✅' if already_rewarded else '❌'}\n\n"
+            f"<b>Eligible for Rewards: {'✅ YES' if eligible else '❌ NO'}</b>",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        await message.reply(f"❌ Error: {e}")
+
+
 @dp.message(Command("announce"))
 async def cmd_announce(message: types.Message):
     if not is_admin(message.from_user.id):
@@ -6929,6 +7083,226 @@ async def pay_team_fee(result: dict):
     print(f"ℹ️ Team fee already collected on ticket purchases (20% per ticket)")
 
 
+# ==============================================================================
+# TOKEN HOLDER REWARDS - DISTRIBUTION SYSTEM
+# ==============================================================================
+
+async def get_sol_price_usd() -> float:
+    """Fetch current SOL price in USD from CoinGecko"""
+    try:
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            url = "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd"
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    price = data.get("solana", {}).get("usd", 0)
+                    print(f"[Price] SOL = ${price}")
+                    return float(price)
+        return 0.0
+    except Exception as e:
+        print(f"[Price] Error fetching SOL price: {e}")
+        return 0.0
+
+
+async def find_eligible_holder_winner() -> dict:
+    """
+    Find ONE random eligible holder to receive the reward.
+    Eligibility:
+    - Must have purchased at least 1 ticket
+    - Must hold 100k+ lottery tokens
+    - Must NOT have received a reward before
+    
+    Returns dict with user_id, wallet_address, token_balance or None
+    """
+    import random
+    
+    # Get users who have tickets and haven't been rewarded
+    unrewarded_users = get_eligible_unrewarded_users()
+    if not unrewarded_users:
+        print("[Rewards] No unrewarded users with tickets found")
+        return None
+    
+    print(f"[Rewards] Checking {len(unrewarded_users)} unrewarded users for token eligibility...")
+    
+    # Check token balances and build eligible list
+    eligible_holders = []
+    for user_id in unrewarded_users:
+        wallet = get_user_wallet_for_rewards(user_id)
+        if not wallet:
+            continue
+        
+        balance = await get_token_balance(wallet)
+        if balance >= MIN_TOKEN_BALANCE:
+            eligible_holders.append({
+                "user_id": user_id,
+                "wallet_address": wallet,
+                "token_balance": balance
+            })
+    
+    if not eligible_holders:
+        print("[Rewards] No eligible token holders found (need 100k+ tokens)")
+        return None
+    
+    # Pick ONE random winner
+    winner = random.choice(eligible_holders)
+    print(f"[Rewards] Selected winner: User {winner['user_id']} with {winner['token_balance']:,.0f} tokens")
+    return winner
+
+
+async def distribute_creator_fee_rewards():
+    """
+    Main distribution function - called every 15-30 minutes.
+    Distributes accumulated creator fees when they reach $100 threshold.
+    
+    Distribution split:
+    - 30% to jackpot (OWNER_WALLET)
+    - 30% to team (TEAM_WALLET)
+    - 40% to ONE random eligible token holder
+    """
+    print("\n" + "=" * 50)
+    print("🎁 TOKEN HOLDER REWARDS CHECK")
+    print("=" * 50)
+    
+    # Check if token is configured
+    if not LOTTERY_TOKEN_MINT:
+        print("[Rewards] LOTTERY_TOKEN_MINT not configured - skipping distribution")
+        return False
+    
+    # Get pending creator fees
+    pending = get_pending_creator_fees()
+    total_usd = pending["total_usd"]
+    total_sol = pending["total_sol"]
+    
+    print(f"[Rewards] Pending fees: {total_sol:.6f} SOL (${total_usd:.2f})")
+    
+    # Check threshold
+    if total_usd < REWARD_DISTRIBUTION_THRESHOLD_USD:
+        print(f"[Rewards] Below ${REWARD_DISTRIBUTION_THRESHOLD_USD} threshold - waiting for more fees")
+        return False
+    
+    print(f"[Rewards] Threshold reached! Starting distribution...")
+    
+    # Find eligible winner
+    winner = await find_eligible_holder_winner()
+    if not winner:
+        print("[Rewards] No eligible holders found - distribution postponed")
+        return False
+    
+    # Calculate distribution amounts
+    jackpot_amount = Decimal(str(total_sol)) * CREATOR_FEE_JACKPOT_SHARE
+    team_amount = Decimal(str(total_sol)) * CREATOR_FEE_TEAM_SHARE
+    holder_amount = Decimal(str(total_sol)) * CREATOR_FEE_HOLDER_SHARE
+    
+    print(f"[Rewards] Distribution breakdown:")
+    print(f"   Jackpot (30%): {jackpot_amount:.6f} SOL")
+    print(f"   Team (30%): {team_amount:.6f} SOL")
+    print(f"   Holder (40%): {holder_amount:.6f} SOL -> User {winner['user_id']}")
+    
+    # Create distribution record
+    dist_id = create_reward_distribution(
+        total_usd=total_usd,
+        total_sol=float(total_sol),
+        jackpot_share=float(jackpot_amount),
+        team_share=float(team_amount),
+        holder_share=float(holder_amount),
+        eligible_count=1
+    )
+    
+    if not dist_id:
+        print("[Rewards] Failed to create distribution record")
+        return False
+    
+    try:
+        # 1. Send to jackpot (already in OWNER_WALLET, no transfer needed for jackpot portion)
+        print(f"   ✅ Jackpot: {jackpot_amount:.6f} SOL retained in prize pool")
+        
+        # 2. Send to team wallet
+        if TEAM_WALLET and TEAM_WALLET != OWNER_WALLET:
+            team_result = await send_sol(OWNER_WALLET, TEAM_WALLET, team_amount, OWNER_WALLET_PRIVATE_KEY)
+            if team_result.get("success"):
+                print(f"   ✅ Team: {team_amount:.6f} SOL sent")
+            else:
+                print(f"   ⚠️ Team payment failed: {team_result.get('error')}")
+        else:
+            print(f"   ✅ Team: {team_amount:.6f} SOL (same as owner wallet)")
+        
+        # 3. Send to winner
+        holder_result = await send_sol(OWNER_WALLET, winner["wallet_address"], holder_amount, OWNER_WALLET_PRIVATE_KEY)
+        
+        if holder_result.get("success"):
+            tx_sig = holder_result.get("signature", "")
+            print(f"   ✅ Holder reward sent: {holder_amount:.6f} SOL to {winner['wallet_address'][:12]}...")
+            
+            # Log the reward (marks user as rewarded)
+            log_token_holder_reward(
+                user_id=winner["user_id"],
+                wallet_address=winner["wallet_address"],
+                token_balance=winner["token_balance"],
+                reward_amount=float(holder_amount),
+                tx_signature=tx_sig,
+                distribution_id=dist_id
+            )
+            
+            # Mark fees as distributed
+            mark_fees_distributed(dist_id)
+            complete_reward_distribution(dist_id)
+            
+            # Notify winner
+            try:
+                await bot.send_message(
+                    winner["user_id"],
+                    f"🎉🎉🎉 <b>CONGRATULATIONS!</b> 🎉🎉🎉\n\n"
+                    f"You've been selected as a <b>Token Holder Reward Winner!</b>\n\n"
+                    f"💰 <b>Reward: {holder_amount:.6f} SOL</b>\n"
+                    f"🪙 Your balance: {winner['token_balance']:,.0f} tokens\n\n"
+                    f"📝 TX: <code>{tx_sig[:20]}...</code>\n\n"
+                    f"Thank you for holding and playing!\n"
+                    f"View on Solscan: https://solscan.io/tx/{tx_sig}",
+                    parse_mode="HTML"
+                )
+            except Exception as e:
+                print(f"[Rewards] Could not notify winner: {e}")
+            
+            # Announce to channel
+            await send_to_announcements(
+                f"🏆 <b>Token Holder Reward Winner!</b>\n\n"
+                f"A lucky token holder just won <b>{holder_amount:.6f} SOL</b>!\n\n"
+                f"💎 Hold 100k+ $CRYPTOUNC tokens\n"
+                f"🎟️ Buy at least 1 lottery ticket\n"
+                f"🎁 Get a chance to win creator fee rewards!\n\n"
+                f"Next distribution when fees reach $100"
+            )
+            
+            print(f"✅ Distribution #{dist_id} completed successfully!")
+            return True
+        else:
+            print(f"   ❌ Holder payment failed: {holder_result.get('error')}")
+            return False
+            
+    except Exception as e:
+        print(f"[Rewards] Distribution error: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+async def token_holder_rewards_scheduler():
+    """
+    Background task that checks and distributes token holder rewards.
+    Runs every REWARD_CHECK_INTERVAL_MINUTES (default: 20 minutes).
+    """
+    print(f"🎁 Token holder rewards scheduler started (every {REWARD_CHECK_INTERVAL_MINUTES} min)")
+    
+    while True:
+        try:
+            await asyncio.sleep(REWARD_CHECK_INTERVAL_MINUTES * 60)
+            await distribute_creator_fee_rewards()
+        except Exception as e:
+            print(f"[Rewards] Scheduler error: {e}")
+            await asyncio.sleep(60)  # Wait 1 min on error
+
+
 async def send_to_announcements(message_text: str, keyboard=None):
     """
     Helper function to send announcements to all groups/channels the bot is added to.
@@ -7319,7 +7693,9 @@ async def main():
     
     asyncio.create_task(schedule_daily_rounds())
     asyncio.create_task(manage_rounds())
+    asyncio.create_task(token_holder_rewards_scheduler())
     print("📅 Background scheduler started!")
+    print("🎁 Token holder rewards scheduler started!")
     
     # Start web server for keep-alive
     asyncio.create_task(start_web_server())

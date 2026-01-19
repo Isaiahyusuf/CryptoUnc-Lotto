@@ -535,7 +535,7 @@ def init_all_tables():
     c.execute("""
         CREATE TABLE IF NOT EXISTS token_holder_rewards (
             id SERIAL PRIMARY KEY,
-            user_id BIGINT NOT NULL,
+            user_id BIGINT NOT NULL UNIQUE,
             wallet_address TEXT NOT NULL,
             token_balance REAL NOT NULL,
             reward_amount_sol REAL NOT NULL,
@@ -1109,6 +1109,38 @@ def get_users_with_tickets() -> list:
         return [row[0] for row in rows] if rows else []
     except Exception as e:
         print(f"[DB] Error getting users with tickets: {e}")
+        return []
+
+
+def has_received_holder_reward(user_id: int) -> bool:
+    """Check if user has already received a token holder reward"""
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("SELECT 1 FROM token_holder_rewards WHERE user_id = %s", (user_id,))
+        result = c.fetchone() is not None
+        conn.close()
+        return result
+    except Exception as e:
+        print(f"[DB] Error checking holder reward: {e}")
+        return False
+
+
+def get_eligible_unrewarded_users() -> list:
+    """Get users who have tickets but haven't received holder rewards yet"""
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("""
+            SELECT DISTINCT rp.user_id 
+            FROM round_participants rp
+            WHERE rp.user_id NOT IN (SELECT user_id FROM token_holder_rewards)
+        """)
+        rows = c.fetchall()
+        conn.close()
+        return [row[0] for row in rows] if rows else []
+    except Exception as e:
+        print(f"[DB] Error getting eligible users: {e}")
         return []
 
 

@@ -1270,3 +1270,119 @@ async def send_sol_with_logging(user_id: int, from_address: str, to_address: str
         )
     
     return result
+
+
+# ==============================================================================
+# SPL Token Balance Checking (for Token Holder Rewards)
+# ==============================================================================
+
+# Token configuration from environment
+LOTTERY_TOKEN_MINT = os.getenv("LOTTERY_TOKEN_MINT")  # Token address from pump.fun
+MIN_TOKEN_BALANCE = int(os.getenv("MIN_TOKEN_BALANCE", "200000"))  # Minimum tokens to qualify (default 200k)
+
+
+async def get_token_balance(wallet_address: str, token_mint: str = None) -> float:
+    """
+    Get SPL token balance for a wallet.
+    Uses Helius/Solana RPC to fetch token accounts.
+    
+    Args:
+        wallet_address: The wallet to check
+        token_mint: Token mint address (uses LOTTERY_TOKEN_MINT if not provided)
+    
+    Returns:
+        Token balance as float (0 if not found or error)
+    """
+    mint_address = token_mint or LOTTERY_TOKEN_MINT
+    if not mint_address:
+        print("[Token] LOTTERY_TOKEN_MINT not configured")
+        return 0.0
+    
+    try:
+        rpc = _get_rpc()
+        
+        # Use getTokenAccountsByOwner RPC call
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getTokenAccountsByOwner",
+            "params": [
+                wallet_address,
+                {"mint": mint_address},
+                {"encoding": "jsonParsed"}
+            ]
+        }
+        
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            # Try each RPC endpoint
+            for endpoint in RPC_ENDPOINTS:
+                try:
+                    async with session.post(endpoint, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            if "result" in data and "value" in data["result"]:
+                                accounts = data["result"]["value"]
+                                if accounts:
+                                    # Get token amount from first matching account
+                                    token_info = accounts[0]["account"]["data"]["parsed"]["info"]
+                                    token_amount = float(token_info["tokenAmount"]["uiAmount"] or 0)
+                                    print(f"[Token] {wallet_address[:8]}... holds {token_amount:,.0f} tokens")
+                                    return token_amount
+                            return 0.0
+                except Exception as e:
+                    print(f"[Token] RPC {endpoint[:30]}... failed: {e}")
+                    continue
+        
+        return 0.0
+    except Exception as e:
+        print(f"[Token] Error getting token balance: {e}")
+        return 0.0
+
+
+async def check_token_eligibility(wallet_address: str) -> dict:
+    """
+    Check if a wallet is eligible for token holder rewards.
+    
+    Returns:
+        dict with 'eligible' (bool), 'balance' (float), 'min_required' (int)
+    """
+    balance = await get_token_balance(wallet_address)
+    eligible = balance >= MIN_TOKEN_BALANCE
+    
+    return {
+        "eligible": eligible,
+        "balance": balance,
+        "min_required": MIN_TOKEN_BALANCE
+    }
+
+
+async def get_eligible_token_holders(user_ids: list) -> list:
+    """
+    Check multiple users and return list of eligible token holders.
+    
+    Args:
+        user_ids: List of user IDs to check
+    
+    Returns:
+        List of dicts with user_id, wallet_address, token_balance for eligible users
+    """
+    from db import get_user_wallet_for_rewards
+    
+    eligible_holders = []
+    
+    for user_id in user_ids:
+        wallet = get_user_wallet_for_rewards(user_id)
+        if not wallet:
+            continue
+        
+        balance = await get_token_balance(wallet)
+        if balance >= MIN_TOKEN_BALANCE:
+            eligible_holders.append({
+                "user_id": user_id,
+                "wallet_address": wallet,
+                "token_balance": balance
+            })
+    
+    print(f"[Token] Found {len(eligible_holders)} eligible holders out of {len(user_ids)} users")
+    return eligible_holders
