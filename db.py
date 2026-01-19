@@ -1190,6 +1190,32 @@ def get_recent_distributions(limit: int = 10) -> list:
         return []
 
 
+def get_user_reward_history(user_id: int) -> list:
+    """Get a user's token holder reward history with tx signatures"""
+    try:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("""
+            SELECT id, wallet_address, token_balance, reward_amount_sol, tx_signature, created_at
+            FROM token_holder_rewards
+            WHERE user_id = %s
+            ORDER BY created_at DESC
+        """, (user_id,))
+        rows = c.fetchall()
+        conn.close()
+        return [{
+            "id": row[0],
+            "wallet_address": row[1],
+            "token_balance": row[2],
+            "reward_amount_sol": row[3],
+            "tx_signature": row[4],
+            "created_at": row[5]
+        } for row in rows] if rows else []
+    except Exception as e:
+        print(f"[DB] Error getting user reward history: {e}")
+        return []
+
+
 # ==============================================================================
 # Legacy compatibility - DB_PATH removed, no SQLite
 # ==============================================================================
