@@ -6723,6 +6723,70 @@ async def cmd_register_channel(message: types.Message):
         await message.reply(f"❌ Could not access channel: {e}\n\nMake sure the bot is an admin in the channel.")
 
 
+@dp.message(Command("list_channels"))
+async def cmd_list_channels(message: types.Message):
+    """Admin command to list all registered announcement channels"""
+    if not is_admin(message.from_user.id):
+        await message.reply("⛔ Not authorized.")
+        return
+    
+    groups = get_announcement_groups()
+    
+    if not groups:
+        await message.reply("📢 No groups/channels registered for announcements.")
+        return
+    
+    status = "📢 <b>Registered Announcement Channels</b>\n\n"
+    for i, g in enumerate(groups, 1):
+        chat_id = g['chat_id']
+        title = g.get('chat_title', 'Unknown')
+        chat_type = g.get('chat_type', 'unknown')
+        
+        # Check if bot can still access it
+        try:
+            await bot.get_chat(chat_id)
+            valid = "✅"
+        except:
+            valid = "❌"
+        
+        status += f"{i}. {valid} <b>{title}</b>\n   ID: <code>{chat_id}</code> ({chat_type})\n\n"
+    
+    status += "\n<i>✅ = accessible, ❌ = invalid/removed</i>\n"
+    status += "<i>Use /remove_channel &lt;chat_id&gt; to remove invalid ones</i>"
+    
+    await message.reply(status, parse_mode="HTML")
+
+
+@dp.message(Command("remove_channel"))
+async def cmd_remove_channel(message: types.Message):
+    """Admin command to remove a channel from announcements"""
+    if not is_admin(message.from_user.id):
+        await message.reply("⛔ Not authorized.")
+        return
+    
+    args = message.text.split()
+    if len(args) < 2:
+        await message.reply(
+            "Usage: /remove_channel <chat_id>\n\n"
+            "Use /list_channels to see all registered channels and their IDs.",
+            parse_mode="HTML"
+        )
+        return
+    
+    try:
+        chat_id = int(args[1])
+    except ValueError:
+        await message.reply("❌ Invalid chat ID. Must be a number.")
+        return
+    
+    success = remove_announcement_group(chat_id)
+    
+    if success:
+        await message.reply(f"✅ Removed channel {chat_id} from announcements.")
+    else:
+        await message.reply(f"❌ Could not remove channel. It may not be registered.")
+
+
 @dp.message(Command("rewards_status"))
 async def cmd_rewards_status(message: types.Message):
     """Admin command to check token holder rewards status"""
