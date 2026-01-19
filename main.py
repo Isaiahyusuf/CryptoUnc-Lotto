@@ -6630,21 +6630,58 @@ async def cmd_test_announce(message: types.Message):
         await message.reply("⛔ Not authorized.")
         return
     
-    db_groups = get_announcement_groups()
+    try:
+        db_groups = get_announcement_groups()
+        db_error = None
+    except Exception as e:
+        db_groups = []
+        db_error = str(e)
     
     status = f"📢 <b>Announcement System Debug</b>\n\n"
+    
+    if db_error:
+        status += f"⚠️ <b>Database Error:</b> {db_error}\n\n"
+    
     status += f"<b>Database Groups:</b> {len(db_groups)}\n"
     for g in db_groups:
         status += f"  • {g.get('chat_title', 'Unknown')} ({g['chat_id']})\n"
     
+    if not db_groups:
+        status += "  (none registered)\n"
+    
     status += f"\n<b>ROUND_CHANNEL_ID:</b> {ROUND_CHANNEL or 'Not set'}\n"
-    status += f"<b>ANNOUNCEMENTS_GROUP_ID:</b> {ANNOUNCEMENTS_GROUP or 'Not set'}\n\n"
+    status += f"<b>ANNOUNCEMENTS_GROUP_ID:</b> {ANNOUNCEMENTS_GROUP or 'Not set'}\n"
+    status += f"\n<b>Current Chat:</b> {message.chat.id} ({message.chat.type})\n"
     
     await message.reply(status, parse_mode="HTML")
     
     await message.reply("Sending test announcement...")
     await send_to_announcements("🧪 <b>Test Announcement</b>\n\nThis is a test message from the admin.")
     await message.reply("✅ Test complete - check logs for results")
+
+
+@dp.message(Command("register_group"))
+async def cmd_register_group(message: types.Message):
+    """Admin command to manually register current group for announcements"""
+    if not is_admin(message.from_user.id):
+        await message.reply("⛔ Not authorized.")
+        return
+    
+    if message.chat.type not in ["group", "supergroup", "channel"]:
+        await message.reply("❌ This command must be used in a group or channel.")
+        return
+    
+    success = add_announcement_group(
+        chat_id=message.chat.id,
+        chat_type=message.chat.type,
+        chat_title=message.chat.title,
+        added_by=message.from_user.id
+    )
+    
+    if success:
+        await message.reply(f"✅ Group registered for announcements!\n\nChat ID: {message.chat.id}\nTitle: {message.chat.title}")
+    else:
+        await message.reply("❌ Failed to register group. Check logs for details.")
 
 
 @dp.message(Command("rewards_status"))
