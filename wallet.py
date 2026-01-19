@@ -1452,14 +1452,24 @@ async def has_sent_sol_to_wallet(sender_wallet: str, recipient_wallet: str, limi
                     )
                     
                     if tx_response.value and tx_response.value.transaction:
-                        # Check if recipient is in the account keys
-                        tx = tx_response.value.transaction
-                        if hasattr(tx, 'transaction') and hasattr(tx.transaction, 'message'):
-                            account_keys = tx.transaction.message.account_keys
+                        tx_data = tx_response.value.transaction
+                        
+                        # Handle different response structures from solana-py
+                        account_keys = None
+                        
+                        # Try different paths to get account keys
+                        if hasattr(tx_data, 'message') and hasattr(tx_data.message, 'account_keys'):
+                            account_keys = tx_data.message.account_keys
+                        elif hasattr(tx_data, 'transaction'):
+                            inner_tx = tx_data.transaction
+                            if hasattr(inner_tx, 'message') and hasattr(inner_tx.message, 'account_keys'):
+                                account_keys = inner_tx.message.account_keys
+                        
+                        if account_keys:
                             for key in account_keys:
                                 if str(key) == recipient_wallet:
                                     return True
-                except Exception:
+                except Exception as e:
                     continue
             
             return False

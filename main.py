@@ -7392,13 +7392,13 @@ async def distribute_creator_fee_rewards():
             else:
                 print(f"[Rewards] Winner is on-chain only (no Telegram ID) - cannot send DM")
             
-            # Announce to channel WITH TX HASH
+            # Announce to channel WITH FULL TX HASH
             winner_wallet_short = f"{winner['wallet_address'][:6]}...{winner['wallet_address'][-4:]}"
             await send_to_announcements(
                 f"🏆 <b>Token Holder Reward Winner!</b> 🏆\n\n"
                 f"A lucky token holder just won <b>{holder_amount:.6f} SOL</b>!\n\n"
                 f"👤 Winner: <code>{winner_wallet_short}</code>\n"
-                f"📝 TX: <code>{tx_sig[:30]}...</code>\n"
+                f"📝 TX Hash:\n<code>{tx_sig}</code>\n"
                 f"🔗 <a href='https://solscan.io/tx/{tx_sig}'>Verify on Solscan</a>\n\n"
                 f"<b>How to qualify:</b>\n"
                 f"💎 Hold {MIN_TOKEN_BALANCE:,}+ $CRYPTOUNC tokens\n"
