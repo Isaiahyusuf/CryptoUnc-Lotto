@@ -6623,6 +6623,30 @@ async def cmd_seed_jackpot(message: types.Message):
         await message.reply(f"❌ Error: {str(e)}")
 
 
+@dp.message(Command("test_announce"))
+async def cmd_test_announce(message: types.Message):
+    """Admin command to test announcement system"""
+    if not is_admin(message.from_user.id):
+        await message.reply("⛔ Not authorized.")
+        return
+    
+    db_groups = get_announcement_groups()
+    
+    status = f"📢 <b>Announcement System Debug</b>\n\n"
+    status += f"<b>Database Groups:</b> {len(db_groups)}\n"
+    for g in db_groups:
+        status += f"  • {g.get('chat_title', 'Unknown')} ({g['chat_id']})\n"
+    
+    status += f"\n<b>ROUND_CHANNEL_ID:</b> {ROUND_CHANNEL or 'Not set'}\n"
+    status += f"<b>ANNOUNCEMENTS_GROUP_ID:</b> {ANNOUNCEMENTS_GROUP or 'Not set'}\n\n"
+    
+    await message.reply(status, parse_mode="HTML")
+    
+    await message.reply("Sending test announcement...")
+    await send_to_announcements("🧪 <b>Test Announcement</b>\n\nThis is a test message from the admin.")
+    await message.reply("✅ Test complete - check logs for results")
+
+
 @dp.message(Command("rewards_status"))
 async def cmd_rewards_status(message: types.Message):
     """Admin command to check token holder rewards status"""
